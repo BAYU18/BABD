@@ -82,7 +82,7 @@
 <rect x="371" y="391" width="6" height="6" rx="1" fill="#9b8cff" opacity="1" />
 <text x="394" y="390" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · ANTHROPIC</text>
 <text x="394" y="407" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">claude-opus-5-5</text>
-<text x="394" y="424" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com/…</text>
+<text x="394" y="424" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com</text>
 <text x="394" y="439" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $ANTHROPIC_API_K…</text>
 <circle cx="538" cy="394" r="5" fill="#34d399"/>
 <circle cx="538" cy="394" r="9" fill="#34d399" opacity="0.2"/>
@@ -163,7 +163,7 @@
 <rect x="77" y="1065" width="6" height="6" rx="1" fill="#38bdf8" opacity="1" />
 <text x="100" y="1064" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · ANTHROPIC</text>
 <text x="100" y="1081" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">claude-opus-5-5</text>
-<text x="100" y="1098" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com/v1</text>
+<text x="100" y="1098" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com</text>
 <text x="100" y="1113" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $ANTHROPIC_API_KEY</text>
 <circle cx="301" cy="1068" r="5" fill="#34d399"/>
 <circle cx="301" cy="1068" r="9" fill="#34d399" opacity="0.2"/>
@@ -243,7 +243,7 @@
 <rect x="398" y="1065" width="6" height="6" rx="1" fill="#34d399" opacity="1" />
 <text x="421" y="1064" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · ANTHROPIC</text>
 <text x="421" y="1081" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">claude-sonnet-5-5</text>
-<text x="421" y="1098" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com/v1</text>
+<text x="421" y="1098" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com</text>
 <text x="421" y="1113" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $ANTHROPIC_API_KEY</text>
 <circle cx="622" cy="1068" r="5" fill="#34d399"/>
 <circle cx="622" cy="1068" r="9" fill="#34d399" opacity="0.2"/>
@@ -323,7 +323,7 @@
 <rect x="719" y="1065" width="6" height="6" rx="1" fill="#fbbf24" opacity="1" />
 <text x="742" y="1064" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · ANTHROPIC</text>
 <text x="742" y="1081" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">claude-sonnet-5-5</text>
-<text x="742" y="1098" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com/v1</text>
+<text x="742" y="1098" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com</text>
 <text x="742" y="1113" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $ANTHROPIC_API_KEY</text>
 <circle cx="943" cy="1068" r="5" fill="#34d399"/>
 <circle cx="943" cy="1068" r="9" fill="#34d399" opacity="0.2"/>
@@ -446,9 +446,9 @@
 <text x="1384" y="176" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">PROJECT</text>
 <text x="1384" y="202" font-size="20" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Software Project</text>
 <text x="1856" y="176" font-size="11" fill="#8597b4" font-weight="700" text-anchor="end" letter-spacing="2" opacity="1">STATUS</text>
-<rect x="1774" y="186" width="82" height="24" rx="12" fill="#34d399" opacity="0.16" />
-<circle cx="1787" cy="198" r="4" fill="#34d399"/>
-<text x="1797" y="202.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">ACTIVE</text>
+<rect x="1777.04" y="186" width="78.96000000000001" height="24" rx="12" fill="#34d399" opacity="0.16" />
+<circle cx="1790.04" cy="198" r="4" fill="#34d399"/>
+<text x="1800.04" y="202.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">ACTIVE</text>
 <rect x="1384" y="277.5" width="472" height="96" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="307.5" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">PROJECT PROGRESS</text>
 <text x="1836" y="323.5" font-size="44" fill="#e8eef8" font-weight="800" text-anchor="end" letter-spacing="0" opacity="1">72%</text>

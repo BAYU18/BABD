@@ -1,0 +1,3 @@
+- Target Python 3.11+. Use type hints on public functions.
+- Prefer the standard library; add a dependency only when it saves real work.
+- Every new function gets a unittest test case next to the code it covers.

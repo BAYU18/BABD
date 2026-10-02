@@ -294,7 +294,9 @@ def dashboard(x, y, w, h, project, agents):
     label(x + 24, y + 146, "PROJECT")
     text(x + 24, y + 172, project["name"], size=20, fill=TEXT, weight=700)
     label(x + w - 24, y + 146, "STATUS", anchor="end")
-    pill(x + w - 24 - 82, y + 156, project["status"], GOOD, w=82)
+    status = str(project["status"]).upper()
+    status_color = {"BLOCKED": BAD, "DONE": CEO}.get(status, GOOD)
+    pill(x + w - 24 - pill_width(status), y + 156, status, status_color)
 
     # progress
     py = y + 200 + G
@@ -509,9 +511,14 @@ def build(cfg):
     return "\n".join(out)
 
 
-if __name__ == "__main__":
+def main():
+    out.clear()
     with open(os.path.join(HERE, "agents.json")) as f:
         cfg = json.load(f)
     with open(os.path.join(HERE, "workspace.svg"), "w") as f:
         f.write(build(cfg))
     print("wrote workspace.svg")
+
+
+if __name__ == "__main__":
+    main()
