@@ -10,7 +10,7 @@ from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-W, H = 1920, 1460
+W, H = 1920, 1514
 
 BG = "#0d1628"
 PANEL = "#15223a"
@@ -130,22 +130,53 @@ def telegram_icon(cx, cy, on=True):
         f'L{cx - 1.5} {cy + 4.5} L{cx - 1.5} {cy + 1.5} Z" fill="#ffffff"/>')
 
 
+def fit(s, width, size, char_w=0.6):
+    """Truncate s with an ellipsis so it fits in roughly `width` px."""
+    n = int(width / (size * char_w))
+    return s if len(s) <= n else s[:max(n - 1, 1)] + "…"
+
+
+def mask_key(key):
+    return key[:3] + "•••" + key[-4:] if len(key) > 10 else "•••"
+
+
+def llm_key_text(llm):
+    """What to show for the API key. The full key is never drawn."""
+    if llm.get("api_key"):
+        return mask_key(llm["api_key"])
+    if llm.get("api_key_env"):
+        return "$" + llm["api_key_env"]
+    return "not set"
+
+
+LLM_ROW_H = 76
+TG_ROW_H = 44
+
+
 def config_row(x, y, w, kind, agent):
-    """One config row (LLM connection or Telegram gateway). Height 44."""
+    """One config row: LLM connection (LLM_ROW_H) or Telegram gateway (TG_ROW_H)."""
     color = agent["color"]
-    rect(x, y, w, 44, PANEL_2, r=10)
+    tw = w - 40 - 30
     if kind == "llm":
         llm = agent["llm"]
+        rect(x, y, w, LLM_ROW_H, PANEL_2, r=10)
         llm_icon(x + 20, y + 22, color)
-        text(x + 40, y + 18, f"LLM · {llm['provider'].upper()}", size=10, fill=MUTED, weight=700, ls=1.4)
-        text(x + 40, y + 35, llm["label"], size=14, fill=TEXT, weight=700)
-        on = bool(llm.get("model"))
+        text(x + 40, y + 18, fit(f"LLM · {llm['provider'].upper()}", tw, 10, 0.75), size=10, fill=MUTED,
+             weight=700, ls=1.4)
+        text(x + 40, y + 35, fit(llm["model"], tw, 13), size=13, fill=TEXT, weight=700)
+        url = llm["base_url"].split("://", 1)[-1]
+        text(x + 40, y + 52, fit("URL  " + url, w - 52, 11, 0.56), size=11, fill=MUTED, weight=500)
+        key = llm_key_text(llm)
+        text(x + 40, y + 67, fit("KEY  " + key, w - 52, 11, 0.6), size=11,
+             fill=MUTED if key != "not set" else BAD, weight=600)
+        on = bool(llm.get("model") and llm.get("base_url") and key != "not set")
     else:
         tg = agent["telegram"]
+        rect(x, y, w, TG_ROW_H, PANEL_2, r=10)
         on = tg.get("enabled", False)
         telegram_icon(x + 20, y + 22, on)
         text(x + 40, y + 18, "TELEGRAM GATEWAY", size=10, fill=MUTED, weight=700, ls=1.4)
-        text(x + 40, y + 35, tg["bot_username"], size=14, fill=TEXT if on else MUTED, weight=700)
+        text(x + 40, y + 35, fit(tg["bot_username"], tw, 14), size=14, fill=TEXT if on else MUTED, weight=700)
     dot = GOOD if on else DIM
     add(f'<circle cx="{x + w - 16}" cy="{y + 22}" r="5" fill="{dot}"/>')
     if on:
@@ -206,9 +237,10 @@ def agent_card(x, y, w, h, num, agent):
     rect(x + 12, cy, w - 24, h - (cy - y) - 12, BG, r=14, opacity=0.55)
     config_header(x + 20, cy + 24, iw, color)
     config_row(x + 20, cy + 36, iw, "llm", agent)
-    config_row(x + 20, cy + 86, iw, "telegram", agent)
-    label(x + 20, cy + 152, "SKILLS")
-    skill_chips(x + 20, cy + 162, iw, agent["skills"], color)
+    ty = cy + 36 + LLM_ROW_H + 8
+    config_row(x + 20, ty, iw, "telegram", agent)
+    label(x + 20, ty + TG_ROW_H + 22, "SKILLS")
+    skill_chips(x + 20, ty + TG_ROW_H + 32, iw, agent["skills"], color)
 
 
 def lead_card(x, y, w, h, agent):
@@ -307,7 +339,7 @@ def dashboard(x, y, w, h, project, agents):
     # team setup (computed from agents.json)
     sy = ay + 72 + G
     n = len(agents)
-    llm_ok = sum(bool(a["llm"].get("model")) for a in agents)
+    llm_ok = sum(bool(a["llm"].get("model") and a["llm"].get("base_url") and llm_key_text(a["llm"]) != "not set") for a in agents)
     tg_ok = sum(bool(a["telegram"].get("enabled")) for a in agents)
     skills = sum(len(a["skills"]) for a in agents)
     rect(x + 24, sy, w - 48, 92, PANEL_2, r=14)
@@ -399,8 +431,8 @@ def build(cfg):
 
     # geometry
     agents_x0, card_w, gap = 40, 297, 24
-    agents_y, agents_h = 560, 680
-    lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 360
+    agents_y, agents_h = 580, 714
+    lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 380
     dash_x, dash_y, dash_w, dash_h = 1360, 30, 520, agents_y + agents_h - 30
 
     # --- connections ---------------------------------------------------
