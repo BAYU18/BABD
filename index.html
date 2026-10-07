@@ -166,65 +166,150 @@
         checkCollision();
       }
 
-      // ---- Render (spec §2, §4, §6) -----------------------------------------
-      function drawRoad() {
-        ctx.fillStyle = "#1b2a1f";
-        ctx.fillRect(0, 0, W, H);
+      // ---- Render state seam ------------------------------------------------
+      // One pure function decides *what* the frame looks like as plain-data
+      // descriptors; paintLayer/render only decide *how* to put them on the
+      // canvas. Same (gameState, t) in -> deep-equal RenderState out.
+      function laneXFromGame(gameState, lane) { return lane * LANE_W + (LANE_W - CAR_W) / 2; }
 
-        // Edge lines
-        ctx.fillStyle = "#e8e8e8";
-        ctx.fillRect(0, 0, 2, H);
-        ctx.fillRect(W - 2, 0, 2, H);
+      function computeRenderState(gameState, t) {
+        var gs = gameState;
+        var canvas = gs.canvas || { w: W, h: H, dpr: 1 };
+        var prefs = gs.prefs || { reducedMotion: false, contrast: false };
+        var effects = buildEffects(gs, 1 / 60, prefs);
+        var hud = buildHudDescriptors(gs);
+        var lighting = buildLighting(gs, prefs);
+        var rs = {
+          canvas: { w: canvas.w, h: canvas.h, dpr: canvas.dpr || 1 },
+          layers: [
+            buildRoadLayer(gs, t),
+            buildSceneryLayer(gs, t),
+            buildCarsLayer(gs, t),
+            { id: 'effects', kind: 'sprite', draw: effects.draw },
+            { id: 'hud', kind: 'text', draw: hud.texts },
+            { id: 'lighting', kind: 'lighting', draw: [] }
+          ],
+          hud: hud,
+          effects: effects.draw,
+          lighting: lighting
+        };
+        return rs;
+      }
 
-        // Dashed lane dividers at x = 100, 200, 300 (scroll downward)
-        ctx.fillStyle = "#cfcfcf";
+      // Layers are built and the HUD is appended so the layer id order is
+      // stable: road, scenery, cars, effects, hud, lighting.
+      function buildRoadLayer(gameState, t) {
+        var draw = [];
+        draw.push({ role: 'fill', x: 0, y: 0, w: W, h: H, color: '#1b2a1f' });
+        draw.push({ role: 'edge', x: 0, y: 0, w: 2, h: H, color: '#e8e8e8' });
+        draw.push({ role: 'edge', x: W - 2, y: 0, w: 2, h: H, color: '#e8e8e8' });
         var dash = 24, gap = 16, period = dash + gap;
+        var off = (gameState.dashOffset || 0) % period;
         for (var l = 1; l < LANES; l++) {
           var x = l * LANE_W - 2;
-          for (var y = -period + (dashOffset % period); y < H; y += period) {
-            ctx.fillRect(x, y, 4, dash);
+          for (var y = -period + off; y < H; y += period) {
+            draw.push({ role: 'laneDash', x: x, y: y, w: 4, h: dash, color: '#cfcfcf' });
           }
         }
+        return { id: 'road', kind: 'mixed', draw: draw };
       }
 
-      function drawCar() {
-        var x = laneX(carLane);
-        ctx.fillStyle = "#ffd93d";
-        ctx.fillRect(x, CAR_Y, CAR_W, CAR_H);
-        ctx.strokeStyle = "#8a6d00";
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x + 1.5, CAR_Y + 1.5, CAR_W - 3, CAR_H - 3);
-        // windscreen detail
-        ctx.fillStyle = "#3a3a3a";
-        ctx.fillRect(x + 8, CAR_Y + 10, CAR_W - 16, 14);
+      function buildSceneryLayer(gameState, t) {
+        return { id: 'scenery', kind: 'sprite', draw: [] };
       }
 
-      function drawObstacles() {
-        for (var i = 0; i < obstacles.length; i++) {
-          var o = obstacles[i];
-          var x = laneX(o.lane);
-          ctx.fillStyle = "#ff5c5c";
-          ctx.fillRect(x, o.y, CAR_W, CAR_H);
-          ctx.strokeStyle = "#8a1c1c";
-          ctx.lineWidth = 3;
-          ctx.strokeRect(x + 1.5, o.y + 1.5, CAR_W - 3, CAR_H - 3);
+      function buildCarSprite(color, outline, x, y) {
+        return {
+          key: { x: x, y: y, w: CAR_W, h: CAR_H },
+          body: { color: color, outline: outline, lineWidth: 3 },
+          windshield: { x: x + 8, y: y + 10, w: CAR_W - 16, h: 14, color: '#3a3a3a' }
+        };
+      }
+
+      function buildCarsLayer(gameState, t) {
+        var draw = [];
+        for (var i = 0; i < gameState.obstacles.length; i++) {
+          var o = gameState.obstacles[i];
+          draw.push(buildCarSprite('#ff5c5c', '#8a1c1c', laneXFromGame(gameState, o.lane), o.y));
+        }
+        draw.push(buildCarSprite('#ffd93d', '#8a6d00', laneXFromGame(gameState, gameState.carLane), CAR_Y));
+        return { id: 'cars', kind: 'sprite', draw: draw };
+      }
+
+      function buildHudDescriptors(gameState) {
+        var texts = [];
+        texts.push({ x: 10, y: 8, text: 'SCORE ' + Math.floor(gameState.score), font: '20px monospace', color: '#ffffff', align: 'left', baseline: 'top' });
+        texts.push({ x: W - 10, y: 8, text: 'HI ' + gameState.highScore, font: '20px monospace', color: '#ffffff', align: 'right', baseline: 'top' });
+        return { texts: texts, panels: [] };
+      }
+
+      function buildEffects(gameState, dt, prefs) {
+        return { id: 'effects', kind: 'sprite', draw: [] };
+      }
+
+      function buildLighting(gameState, prefs) {
+        return { vignette: 0, flash: { color: '#000000', alpha: 0 }, shake: { x: 0, y: 0 } };
+      }
+
+      // ---- Painter (descriptors -> canvas) ----------------------------------
+      function paintLayer(layer) {
+        if (!layer || !layer.draw) return;
+        if (layer.id === 'cars') {
+          for (var i = 0; i < layer.draw.length; i++) paintCarSprite(layer.draw[i]);
+          return;
+        }
+        for (var j = 0; j < layer.draw.length; j++) {
+          var d = layer.draw[j];
+          ctx.fillStyle = d.color;
+          ctx.fillRect(d.x, d.y, d.w, d.h);
         }
       }
 
-      function drawHud() {
-        ctx.font = "20px monospace";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "top";
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillText("SCORE " + Math.floor(score), 12, 10);
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText("SCORE " + Math.floor(score), 10, 8);
+      function paintCarSprite(s) {
+        var x = s.key.x, y = s.key.y;
+        ctx.fillStyle = s.body.color;
+        ctx.fillRect(x, y, CAR_W, CAR_H);
+        ctx.strokeStyle = s.body.outline;
+        ctx.lineWidth = s.body.lineWidth;
+        ctx.strokeRect(x + 1.5, y + 1.5, CAR_W - 3, CAR_H - 3);
+        ctx.fillStyle = s.windshield.color;
+        ctx.fillRect(s.windshield.x, s.windshield.y, s.windshield.w, s.windshield.h);
+      }
 
-        ctx.textAlign = "right";
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillText("HI " + highScore, W - 8, 10);
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText("HI " + highScore, W - 10, 8);
+      function paintHud(hud) {
+        for (var i = 0; i < hud.texts.length; i++) {
+          var tx = hud.texts[i];
+          ctx.font = tx.font;
+          ctx.textAlign = tx.align;
+          ctx.textBaseline = tx.baseline;
+          // The legacy hard drop-shadow, kept so the pixel read is unchanged.
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.fillText(tx.text, tx.x + 2, tx.y + 2);
+          ctx.fillStyle = tx.color;
+          ctx.fillText(tx.text, tx.x, tx.y);
+        }
+      }
+
+      var LAST_RENDER_STATE = null;
+
+      function snapshotForRender() {
+        return {
+          canvas: { w: W, h: H, dpr: 1 },
+          state: state,
+          carLane: carLane,
+          startLane: START_LANE,
+          carX: laneX(carLane),
+          carY: CAR_Y,
+          obstacles: obstacles.map(function (o) { return { lane: o.lane, y: o.y }; }),
+          score: score,
+          highScore: highScore,
+          dashOffset: dashOffset,
+          obstacleSpeed: obstacleSpeed,
+          spawnInterval: spawnInterval,
+          laneShift: 0,
+          laneVisual: carLane,
+          prefs: { reducedMotion: false, contrast: false }
+        };
       }
 
       function drawOverlay() {
@@ -262,11 +347,14 @@
       }
 
       function render() {
-        drawRoad();
-        drawObstacles();
-        drawCar();
-        drawHud();
+        LAST_RENDER_STATE = computeRenderState(snapshotForRender(), 0);
+        var layers = LAST_RENDER_STATE.layers;
+        for (var i = 0; i < layers.length; i++) {
+          if (layers[i].id === 'hud') continue; // text painted after the overlay
+          paintLayer(layers[i]);
+        }
         drawOverlay();
+        paintHud(LAST_RENDER_STATE.hud);
       }
 
       // ---- Game loop (spec §3) ----------------------------------------------
@@ -340,6 +428,7 @@
       window.__GAME__ = {
         start: start,
         step: step,
+        renderState: function () { return LAST_RENDER_STATE; },
         setKey: applyKey,
         pause: function () { running = false; },
         resume: function () { running = true; lastTime = 0; },

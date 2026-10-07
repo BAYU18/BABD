@@ -8,3 +8,4 @@ workspace/
 .worktrees/
 worktrees/
 logs/
+node_modules
