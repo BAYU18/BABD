@@ -219,7 +219,7 @@ class CeoBot(Bot):
                                        "it becomes a task for the team.\n\n/status - what the team is doing\n"
                                        "/tasks - recent tasks\n/project <id> - where new tasks go\n"
                                        "/cancel <task id> - stop or unqueue a task\n/resume <task id> - continue a failed or interrupted task\n"
-                                       "/templates - task templates to fill in")
+                                       "/templates - task templates to fill in\n/quick <goal> - a small change: no Architect, no deploy")
         if cmd == "/status":
             return self.api.send(chat, self.status_text())
         if cmd == "/tasks":
@@ -235,6 +235,10 @@ class CeoBot(Bot):
             self.chat_project[str(chat)] = arg
             self.persist()
             return self.api.send(chat, f"New tasks from this chat go to project {arg}.")
+        if cmd == "/quick":
+            if not arg:
+                return self.api.send(chat, "Usage: /quick <small change> (no Architect, no deploy)")
+            return self.api.send(chat, self.safe(lambda: self.start_task(chat, arg, options={"skip": ["architect", "devops"]})))
         if cmd in ("/templates", "/template"):
             from . import templates
             ts = templates.list_templates()
@@ -258,9 +262,9 @@ class CeoBot(Bot):
         except Exception as e:
             return f"Could not do that: {e}"
 
-    def start_task(self, chat, goal, docs=()):
+    def start_task(self, chat, goal, docs=(), options=None):
         project = self.chat_project.get(str(chat))
-        task = self.dash.start_run(goal, update_dashboard=True, docs=list(docs), project=project)
+        task = self.dash.start_run(goal, update_dashboard=True, docs=list(docs), project=project, options=options)
         where = "started" if task.get("status") != "queued" else f"queued (#{task.get('position')})"
         return f"Task {where}: {task['goal']}\nid: {task['id']}"
 

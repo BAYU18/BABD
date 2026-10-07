@@ -130,7 +130,32 @@ function renderAll() {
   renderRunButtons();
   renderNav();
   renderProjectSelects();
+  renderTaskOptions();
   if (drawer?.mode === "chat") renderChat();
+}
+
+function renderTaskOptions() {
+  const models = [...new Set(S.agents.flatMap((a) => [a.llm.model, a.llm.fallback?.model]).filter(Boolean))];
+  for (const box of document.querySelectorAll("[data-opts]")) {
+    const body = box.querySelector(".opts-body");
+    if (body.dataset.ready) continue;  // keep what the user ticked across re-renders
+    body.dataset.ready = "1";
+    body.innerHTML = `
+      <label class="check"><input type="checkbox" name="skip" value="architect"> No Architect: small change, the Team Lead's plan is the design</label>
+      <label class="check"><input type="checkbox" name="skip" value="devops"> No DevOps: no deploy, stop after QA and the report</label>
+      <label class="check"><input type="checkbox" name="skip" value="prep"> No parallel preparation (QA and DevOps don't prepare while the Developer builds)</label>
+      <div class="help">Model for this task only (empty = the agent's own):</div>
+      <div class="opt-models">${S.agents.map((a) => `<label>${esc(a.short_name || a.name)}
+        <input type="text" name="model_${esc(a.id)}" list="modelList" placeholder="${esc(a.llm.model)}"></label>`).join("")}</div>
+      <datalist id="modelList">${models.map((m) => `<option value="${esc(m)}">`).join("")}</datalist>`;
+  }
+}
+
+function readOptions(which) {
+  const box = document.querySelector(`[data-opts="${which}"]`);
+  const skip = [...box.querySelectorAll('[name="skip"]:checked')].map((c) => c.value);
+  const models = Object.fromEntries([...box.querySelectorAll('[name^="model_"]')].map((i) => [i.name.slice(6), i.value.trim()]).filter(([, v]) => v));
+  return skip.length || Object.keys(models).length ? { skip, models } : undefined;
 }
 
 function renderProjectSelects() {
@@ -551,7 +576,7 @@ $("#btnRun").addEventListener("click", async () => {
     $("#runHistory").value = "";
     $("#btnRun").disabled = true;
     const r = await api("POST", "runs", { goal, auto_approve: $("#autoApprove").checked, update_dashboard: $("#updateImage").checked,
-      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links: att.links, project: $("#goalProject").value || undefined })
+      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links: att.links, project: $("#goalProject").value || undefined, options: readOptions("command") })
       .finally(() => { $("#btnRun").disabled = false; });
     $("#goal").value = "";
     clearAttach("command");
@@ -1209,7 +1234,7 @@ function renderTasks() {
     return `<article class="task" data-task="${esc(t.id)}">
       <div class="task-row">
         <button type="button" class="task-toggle" data-toggle="${esc(t.id)}" aria-expanded="${open}" aria-label="Show steps">${open ? "▾" : "▸"}</button>
-        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${t.evidence ? ` · ${t.evidence.verified ? "✓ verified" : "unverified"}` : ""}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
+        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${t.task_options?.skip?.length ? ` · no ${t.task_options.skip.map(esc).join(", no ")}` : ""}${Object.keys(t.task_options?.models || {}).length ? ` · ${Object.entries(t.task_options.models).map(([a, m]) => `${esc(nameOf(a))}: ${esc(m)}`).join(", ")}` : ""}${t.evidence ? ` · ${t.evidence.verified ? "✓ verified" : "unverified"}` : ""}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
         <div class="task-status">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")}</div>
         <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
@@ -1282,7 +1307,7 @@ $("#btnAddTasks").addEventListener("click", async () => {
   try {
     $("#btnAddTasks").disabled = true;
     const r = await api("POST", "tasks", { goals, auto_approve: $("#taskAutoApprove").checked,
-      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links, project: $("#taskProject").value || undefined })
+      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links, project: $("#taskProject").value || undefined, options: readOptions("board") })
       .finally(() => { $("#btnAddTasks").disabled = false; });
     const started = r.tasks.filter((t) => t.status !== "queued").length;
     toast(`${r.tasks.length} task(s) added: ${started} started, ${r.tasks.length - started} queued`, "ok");

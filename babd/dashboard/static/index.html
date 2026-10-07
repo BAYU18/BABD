@@ -52,6 +52,7 @@
           <div class="attach-list" data-list="command"></div>
         </div>
         <div class="command-row">
+          <details class="task-opts" data-opts="command"><summary>Task options</summary><div class="opts-body"></div></details>
           <label class="project-pick">Project <select id="goalProject" data-project-select aria-label="Project"></select></label>
           <label class="check"><input type="checkbox" id="autoApprove"> Approve the deploy automatically</label>
           <label class="check"><input type="checkbox" id="updateImage" checked> Update dashboard & image after the run</label>
@@ -112,6 +113,7 @@
           <div class="attach-list" data-list="board"></div>
         </div>
       <div class="command-row">
+          <details class="task-opts" data-opts="board"><summary>Task options</summary><div class="opts-body"></div></details>
         <label class="project-pick">Project <select id="taskProject" data-project-select aria-label="Project"></select></label>
         <label class="check"><input type="checkbox" id="taskAutoApprove"> Approve the deploys automatically</label>
         <div class="spacer"></div>

@@ -276,6 +276,25 @@ send the filled-in text back (a message starting with a `#` heading becomes a ta
 line: copy one and run `babd run my-task.md`. Add your own `.md` files there (front matter `title`,
 `description`).
 
+## Options per task
+
+Not every task needs the whole team. **Task options** (goal form and task board), the API
+(`"options": {"skip": [...], "models": {...}}`) or the command line:
+
+| Option | Effect |
+| --- | --- |
+| No Architect (`architect`) | small change: the Team Lead's plan is the design |
+| No DevOps (`devops`) | no deploy and no deploy approval: the task ends after QA and the report |
+| No parallel preparation (`prep`) | QA and DevOps don't prepare while the Developer builds (two LLM calls fewer) |
+| Model for this task | another model for one agent in this task only, e.g. a cheaper one for QA |
+
+```bash
+.venv/bin/babd run "Fix the typo on the pricing page" --skip architect,devops --model qa=qwen2.5-coder:7b
+```
+
+QA always stays: a task is never done without its tests. Telegram: `/quick <goal>` = no Architect,
+no DevOps. Options are kept with the task, so Resume uses them too.
+
 ## Projects: where the agents' work goes
 
 The agents never work inside the BABD installation. Every task belongs to a **project**, and runs in

@@ -32,7 +32,7 @@ EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
                "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage",
-               "evidence")
+               "evidence", "task_options")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
@@ -389,7 +389,8 @@ class Dashboard:
         opts = s.get("options") or {}
         return {"id": s["id"], "goal": s["goal"], "status": "queued", "queued_at": flow.now(), "resume": True,
                 "auto_approve": bool(opts.get("auto_approve")), "update_dashboard": opts.get("update_dashboard", True),
-                "docs": [], "documents": s.get("documents") or [], "project": (s.get("workspace") or {}).get("project")}
+                "docs": [], "documents": s.get("documents") or [], "project": (s.get("workspace") or {}).get("project"),
+                "options": s.get("task_options") or {}}
 
     def resume_run(self, run_id):
         """Continue a failed, stopped or interrupted task from its last finished step."""
@@ -433,7 +434,7 @@ class Dashboard:
         return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
                                   "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
-                                  "usage", "evidence", "tests", "messages")}
+                                  "usage", "evidence", "tests", "task_options", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -568,7 +569,7 @@ class Dashboard:
             self.save(cfg)
             return {"projects": projects.projects(cfg), "default_project": cfg["project"].get("default_project")}
 
-    def start_run(self, goal, auto_approve=False, update_dashboard=True, docs=None, project=None):
+    def start_run(self, goal, auto_approve=False, update_dashboard=True, docs=None, project=None, options=None):
         """Add a task. It starts now when a task slot is free, else it waits in the queue. With task
         documents, the goal may be empty: the first document's title names the task."""
         docs = list(docs or [])
@@ -581,12 +582,14 @@ class Dashboard:
         Team(cfg, log=lambda m: None)  # a broken config fails here, not later in the queue
         try:
             project = projects.get(cfg, project)["id"] if cfg["project"].get("use_projects", True) else None
-        except projects.ProjectError as e:
+            options = flow.task_options(options, {a["id"] for a in cfg["agents"]})
+        except (projects.ProjectError, flow.FlowError) as e:
             raise ApiError(400, str(e))
         with self.tasks_lock:
             entry = {"id": self.new_run_id(), "goal": goal, "status": "queued", "queued_at": flow.now(),
                      "auto_approve": bool(auto_approve), "update_dashboard": bool(update_dashboard),
-                     "docs": docs, "documents": [taskdocs.summary(d) for d in docs], "project": project}
+                     "docs": docs, "documents": [taskdocs.summary(d) for d in docs], "project": project,
+                     "options": options}
             self.queue.append(entry)
         self.save_queue()
         self.hub.publish("tasks", {"event": "queued", "task": {k: v for k, v in entry.items() if k != "docs"}})
@@ -597,7 +600,7 @@ class Dashboard:
             return self.summary(ctx["run"])
         return {**{k: v for k, v in entry.items() if k != "docs"}, "position": self.queued_position(entry["id"])}
 
-    def start_tasks(self, goals, auto_approve=False, update_dashboard=True, docs=None, project=None):
+    def start_tasks(self, goals, auto_approve=False, update_dashboard=True, docs=None, project=None, options=None):
         """Several tasks: one per goal line and one per document."""
         goals = [g.strip() for g in goals if isinstance(g, str) and g.strip()]
         docs = list(docs or [])
@@ -605,8 +608,8 @@ class Dashboard:
             raise ApiError(400, "no tasks given")
         if len(goals) + len(docs) > 50:
             raise ApiError(400, "at most 50 tasks at once")
-        return {"tasks": [self.start_run(g, auto_approve, update_dashboard, project=project) for g in goals]
-                + [self.start_run("", auto_approve, update_dashboard, [d], project) for d in docs]}
+        return {"tasks": [self.start_run(g, auto_approve, update_dashboard, project=project, options=options) for g in goals]
+                + [self.start_run("", auto_approve, update_dashboard, [d], project, options) for d in docs]}
 
     def queued_position(self, run_id):
         with self.tasks_lock:
@@ -679,7 +682,8 @@ class Dashboard:
             self.hub.publish("tasks", {"event": "started", "task": {"id": run.id, "goal": run.goal}})
 
     def _launch(self, entry):
-        team = Team(self.load(), log=lambda m: None)
+        opts = entry.get("options") or {}
+        team = Team(flow.apply_models(self.load(), opts.get("models") or {}), log=lambda m: None)
         ctx = {"approval": None, "options": entry}
 
         def approver(request):
@@ -699,7 +703,8 @@ class Dashboard:
             self.hub.publish("run", {"event": kind, "data": data, "summary": self.summary(run)})
 
         run = flow.Run(team, entry["goal"], approver=approver, on_event=on_event, run_id=entry["id"], slots=self.slots,
-                       docs=entry.get("docs"), project_id=entry.get("project"), resume=entry.get("resume", False))
+                       docs=entry.get("docs"), project_id=entry.get("project"), resume=entry.get("resume", False),
+                       options=None if entry.get("resume") else opts)
         run.state["options"] = {"auto_approve": entry["auto_approve"], "update_dashboard": entry["update_dashboard"]}
         ctx["run"] = run
         self.active[run.id] = ctx
@@ -1066,7 +1071,7 @@ def make_handler(dash, token, allowed_hosts, security=None):
                     raise ApiError(400, "goals must be a list of task descriptions")
                 docs = d.read_documents(b.get("documents"), b.get("links"))
                 return d.start_tasks(goals, bool(b.get("auto_approve")), b.get("update_dashboard", True), docs,
-                                     b.get("project"))
+                                     b.get("project"), b.get("options"))
             if method == "PUT" and parts == ["telegram"]:
                 return d.update_telegram(self.body())
             if method == "PUT" and parts == ["projects"]:
@@ -1076,7 +1081,7 @@ def make_handler(dash, token, allowed_hosts, security=None):
                     b = self.body()
                     docs = d.read_documents(b.get("documents"), b.get("links"))
                     return d.start_run(b.get("goal"), bool(b.get("auto_approve")), b.get("update_dashboard", True), docs,
-                                       b.get("project"))
+                                       b.get("project"), b.get("options"))
                 if method == "GET" and len(parts) == 2:
                     return d.load_run(parts[1])
                 if method == "GET" and parts[2:] == ["report.md"]:

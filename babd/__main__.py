@@ -67,6 +67,9 @@ def main(argv=None):
     c.add_argument("agent")
     r = sub.add_parser("run", help="full team run on a goal (several goals: run at the same time)")
     r.add_argument("goal", nargs="+", help="a goal, a .md/.txt file, or a link to one (each is a task)")
+    r.add_argument("--skip", default="", help="leave out for these tasks: architect, devops, prep (comma separated)")
+    r.add_argument("--model", action="append", default=[], metavar="AGENT=MODEL",
+                   help="use another model for one agent in these tasks, e.g. developer=qwen2.5-coder:7b")
     r.add_argument("--project", help="the project the agents work in (agents.json \"projects\"; default: default)")
     r.add_argument("--doc", action="append", default=[], metavar="FILE_OR_LINK",
                    help="a task document (Markdown file or link) for the goal; repeat for more")
@@ -277,6 +280,14 @@ def run_goals(args, cfg, team):
         print(f"error: {e}", file=sys.stderr)
         return 2
     goals = [g for g, _ in tasks]
+    from .flow import FlowError, apply_models, task_options
+    try:
+        options = task_options({"skip": [x.strip() for x in args.skip.split(",") if x.strip()],
+                                "models": dict(m.split("=", 1) for m in args.model if "=" in m)},
+                               {a["id"] for a in cfg["agents"]})
+    except FlowError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     if cfg["project"].get("use_projects", True):
         from . import projects
         try:
@@ -314,8 +325,9 @@ def run_goals(args, cfg, team):
 
     def one(i, goal, docs):
         with limit:  # a Team per task: each task's agents work in that task's own workspace
-            states[i] = Run(Team(cfg, log=lambda m: None, brain=team.brain), goal, approver=approver,
-                            on_event=show(i + 1), slots=slots, docs=docs, project_id=args.project).execute()
+            states[i] = Run(Team(apply_models(cfg, options["models"]), log=lambda m: None, brain=team.brain), goal,
+                            approver=approver, on_event=show(i + 1), slots=slots, docs=docs, project_id=args.project,
+                            options=options).execute()
 
     for goal, docs in tasks:
         for d in docs:

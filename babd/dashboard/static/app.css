@@ -553,3 +553,10 @@ button.chip { font-family: inherit; cursor: pointer; }
 #tplBody { font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
 .tpl-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .tpl-actions input { flex: 0 1 240px; }
+.task-opts { flex: 1 1 100%; font-size: 13px; }
+.task-opts summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.task-opts[open] summary { margin-bottom: 8px; }
+.opts-body { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--stroke); border-radius: 10px; background: var(--bg-2); }
+.opt-models { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 10px; }
+.opt-models label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.opt-models input { padding: 5px 8px; font-size: 12px; }

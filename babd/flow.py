@@ -86,6 +86,41 @@ def add_usage(total, u):
     return total
 
 
+SKIPPABLE = {"architect": "no Architect: the Team Lead's plan is the design (small changes)",
+             "devops": "no DevOps: no deploy, the task ends after QA and the report",
+             "prep": "no parallel preparation: QA and DevOps do not prepare while the Developer builds"}
+
+
+def task_options(options, agent_ids=None):
+    """Validated per-task options: {"skip": [...], "models": {agent: model}}."""
+    options = options or {}
+    skip = [x for x in dict.fromkeys(options.get("skip") or []) if x]
+    bad = [x for x in skip if x not in SKIPPABLE]
+    if bad:
+        raise FlowError(f"cannot skip {', '.join(map(str, bad))} (only {', '.join(SKIPPABLE)})")
+    models = {}
+    for agent, model in (options.get("models") or {}).items():
+        model = str(model or "").strip()
+        if not model:
+            continue
+        if agent_ids is not None and agent not in agent_ids:
+            raise FlowError(f"no agent {agent!r} to set a model for")
+        if len(model) > 120:
+            raise FlowError("model name too long")
+        models[agent] = model
+    return {"skip": skip, "models": models}
+
+
+def apply_models(cfg, models):
+    """A copy of the team config with this task's model per agent."""
+    import copy
+    cfg = copy.deepcopy(cfg)
+    for a in cfg["agents"]:
+        if a["id"] in models:
+            a["llm"]["model"] = models[a["id"]]
+    return cfg
+
+
 def budget_of(project_cfg):
     b = (project_cfg or {}).get("budget") or {}
     out = {}
@@ -206,7 +241,7 @@ class Run:
     """One team run on a goal. State is plain JSON so the dashboard can show it as-is."""
 
     def __init__(self, team, goal, approver=None, on_event=None, run_id=None, slots=None, docs=None,
-                 project_id=None, resume=False):
+                 project_id=None, resume=False, options=None):
         self.team = team
         self.goal = goal
         self.docs = list(docs or [])       # task documents (babd/taskdocs.py): the brief every agent gets
@@ -234,6 +269,12 @@ class Run:
             ws.pop("result", None)
             self.state["workspace"] = {**ws, "project": self.project["id"], "name": self.project["name"]}
         self.state["pid"] = os.getpid()
+        if not resume or options is not None:
+            self.state["task_options"] = task_options(options, set(team.by_id))
+        self.options = self.state.get("task_options") or {"skip": [], "models": {}}
+        self.skip = set(self.options["skip"])
+        if "prep" in self.skip or "devops" in self.skip:
+            self.parallel_prep = False
         self.bus = MessageBus(self.emit, self.dir, self.lock)
         if resume:
             mp = os.path.join(self.dir, "messages.jsonl")
@@ -365,7 +406,8 @@ class Run:
     def finish_stage(self, key, result="done"):
         with self.lock:
             self.state["stages"][key] = result
-            if result == "done" and (key != "report" or self.state["deployed"]):
+            if result == "done" and (key != "report" or self.state["deployed"]
+                                     or ("devops" in getattr(self, "skip", ()) and self.state["verdict"] == "PASS")):
                 self.state["progress"] = max(self.state["progress"], STAGE_PROGRESS[key])
         self.emit("stage", {"stage": key, "result": result})
 
@@ -528,14 +570,20 @@ class Run:
         # PLAN
         self.stage("plan")
         self.agent("lead", "working", "Plan work and assign agents")
-        specialists = ROLES[1:]
+        specialists = [r for r in ROLES[1:] if r not in self.skip]
         team_desc = "\n".join(f"- {r}: {names[r]} - main task {team.by_id[r].main_task}; skills: "
                               f"{', '.join(team.by_id[r].cfg.get('skills', []))}" for r in specialists)
         slots = ", ".join(f'"{r}": "<task>"' for r in specialists)
         plan_text = self.step("plan", lambda: self.work("lead",
             f"{self.goal_block}\n\nYour team:\n{team_desc}\n\n"
-            "The work flows through you: Architect designs, Developer builds, QA tests (failed tests go back "
-            "to the Developer), DevOps deploys and sets up monitoring after QA passes and the CEO approves.\n"
+            + ("The work flows through you: " + ", ".join(
+                {"architect": "Architect designs", "developer": "Developer builds",
+                 "qa": "QA tests (failed tests go back to the Developer)",
+                 "devops": "DevOps deploys and sets up monitoring after QA passes and the CEO approves"}[r]
+                for r in specialists) + ".\n"
+               + ("" if "architect" not in self.skip else "There is no Architect on this task: put the design "
+                  "decisions the Developer needs into your plan.\n")
+               + ("" if "devops" not in self.skip else "This task has no deploy.\n")) +
             "Plan the work and assign one concrete task to every agent. Answer with only a JSON object:\n"
             '{"plan_summary": "<2-4 sentences>", "assignments": {' + slots + "}}",
             "Plan the work and assign agents", "plan",
@@ -554,11 +602,15 @@ class Run:
         context = f"{self.goal_block}\n\nTeam Lead plan:\n{summary}"
 
         # DESIGN
-        self.stage("design")
-        design = self.step("design", lambda: self.delegate("architect", "assign", task_for("architect"),
-                           f"{context}\n\nYour assignment:\n{task_for('architect')}", "design"))
-        self.write("02-architect.md", design)
-        self.finish_stage("design")
+        if "architect" in self.skip:
+            design = f"(No Architect on this task: follow the Team Lead's plan.)\n\n{plan_text}"
+            self.finish_stage("design", "skipped")
+        else:
+            self.stage("design")
+            design = self.step("design", lambda: self.delegate("architect", "assign", task_for("architect"),
+                               f"{context}\n\nYour assignment:\n{task_for('architect')}", "design"))
+            self.write("02-architect.md", design)
+            self.finish_stage("design")
 
         # CODE, with QA's test plan and DevOps' deploy preparation at the same time
         self.stage("code")
@@ -630,7 +682,10 @@ class Run:
 
         # APPROVAL + DEPLOY (only after QA passes)
         deploy = None
-        if verdict == "PASS":
+        if verdict == "PASS" and "devops" in self.skip:  # nothing to deploy in this task
+            self.finish_stage("approval", "skipped")
+            self.finish_stage("deploy", "skipped")
+        elif verdict == "PASS":
             approved, note = True, ""
             if "deploy" in self.require_approval:
                 approved, note = self._ask_ceo(f"QA passed. Approve deploying: {goal}?")
@@ -659,9 +714,10 @@ class Run:
         self.stage("report")
         self.agent("lead", "working", "Report to the CEO")
         ev = self.state.get("evidence") or {}
+        no_deploy = "devops" in self.skip
         facts = (f"QA verdict: {verdict} after {rounds} fix round(s) "
                  f"({'verified by ' + ev['source'] if ev.get('verified') else 'NOT verified: ' + (ev.get('note') or 'no evidence')}). "
-                 f"Deployed: {'yes' if deploy else 'no'}. "
+                 + (f"Deploy: not part of this task. " if no_deploy else f"Deployed: {'yes' if deploy else 'no'}. ") +
                  f"CEO approval: {self.state['approval']['result'] if self.state['approval'] else 'not requested'}.")
         outputs = f"### Design\n{design}\n\n### Code\n{code}\n\n### QA report\n{report}"
         if deploy:
@@ -793,13 +849,14 @@ class Run:
     def _facts(self, verdict, deployed):
         """Dashboard numbers from what actually happened, not from the model's opinion."""
         pending = self.state["approval"] and self.state["approval"]["result"] != "approved" and verdict == "PASS"
-        if deployed:
+        finished = deployed or (verdict == "PASS" and "devops" in getattr(self, "skip", ()))
+        if finished and not self.state["blockers"]:
             status = "DONE"
         elif self.state["blockers"]:
             status = "BLOCKED"
         else:
             status = "ACTIVE"
-        return {"status": status, "progress": 100 if deployed else self.state["progress"],
+        return {"status": status, "progress": 100 if finished else self.state["progress"],
                 "approval_needed": 1 if pending else 0, "blockers": len(self.state["blockers"]),
                 "qa_verdict": verdict, "fix_rounds": self.state["qa_rounds"], "deployed": deployed,
                 "verified": bool((self.state.get("evidence") or {}).get("verified")),
