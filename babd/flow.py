@@ -26,7 +26,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .config import ROOT
-from . import skillpacks, taskdocs
+from . import projects, skillpacks, taskdocs
 from .gbrain import one_line, slugify
 
 RUNS_DIR = os.path.join(ROOT, "runs")
@@ -153,7 +153,8 @@ class MessageBus:
 class Run:
     """One team run on a goal. State is plain JSON so the dashboard can show it as-is."""
 
-    def __init__(self, team, goal, approver=None, on_event=None, run_id=None, slots=None, docs=None):
+    def __init__(self, team, goal, approver=None, on_event=None, run_id=None, slots=None, docs=None,
+                 project_id=None):
         self.team = team
         self.goal = goal
         self.docs = list(docs or [])       # task documents (babd/taskdocs.py): the brief every agent gets
@@ -187,6 +188,11 @@ class Run:
         }
         if self.docs:
             self.write("00-task.md", taskdocs.brief_of(self.docs) + "\n")
+        # Where the agents work: a git worktree of the task's project, never the BABD installation.
+        self.project, self.workspace = None, None
+        if project.get("use_projects", True):
+            self.project = projects.get(team.cfg, project_id)  # fails now for an unknown project
+            self.state["workspace"] = {"project": self.project["id"], "name": self.project["name"]}
         self.bus = MessageBus(self.emit, self.dir, self.lock)
         self.state["messages"] = self.bus.messages
         self.steps = 0
@@ -212,10 +218,18 @@ class Run:
     @property
     def goal_block(self):
         """The goal as every prompt shows it: the CEO's words plus the full task documents."""
-        if not self.docs:
-            return f"CEO goal:\n{self.goal}"
-        return (f"CEO goal:\n{self.goal}\n\nThe CEO gave the task as document(s); follow them. (Agents with file "
-                f"tools can also read them at {os.path.join(self.dir, '00-task.md')}.)\n\n{taskdocs.brief_of(self.docs)}")
+        text = f"CEO goal:\n{self.goal}"
+        if self.docs:
+            text += (f"\n\nThe CEO gave the task as document(s); follow them. (Agents with file tools can also read "
+                     f"them at {os.path.join(self.dir, '00-task.md')}.)\n\n{taskdocs.brief_of(self.docs)}")
+        if self.workspace:
+            ws = self.workspace
+            text += (f"\n\n## Workspace\nProject: {ws['name']}. Work ONLY in this folder: {ws['dir']} (git branch "
+                     f"{ws['branch']}; BABD commits and merges it when the task ends). Create, change and run files "
+                     f"only there. Never change the BABD installation at {projects.ROOT} or any other project. "
+                     "If you cannot write files yourself, give every file as a fenced block whose first line is "
+                     "```<language> file=<path relative to the workspace>; BABD writes those files for you.")
+        return text
 
     def write(self, name, content):
         with open(os.path.join(self.dir, name), "w") as f:
@@ -322,14 +336,37 @@ class Run:
         except Exception:
             self.agent(agent_id, "blocked")
             raise
+        self.write_files(agent_id, out, reply_kind)
         self.bus.send(agent_id, "lead", reply_kind, out, seconds=round(time.monotonic() - started, 1))
         self.agent(agent_id, "done")
         return out
 
+    def write_files(self, agent_id, out, kind):
+        """An agent without file tools gives its files as ```lang file=path blocks: write them."""
+        if not self.workspace or self.team.by_id[agent_id].harness.has_tools:
+            return
+        written = projects.write_file_blocks(out, self.workspace["dir"])
+        if written:
+            with self.lock:
+                self.state["workspace"].setdefault("files_written", []).extend(
+                    {"agent": agent_id, "kind": kind, "path": p} for p in written)
+            self.emit("files", {"agent": agent_id, "kind": kind, "paths": written})
+
     # -- the flow ----------------------------------------------------------------------------
+
+    def prepare_workspace(self):
+        """Create / clone the project and this task's worktree; every agent works there."""
+        self.workspace = projects.start(self.project, self.id)
+        for a in self.team.agents:
+            a.harness.cfg = {**a.harness.cfg, "cwd": self.workspace["dir"]}
+        with self.lock:
+            self.state["workspace"].update({k: self.workspace[k] for k in ("dir", "branch", "base")})
+        self.emit("workspace", dict(self.state["workspace"]))
 
     def execute(self):
         try:
+            if self.project:
+                self.prepare_workspace()
             self._flow()
             self.state["status"] = "done"
         except FlowCancelled as e:
@@ -338,6 +375,8 @@ class Run:
         except Exception as e:  # any agent / harness failure ends the run with a clear error
             self.state["status"] = "failed"
             self.state["error"] = f"{type(e).__name__}: {e}"
+        if self.workspace:
+            self.finish_workspace()
         self.state["finished_at"] = now()
         self.emit("finished", {"status": self.state["status"], "error": self.state["error"],
                                "report": self.state["report"]})
@@ -499,6 +538,17 @@ class Run:
         self.bus.send("lead", "ceo", "report", rep.get("summary") or report_text, report=rep)
         self.agent("lead", "done")
         self.finish_stage("report")
+
+    def finish_workspace(self):
+        """Commit the task's work on its branch, and merge it per the project's merge policy."""
+        policy = self.project["merge"]
+        passed = self.state["status"] == "done" and self.state["verdict"] == "PASS"
+        approved = not self.state["approval"] or self.state["approval"].get("result") == "approved"
+        merge = passed and (policy == "on_pass" or (policy == "on_approval" and approved))
+        result = projects.finish(self.project, self.workspace, f"babd: {one_line(self.goal, 72)} (task {self.id})", merge)
+        with self.lock:
+            self.state["workspace"]["result"] = result
+        self.emit("workspace", result)
 
     def parallel(self, jobs):
         """Run {agent_id: fn} at the same time. Returns {agent_id: result}; re-raises the first error

@@ -521,3 +521,13 @@ button.chip { font-family: inherit; cursor: pointer; }
 .card.dropping { outline: 2px dashed var(--ceo); outline-offset: -6px; background: color-mix(in srgb, var(--ceo) 8%, var(--panel)); }
 .doc-view { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12px; line-height: 1.55; margin: 0;
   background: var(--bg-2); border: 1px solid var(--stroke); border-radius: 10px; padding: 14px; max-height: 70vh; overflow: auto; }
+
+/* ---- projects ------------------------------------------------------------------------------ */
+.project-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.project-pick select { width: auto; padding: 5px 8px; font-size: 13px; }
+.ws-line { font-size: 12px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
+.ws-line b { color: var(--text); }
+.ws-line code { font-family: var(--mono); font-size: 11px; color: var(--text); }
+.proj-list { display: grid; gap: 8px; }
+.proj-row { display: grid; gap: 6px; border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 10px; background: var(--bg-2); }
+.proj-row .row2 { gap: 6px; }

@@ -40,7 +40,8 @@
         "Blockers",
         "Daily Report"
       ]
-    }
+    },
+    "use_projects": false
   },
   "agents": [
     {

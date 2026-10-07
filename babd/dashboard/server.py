@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, save_config, set_env_var
-from .. import skillpacks, taskdocs
+from .. import projects, skillpacks, taskdocs
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
 from ..log import add_listener, log
@@ -30,7 +30,7 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram")
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
-               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents")
+               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback")
 
 
@@ -137,6 +137,8 @@ class Dashboard:
                             "enabled": sp.enabled(cfg["project"]), "enforce": sp.enforce(cfg["project"])}
                            for sp in skillpacks.packs()],
             "general_skills": skillpacks.GENERAL_RECOMMENDED,
+            "projects": projects.projects(cfg),
+            "default_project": cfg["project"].get("default_project") or projects.DEFAULT_ID,
             "workflow": cfg.get("workflow", []),
             "agents": [public_agent(a) for a in cfg["agents"]],
             "harnesses": {k: {"label": c.label, "doc": (c.__doc__ or "").strip().splitlines()[0],
@@ -309,9 +311,10 @@ class Dashboard:
 
     def summary(self, run):
         s = run.snapshot()
-        return {k: s[k] for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
+        return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
-                                  "blockers", "report", "memory", "skills", "steps", "documents", "messages")}
+                                  "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
+                                  "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -382,7 +385,40 @@ class Dashboard:
             raise ApiError(400, "at most 20 documents at once")
         return docs
 
-    def start_run(self, goal, auto_approve=False, update_dashboard=True, docs=None):
+    def update_projects(self, body):
+        """Replace the project list (and the default project)."""
+        with self.cfg_lock:
+            cfg = self.load()
+            if "projects" in body:
+                if not isinstance(body["projects"], list):
+                    raise ApiError(400, "projects must be a list")
+                seen, out = set(), []
+                for p in body["projects"]:
+                    if not isinstance(p, dict):
+                        raise ApiError(400, "each project needs at least a name")
+                    clean = {k: p[k] for k in ("id", "name", "path", "repo", "branch", "merge", "push")
+                             if p.get(k) not in (None, "")}
+                    try:
+                        n = projects.normalize(clean)
+                    except projects.ProjectError as e:
+                        raise ApiError(400, str(e))
+                    if projects.inside_babd(n["path"]):
+                        raise ApiError(400, f"project {n['id']}: {n['path']} is inside the BABD installation")
+                    if n["id"] in seen:
+                        raise ApiError(400, f"two projects with the id {n['id']!r}")
+                    seen.add(n["id"])
+                    out.append({**clean, "id": n["id"]})
+                cfg["projects"] = out
+            if "default_project" in body:
+                cfg["project"]["default_project"] = str(body["default_project"])
+            try:
+                projects.get(cfg)
+            except projects.ProjectError as e:
+                raise ApiError(400, str(e))
+            self.save(cfg)
+            return {"projects": projects.projects(cfg), "default_project": cfg["project"].get("default_project")}
+
+    def start_run(self, goal, auto_approve=False, update_dashboard=True, docs=None, project=None):
         """Add a task. It starts now when a task slot is free, else it waits in the queue. With task
         documents, the goal may be empty: the first document's title names the task."""
         docs = list(docs or [])
@@ -391,11 +427,16 @@ class Dashboard:
             raise ApiError(400, "goal is empty")
         if len(goal) > 20000:
             raise ApiError(400, "goal is too long")
-        Team(self.load(), log=lambda m: None)  # a broken config fails here, not later in the queue
+        cfg = self.load()
+        Team(cfg, log=lambda m: None)  # a broken config fails here, not later in the queue
+        try:
+            project = projects.get(cfg, project)["id"] if cfg["project"].get("use_projects", True) else None
+        except projects.ProjectError as e:
+            raise ApiError(400, str(e))
         with self.tasks_lock:
             entry = {"id": self.new_run_id(), "goal": goal, "status": "queued", "queued_at": flow.now(),
                      "auto_approve": bool(auto_approve), "update_dashboard": bool(update_dashboard),
-                     "docs": docs, "documents": [taskdocs.summary(d) for d in docs]}
+                     "docs": docs, "documents": [taskdocs.summary(d) for d in docs], "project": project}
             self.queue.append(entry)
         self.hub.publish("tasks", {"event": "queued", "task": {k: v for k, v in entry.items() if k != "docs"}})
         self._pump()
@@ -405,7 +446,7 @@ class Dashboard:
             return self.summary(ctx["run"])
         return {**{k: v for k, v in entry.items() if k != "docs"}, "position": self.queued_position(entry["id"])}
 
-    def start_tasks(self, goals, auto_approve=False, update_dashboard=True, docs=None):
+    def start_tasks(self, goals, auto_approve=False, update_dashboard=True, docs=None, project=None):
         """Several tasks: one per goal line and one per document."""
         goals = [g.strip() for g in goals if isinstance(g, str) and g.strip()]
         docs = list(docs or [])
@@ -413,8 +454,8 @@ class Dashboard:
             raise ApiError(400, "no tasks given")
         if len(goals) + len(docs) > 50:
             raise ApiError(400, "at most 50 tasks at once")
-        return {"tasks": [self.start_run(g, auto_approve, update_dashboard) for g in goals]
-                + [self.start_run("", auto_approve, update_dashboard, [d]) for d in docs]}
+        return {"tasks": [self.start_run(g, auto_approve, update_dashboard, project=project) for g in goals]
+                + [self.start_run("", auto_approve, update_dashboard, [d], project) for d in docs]}
 
     def queued_position(self, run_id):
         with self.tasks_lock:
@@ -463,7 +504,7 @@ class Dashboard:
             self.hub.publish("run", {"event": kind, "data": data, "summary": self.summary(run)})
 
         run = flow.Run(team, entry["goal"], approver=approver, on_event=on_event, run_id=entry["id"], slots=self.slots,
-                       docs=entry.get("docs"))
+                       docs=entry.get("docs"), project_id=entry.get("project"))
         ctx["run"] = run
         self.active[run.id] = ctx
         self.last_run = run
@@ -685,12 +726,16 @@ def make_handler(dash, token, allowed_hosts):
                 if not isinstance(goals, list):
                     raise ApiError(400, "goals must be a list of task descriptions")
                 docs = d.read_documents(b.get("documents"), b.get("links"))
-                return d.start_tasks(goals, bool(b.get("auto_approve")), b.get("update_dashboard", True), docs)
+                return d.start_tasks(goals, bool(b.get("auto_approve")), b.get("update_dashboard", True), docs,
+                                     b.get("project"))
+            if method == "PUT" and parts == ["projects"]:
+                return d.update_projects(self.body())
             if parts[:1] == ["runs"]:
                 if method == "POST" and len(parts) == 1:
                     b = self.body()
                     docs = d.read_documents(b.get("documents"), b.get("links"))
-                    return d.start_run(b.get("goal"), bool(b.get("auto_approve")), b.get("update_dashboard", True), docs)
+                    return d.start_run(b.get("goal"), bool(b.get("auto_approve")), b.get("update_dashboard", True), docs,
+                                       b.get("project"))
                 if method == "GET" and len(parts) == 2:
                     return d.load_run(parts[1])
                 if method == "GET" and parts[2:] == ["document"]:

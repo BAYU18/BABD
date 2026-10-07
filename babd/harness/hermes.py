@@ -86,6 +86,10 @@ def write_hermes_home(home, llm):
 class HermesLocal(Harness):
     """Runs `hermes chat -q <prompt> -Q` with a per-agent HERMES_HOME holding this agent's model config."""
     type = "hermes_local"
+
+    @property
+    def has_tools(self):
+        return self.cfg.get("toolsets") != []
     label = "Hermes Agent"
     install_spec = HERMES
     defaults = {"toolsets": ["terminal", "file"], "max_turns": 30, "timeout_sec": 1200, "yolo": False}
@@ -218,6 +222,7 @@ class HermesGateway(Harness):
     agent's own LLM and a generated API key, and stops it when BABD exits.
     """
     type = "hermes_gateway"
+    has_tools = True
     label = "Hermes Gateway"
     defaults = {"timeout_sec": 1200}
 

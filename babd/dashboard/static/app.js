@@ -128,7 +128,17 @@ function renderAll() {
   renderHistory();
   renderRunButtons();
   renderNav();
+  renderProjectSelects();
   if (drawer?.mode === "chat") renderChat();
+}
+
+function renderProjectSelects() {
+  for (const sel of document.querySelectorAll("[data-project-select]")) {
+    const keep = sel.value || S.default_project;
+    sel.innerHTML = (S.projects || []).map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+    sel.value = (S.projects || []).some((p) => p.id === keep) ? keep : S.default_project;
+    sel.closest(".project-pick").classList.toggle("hidden", S.project.use_projects === false);
+  }
 }
 
 function renderRunButtons() {
@@ -137,6 +147,17 @@ function renderRunButtons() {
 }
 
 // ---- top bar -----------------------------------------------------------------------------
+function projectRow(pr, isNew = false) {
+  const merge = [["on_approval", "Merge after QA passes and you approve the deploy"], ["on_pass", "Merge when QA passes"], ["never", "Never merge: keep a branch to review"]];
+  return `<div class="proj-row" data-id="${esc(isNew ? "" : pr.id || "")}">
+    <div class="row2">${text("pr_name", pr.name, "Name, e.g. Web shop")}${text("pr_repo", pr.repo, "Git repository URL (optional)")}</div>
+    <div class="row2">${text("pr_path", pr.custom_path ? pr.path : "", "Folder (optional, default workspace/projects/<id>)")}${text("pr_branch", pr.branch, "Branch (default: the repo's)")}</div>
+    <div class="row2">${select("pr_merge", pr.merge, merge)}
+      <label class="check"><input type="checkbox" name="pr_push" ${pr.push ? "checked" : ""}> Push after merging</label></div>
+    ${pr.id === "default" ? '<div class="help">Default project (always there).</div>' : `<button type="button" class="linkish" data-proj-rm>Remove</button>`}
+  </div>`;
+}
+
 function brainPill() {
   const b = S.brain || {};
   if (!b.enabled) return pill("off", "var(--dim)");
@@ -468,7 +489,7 @@ function renderRun() {
   body.innerHTML = `
     <div>
       <div class="run-goal">${esc(r.goal)}</div>
-      ${docChips(r.documents, r.id)}
+      ${docChips(r.documents, r.id)}${workspaceLine(r.workspace)}
       <div class="run-meta">${pill(r.status.replace("_", " "), statusColor, r.status === "running")}
         <span class="muted small">${esc(r.id)} · ${r.progress ?? 0}%${r.qa_rounds ? ` · ${r.qa_rounds} QA fix round(s)` : ""}</span></div>
       ${r.error ? `<div class="note warn" style="margin-top:8px">${esc(r.error)}</div>` : ""}
@@ -508,7 +529,7 @@ $("#btnRun").addEventListener("click", async () => {
     $("#runHistory").value = "";
     $("#btnRun").disabled = true;
     const r = await api("POST", "runs", { goal, auto_approve: $("#autoApprove").checked, update_dashboard: $("#updateImage").checked,
-      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links: att.links })
+      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links: att.links, project: $("#goalProject").value || undefined })
       .finally(() => { $("#btnRun").disabled = false; });
     $("#goal").value = "";
     clearAttach("command");
@@ -862,8 +883,28 @@ $("#btnSettings").addEventListener("click", () => {
     ${PACKS().map((k) => `<div class="field"><label>${esc(k.title)} (${esc(k.source)})</label>
       <label class="check"><input type="checkbox" id="pk_en_${k.key}" ${(p[k.key]?.enabled ?? true) ? "checked" : ""}> Agents use their ${esc(k.title)} on every step they apply to</label>
       <label class="check"><input type="checkbox" id="pk_enf_${k.key}" ${(p[k.key]?.enforce ?? true) ? "checked" : ""}> Ask an agent to redo a step once when its answer skips one of these skills</label></div>`).join("")}
+    <div class="field"><label>Projects (where the agents work)</label>
+      <div class="help">Each task works in its own git branch of the chosen project, outside the BABD installation. When the task ends BABD commits the work and merges it (by the merge rule) into the project's branch.</div>
+      <div class="proj-list" id="projList">${(S.projects || []).map((pr) => projectRow(pr)).join("")}</div>
+      <div class="row"><button type="button" class="btn small" id="projAdd">+ Add project</button>
+        <label class="project-pick">Default <select id="projDefault">${(S.projects || []).map((pr) => `<option value="${esc(pr.id)}" ${pr.id === S.default_project ? "selected" : ""}>${esc(pr.name)}</option>`).join("")}</select></label>
+        <button type="button" class="btn small primary" id="projSave">Save projects</button></div></div>
     <div class="note">Flow: ${S.flow.stages.map((s) => esc(s.label)).join(" → ")}. Specialists only talk to the Team Lead; only the Team Lead reports to the CEO.</div>
     <div style="display:flex;justify-content:flex-end"><button class="btn primary" id="p_save">Save</button></div>`, true);
+  $("#projAdd").onclick = () => $("#projList").insertAdjacentHTML("beforeend", projectRow({ merge: "on_approval" }, true));
+  $("#projList").onclick = (e) => { const rm = e.target.closest("[data-proj-rm]"); if (rm) rm.closest(".proj-row").remove(); };
+  $("#projSave").onclick = async () => {
+    const rows = [...document.querySelectorAll("#projList .proj-row")].filter((r) => r.dataset.id !== "default" || r.querySelector('[name="pr_repo"]').value || r.querySelector('[name="pr_path"]').value);
+    const list = rows.map((r) => {
+      const v = (n) => r.querySelector(`[name="${n}"]`).value.trim();
+      return { id: r.dataset.id || undefined, name: v("pr_name"), path: v("pr_path"), repo: v("pr_repo"), branch: v("pr_branch"),
+        merge: v("pr_merge"), push: r.querySelector('[name="pr_push"]').checked };
+    }).filter((p) => p.name || p.repo || p.path);
+    try {
+      await api("PUT", "projects", { projects: list, default_project: $("#projDefault").value });
+      toast("Projects saved", "ok"); await refresh(); $("#btnSettings").click();
+    } catch (err) { toast(err.message, "bad"); }
+  };
   $("#p_save").onclick = async () => {
     try {
       await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
@@ -1052,7 +1093,7 @@ function renderTasks() {
     return `<article class="task" data-task="${esc(t.id)}">
       <div class="task-row">
         <button type="button" class="task-toggle" data-toggle="${esc(t.id)}" aria-expanded="${open}" aria-label="Show steps">${open ? "▾" : "▸"}</button>
-        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
+        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
         <div class="task-status">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")}</div>
         <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
@@ -1064,6 +1105,7 @@ function renderTasks() {
       </div>
       ${t.error ? `<div class="note warn">${esc(t.error)}</div>` : ""}
       ${open && t.documents?.length && t.status !== "queued" ? docChips(t.documents, t.id) : ""}
+      ${open ? workspaceLine(t.workspace) : ""}
       ${open ? `<div class="task-steps">${stepRows ? `<table><thead><tr><th>Agent</th><th>Step</th><th>Status</th><th>Waited</th><th>Took</th></tr></thead><tbody>${stepRows}</tbody></table>` : '<div class="muted small">No steps yet.</div>'}</div>` : ""}
     </article>`;
   }).join("");
@@ -1117,7 +1159,7 @@ $("#btnAddTasks").addEventListener("click", async () => {
   try {
     $("#btnAddTasks").disabled = true;
     const r = await api("POST", "tasks", { goals, auto_approve: $("#taskAutoApprove").checked,
-      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links })
+      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links, project: $("#taskProject").value || undefined })
       .finally(() => { $("#btnAddTasks").disabled = false; });
     const started = r.tasks.filter((t) => t.status !== "queued").length;
     toast(`${r.tasks.length} task(s) added: ${started} started, ${r.tasks.length - started} queued`, "ok");
@@ -1225,6 +1267,18 @@ async function viewDocument(runId) {
     const r = await api("GET", `runs/${runId}/document`);
     openModal("Task document", `<pre class="doc-view">${esc(r.text)}</pre>`);
   } catch (err) { toast(err.message, "bad"); }
+}
+
+const projectName = (id) => (S.projects || []).find((p) => p.id === id)?.name || id;
+
+function workspaceLine(ws) {
+  if (!ws?.name) return "";
+  const r = ws.result;
+  const res = !r ? (ws.branch ? `working on <code>${esc(ws.branch)}</code>` : "preparing the workspace")
+    : r.merged ? `merged into <code>${esc(ws.base)}</code> (${r.files} file(s), ${esc(r.commit || "")})${r.pushed ? " · pushed" : ""}`
+    : r.commit ? `on branch <code>${esc(ws.branch)}</code> (${esc(r.commit)})` : "";
+  const written = (ws.files_written || []).length ? ` · BABD wrote ${ws.files_written.length} file(s) for agents without tools` : "";
+  return `<div class="ws-line" title="${esc(ws.dir || "")}">📁 <b>${esc(ws.name)}</b> · ${res}${r?.note ? ` · <span class="muted">${esc(r.note)}</span>` : ""}${written}</div>`;
 }
 
 function docChips(docs, runId) {

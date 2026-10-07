@@ -15,6 +15,8 @@
     "max_fix_rounds": 2,
     "max_parallel_tasks": 3,
     "parallel_prep": true,
+    "use_projects": true,
+    "default_project": "default",
     "gbrain": {
       "enabled": true,
       "strict": true,
@@ -42,6 +44,7 @@
       ]
     }
   },
+  "projects": [],
   "agents": [
     {
       "id": "lead",

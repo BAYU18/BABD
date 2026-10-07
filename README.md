@@ -219,6 +219,46 @@ Team Lead ──report──▶ CEO
   approval, deploy), not taken from the model.
 - Every message is saved in `runs/<id>/messages.jsonl`, with `state.json` and one file per step.
 
+## Projects: where the agents' work goes
+
+The agents never work inside the BABD installation. Every task belongs to a **project**, and runs in
+its own git worktree of that project, on a branch `babd/<task id>`:
+
+```
+workspace/projects/<project>/          the project (a git repository; created, or cloned from `repo`)
+workspace/worktrees/<project>/<task>/  this task's worktree: every agent of the task works here
+```
+
+So tasks running at the same time never step on each other's files, and the project's main checkout
+only changes when a task is merged. When a task ends, BABD commits what changed on its branch and,
+by the project's `merge` rule, merges it into the project's branch:
+
+| `merge` | Merged when |
+| --- | --- |
+| `on_approval` (default) | QA passed and you approved the deploy (or no approval is required) |
+| `on_pass` | QA passed |
+| `never` | never: the branch stays for you to review |
+
+A failed or stopped task keeps its work on its branch. A merge conflict is reported, not forced.
+`push: true` pushes the merged branch when the project has a remote.
+
+Agents with tools (Hermes, Claude Code) work in the worktree directly. Agents without tools (direct
+API) are asked to give each file as a fenced block whose first line is ```` ```python file=src/app.py ````;
+BABD writes those files into the worktree (never outside it).
+
+Add projects in **Team settings → Projects** (name, git URL or folder, branch, merge rule, push), pick
+one per task in the goal form or task board, or on the command line with `--project <id>`. In
+`agents.json`:
+
+```json
+"projects": [
+  {"id": "shop", "name": "Web shop", "repo": "https://github.com/acme/shop.git", "merge": "on_approval", "push": true}
+]
+```
+
+There is always a `default` project (`workspace/projects/default`). `project.use_projects: false`
+turns all this off (agents then work in `workspace/`).
+
 ## Task documents (.md files and links)
 
 Instead of typing the main task, give it as a Markdown (or text) file: a spec, a ticket, a PRD.

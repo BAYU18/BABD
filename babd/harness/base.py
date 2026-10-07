@@ -20,6 +20,7 @@ class HarnessError(LLMError):
 
 class Harness:
     type = ""
+    has_tools = False  # can it read/write files and run commands itself (else BABD writes its file blocks)
     label = ""
     install_spec = None   # tools.InstallSpec of the program this harness runs, if any
     defaults = {}         # options written to agents.json when this harness is selected

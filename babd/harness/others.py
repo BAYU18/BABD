@@ -35,6 +35,7 @@ class Direct(Harness):
 class ClaudeCode(Harness):
     """Runs `claude --print` (Claude Code) with this agent's Anthropic-compatible endpoint, key and model."""
     type = "claude_local"
+    has_tools = True
     label = "Claude Code"
     install_spec = CLAUDE_CODE
     defaults = {"max_turns": 40, "timeout_sec": 1800, "dangerously_skip_permissions": False}

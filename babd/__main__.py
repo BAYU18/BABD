@@ -57,6 +57,7 @@ def main(argv=None):
     c.add_argument("agent")
     r = sub.add_parser("run", help="full team run on a goal (several goals: run at the same time)")
     r.add_argument("goal", nargs="+", help="a goal, a .md/.txt file, or a link to one (each is a task)")
+    r.add_argument("--project", help="the project the agents work in (agents.json \"projects\"; default: default)")
     r.add_argument("--doc", action="append", default=[], metavar="FILE_OR_LINK",
                    help="a task document (Markdown file or link) for the goal; repeat for more")
     r.add_argument("--approve", action="store_true", help="approve the deploy without asking (CEO approval gate)")
@@ -208,6 +209,13 @@ def run_goals(args, cfg, team):
         print(f"error: {e}", file=sys.stderr)
         return 2
     goals = [g for g, _ in tasks]
+    if cfg["project"].get("use_projects", True):
+        from . import projects
+        try:
+            projects.get(cfg, args.project)
+        except projects.ProjectError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
     many = len(goals) > 1
     out_lock = threading.Lock()
 
@@ -237,8 +245,9 @@ def run_goals(args, cfg, team):
     states = [None] * len(goals)
 
     def one(i, goal, docs):
-        with limit:
-            states[i] = Run(team, goal, approver=approver, on_event=show(i + 1), slots=slots, docs=docs).execute()
+        with limit:  # a Team per task: each task's agents work in that task's own workspace
+            states[i] = Run(Team(cfg, log=lambda m: None, brain=team.brain), goal, approver=approver,
+                            on_event=show(i + 1), slots=slots, docs=docs, project_id=args.project).execute()
 
     for goal, docs in tasks:
         for d in docs:
@@ -265,6 +274,12 @@ def run_goals(args, cfg, team):
             if rep.get("summary"):
                 print(f"\n{rep['summary']}")
         print(f"\nFull output saved in {state['dir']}")
+        ws = state.get("workspace") or {}
+        if ws.get("dir"):
+            res = ws.get("result") or {}
+            print(f"Work: project {ws['name']}, branch {ws['branch']}"
+                  + (f", commit {res['commit']} ({res['files']} file(s))" if res.get("commit") else "")
+                  + (", merged" if res.get("merged") else "") + (f" - {res['note']}" if res.get("note") else ""))
     if args.update_dashboard:
         for state in states:
             cfg = apply_run_to_config(cfg, state)
