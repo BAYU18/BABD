@@ -195,6 +195,7 @@ function agentCard(a) {
         <span class="chip" title="${esc(a.harness_summary)}">Harness <b>${esc(harnessLabel)}</b></span>
         <span class="chip" title="${esc(llm.base_url || "")}">LLM <b>${esc(llm.model)}</b></span>
         <span class="chip ${llm.api_key_set ? "ok" : "bad"}">${llm.api_key_set ? "key set" : "no key"}</span>
+        ${S.superpowers?.enabled && (a.superpowers ?? []).length ? `<span class="chip" title="${esc(a.superpowers.join("\n"))}">Superpowers <b>×${a.superpowers.length}</b></span>` : ""}
         ${a.telegram?.enabled ? `<span class="chip">Telegram <b>${esc(a.telegram.bot_username)}</b></span>` : ""}
         ${check ? `<span class="chip ${check.ok ? "ok" : "bad"}" title="${esc(check.summary)}">${check.ok ? "check OK" : "check failed"}</span>` : ""}
       </div>
@@ -292,10 +293,20 @@ function memoryItem(m) {
     <span class="msg-time">${fmtTime(m.at)}</span></li>`;
 }
 
+function skillsItem(k) {
+  const ok = !k.missing.length;
+  const what = ok ? `applied ${k.skills.length} skill(s)${k.retried ? " (after a redo)" : ""}`
+    : `⚠ skipped ${esc(k.missing.join(", "))}${k.retried ? " even after a redo" : ""}`;
+  return `<li class="mem skills ${ok ? "ok" : "bad"}" title="${esc(k.skills.join("\n"))}"><span class="mem-dot"></span>
+    <span class="who" style="--c:${colorOf(k.agent)}">${esc(nameOf(k.agent))}</span> superpowers · ${what}
+    <span class="kind">${esc(k.skills.join(", "))}</span><span class="msg-time">${fmtTime(k.at)}</span></li>`;
+}
+
 function timelineItems(r) {
-  const mem = r.memory || [];
+  const mem = [...(r.memory || []), ...(r.skills || []).map((k) => ({ ...k, isSkills: true }))]
+    .sort((a, b) => (a.at || "").localeCompare(b.at || ""));
   const out = [];
-  const memAfter = (seq) => mem.filter((m) => m.after_seq === seq).map(memoryItem);
+  const memAfter = (seq) => mem.filter((m) => m.after_seq === seq).map((m) => (m.isSkills ? skillsItem(m) : memoryItem(m)));
   out.push(...memAfter(0));
   for (const m of r.messages || []) {
     out.push(messageItem(m));
@@ -520,7 +531,15 @@ function renderConfig() {
     html = `
       <div class="skill-editor">${f.skills.map((s, i) => `<span class="skill">${esc(s)}<button type="button" data-rmskill="${i}" aria-label="Remove ${esc(s)}">×</button></span>`).join("") || '<span class="muted">No skills yet</span>'}</div>
       <div class="chat-input"><input type="text" id="newSkill" placeholder="Add a skill, e.g. Kubernetes"><button type="button" class="btn" id="addSkill">Add</button></div>
-      <div class="note">Skills go into the system prompt. Add <code>skills/&lt;skill-name&gt;.md</code> to give a skill real instructions.</div>`;
+      <div class="note">Skills go into the system prompt. Add <code>skills/&lt;skill-name&gt;.md</code> to give a skill real instructions.</div>
+      <div class="field"><label>Superpowers skills (obra/superpowers, run locally)</label>
+        <div class="help">Checked skills are always used: on every team step they apply to, their full text goes into the prompt and the answer must end with "Skills applied". Defaults for this role are marked ★.</div></div>
+      <div class="sp-list">${S.superpowers.catalog.map((c) => {
+        const on = (f.superpowers ?? S.superpowers.defaults[f.id] ?? []).includes(c.name);
+        const star = (S.superpowers.defaults[f.id] || []).includes(c.name) ? " ★" : "";
+        return `<label class="sp-item"><input type="checkbox" name="sp_${esc(c.name)}" ${on ? "checked" : ""}>
+          <span><b>${esc(c.name)}${star}</b><span class="help">${esc(c.why)}${c.steps.length ? ` · steps: ${esc(c.steps.join(", "))}` : " · on demand"}</span></span></label>`;
+      }).join("")}</div>`;
   }
   $("#drawerBody").innerHTML = html;
   $("#drawerFoot").innerHTML = `
@@ -593,6 +612,8 @@ function readForm() {
       else h[key] = el.value.trim();
     }
     form.harness = h;
+  } else if (tab === "skills") {
+    form.superpowers = S.superpowers.catalog.map((c) => c.name).filter((n) => $(`[name="sp_${CSS.escape(n)}"]`)?.checked);
   } else if (tab === "telegram") {
     form.telegram = { ...(form.telegram || {}), enabled: !!$('[name="tg_enabled"]').checked,
       bot_username: get("tg_bot_username"), token_env: get("tg_token_env") };
@@ -605,6 +626,7 @@ async function saveConfig(setup) {
   const body = {
     name: f.name, short_name: f.short_name, main_task: f.main_task, sub_tasks: f.sub_tasks, status: f.status,
     skills: f.skills, telegram: f.telegram, harness: f.harness,
+    ...(f.superpowers ? { superpowers: f.superpowers } : {}),
     llm: Object.fromEntries(["provider", "api", "base_url", "model", "effort", "api_key_env", "max_tokens"].map((k) => [k, f.llm[k] ?? ""])),
   };
   if (f.api_key) body.api_key = f.api_key;
@@ -679,13 +701,18 @@ $("#btnSettings").addEventListener("click", () => {
       <label class="check"><input type="checkbox" id="g_enabled" ${(p.gbrain?.enabled ?? true) ? "checked" : ""}> Every agent reads gbrain before a task and writes to it after</label>
       <label class="check"><input type="checkbox" id="g_strict" ${(p.gbrain?.strict ?? true) ? "checked" : ""}> Stop the agent step when gbrain can't be read or written</label>
       <label class="check"><input type="checkbox" id="g_cloud" ${p.gbrain?.allow_cloud ? "checked" : ""}> Allow gbrain to use cloud API keys (off = memory stays on this machine)</label>
+    </div>
+    <div class="field"><label>Superpowers skills</label>
+      <label class="check"><input type="checkbox" id="s_enabled" ${(p.superpowers?.enabled ?? true) ? "checked" : ""}> Agents use their Superpowers skills on every step they apply to</label>
+      <label class="check"><input type="checkbox" id="s_enforce" ${(p.superpowers?.enforce ?? true) ? "checked" : ""}> Ask an agent to redo a step once when its answer skips a required skill</label>
       <div class="help">Brain: ${esc(S.brain?.home || "")} · ${S.brain?.brain ? "ready" : "not set up yet (Set up all)"}</div></div>
     <div class="note">Flow: ${S.flow.stages.map((s) => esc(s.label)).join(" → ")}. Specialists only talk to the Team Lead; only the Team Lead reports to the CEO.</div>
     <div style="display:flex;justify-content:flex-end"><button class="btn primary" id="p_save">Save</button></div>`, true);
   $("#p_save").onclick = async () => {
     try {
       await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
-        gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked } });
+        gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked },
+        superpowers: { enabled: $("#s_enabled").checked, enforce: $("#s_enforce").checked } });
       toast("Settings saved", "ok"); closeModal(); refresh();
     } catch (err) { toast(err.message, "bad"); }
   };
@@ -705,6 +732,7 @@ function connect() {
     if (!viewingHistory) viewRun = S.run;
     if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`);
     if (d.event === "memory") flashMemory(d.data.agent, d.data.op);
+    if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok");
     if (d.event === "memory") logLine("gbrain", `${nameOf(d.data.agent)} ${d.data.op === "read" ? `read ${d.data.facts} fact(s), ${d.data.pages} page(s)` : `wrote ${d.data.page}`}`);
     if (d.event === "finished") { toast(`Run ${d.data.status}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
     renderTop(); renderAgents(); renderRun();

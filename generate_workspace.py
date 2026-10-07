@@ -10,7 +10,7 @@ from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-W, H = 1920, 1630
+W, H = 1920, 1658
 
 BG = "#0d1628"
 PANEL = "#15223a"
@@ -213,6 +213,12 @@ def chip_width(s):
     return len(s) * 7.0 + 22
 
 
+def chip_skills(agent):
+    """Skill chips for a card: its skills plus one chip for its Superpowers skills."""
+    sp = agent.get("superpowers") or []
+    return list(agent["skills"]) + ([f"Superpowers ×{len(sp)}"] if sp else [])
+
+
 def skill_chips(x, y, w, skills, color):
     """Wrapping skill chips + an "Add Skill" chip. Returns the bottom y."""
     cx, cy = x, y
@@ -267,7 +273,7 @@ def agent_card(x, y, w, h, num, agent):
     ty = cy + 36 + HARNESS_ROW_H + 8 + LLM_ROW_H + 8
     config_row(x + 20, ty, iw, "telegram", agent)
     label(x + 20, ty + TG_ROW_H + 22, "SKILLS")
-    skill_chips(x + 20, ty + TG_ROW_H + 32, iw, agent["skills"], color)
+    skill_chips(x + 20, ty + TG_ROW_H + 32, iw, chip_skills(agent), color)
 
 
 def lead_card(x, y, w, h, agent):
@@ -295,7 +301,7 @@ def lead_card(x, y, w, h, agent):
     config_row(x + 236, cy + 36, 200, "harness", agent)
     config_row(x + 236, cy + 36 + HARNESS_ROW_H + 8, 200, "telegram", agent)
     label(x + 452, cy + 52, "SKILLS")
-    skill_chips(x + 452, cy + 60, w - 452 - 24, agent["skills"], color)
+    skill_chips(x + 452, cy + 60, w - 452 - 24, chip_skills(agent), color)
 
 
 def human_avatar(cx, cy, r=34):
@@ -463,8 +469,8 @@ def build(cfg):
 
     # geometry
     agents_x0, card_w, gap = 40, 297, 24
-    agents_y, agents_h = 612, 798
-    lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 412
+    agents_y, agents_h = 640, 798
+    lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 440
     dash_x, dash_y, dash_w, dash_h = 1360, 30, 520, agents_y + agents_h - 30
 
     # --- connections ---------------------------------------------------

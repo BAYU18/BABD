@@ -20,13 +20,14 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, save_config, set_env_var
+from .. import superpowers
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
 from ..log import add_listener, log
 from ..team import Agent, Team, apply_run_to_config
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram")
+EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram", "superpowers")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback")
 
 
@@ -122,6 +123,9 @@ class Dashboard:
         return {
             "project": cfg["project"],
             "brain": GBrain(cfg["project"]).status(),
+            "superpowers": {"catalog": superpowers.catalog(), "steps": superpowers.STEP_SKILLS,
+                            "defaults": superpowers.DEFAULT_ASSIGNMENT,
+                            "enabled": superpowers.enabled(cfg["project"])},
             "workflow": cfg.get("workflow", []),
             "agents": [public_agent(a) for a in cfg["agents"]],
             "harnesses": {k: {"label": c.label, "doc": (c.__doc__ or "").strip().splitlines()[0],
@@ -138,6 +142,11 @@ class Dashboard:
         with self.cfg_lock:
             cfg = self.load()
             a = self.agent_cfg(cfg, agent_id)
+            if "superpowers" in body:
+                known = set(superpowers.skill_names())
+                unknown = [n for n in body["superpowers"] if n not in known]
+                if unknown:
+                    raise ApiError(400, f"unknown superpowers skill: {', '.join(unknown)}")
             for k in EDITABLE_AGENT_FIELDS:
                 if k in body:
                     a[k] = body[k]
@@ -179,6 +188,11 @@ class Dashboard:
                 p["name"] = str(body["name"])[:60]
             if "require_approval" in body:
                 p["require_approval"] = ["deploy"] if body["require_approval"] else []
+            if "superpowers" in body:
+                sp = p.setdefault("superpowers", {})
+                for k in ("enabled", "enforce"):
+                    if k in body["superpowers"]:
+                        sp[k] = bool(body["superpowers"][k])
             if "gbrain" in body:
                 g = p.setdefault("gbrain", {})
                 for k in ("enabled", "strict", "allow_cloud"):
@@ -225,7 +239,7 @@ class Dashboard:
             if agent_ids and a["id"] not in agent_ids:
                 continue
             try:
-                results[a["id"]] = {"ok": True, "summary": create_harness(a).setup()}
+                results[a["id"]] = {"ok": True, "summary": create_harness(a, cfg["project"]).setup()}
             except Exception as e:
                 results[a["id"]] = {"ok": False, "summary": str(e)}
             log(f"{a['id']}: {'OK' if results[a['id']]['ok'] else 'FAIL'} {results[a['id']]['summary']}", "setup")
@@ -257,7 +271,7 @@ class Dashboard:
         s = self.run.state
         return {k: s[k] for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
-                                  "blockers", "report", "memory")} | {"messages": s["messages"]}
+                                  "blockers", "report", "memory", "skills")} | {"messages": s["messages"]}
 
     def history(self):
         out = []

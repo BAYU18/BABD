@@ -309,13 +309,32 @@ class GBrain:
         if not self.command:
             install_gbrain(self.ref)
         os.makedirs(self.home, mode=0o700, exist_ok=True)
-        if not os.path.exists(self.db_path):
-            log(f"creating the team brain in {os.path.relpath(self.home, ROOT)} (PGLite, keyless) ...")
-            self.call("init", "--pglite", "--no-embedding", "--json", timeout=300)
+        ready = os.path.join(self.home, ".babd-brain-ready")
+        if not os.path.exists(ready):
+            if os.path.exists(self.db_path) and self._answers():
+                pass  # a brain from an earlier BABD version: keep it
+            else:
+                if os.path.exists(os.path.join(self.home, ".gbrain")):  # a half-made brain: keep it aside
+                    aside = os.path.join(self.home, f".gbrain.failed-{datetime.datetime.now():%Y%m%d-%H%M%S}")
+                    os.rename(os.path.join(self.home, ".gbrain"), aside)
+                    log(f"moved an unusable brain aside to {os.path.relpath(aside, ROOT)}")
+                log(f"creating the team brain in {os.path.relpath(self.home, ROOT)} (PGLite, keyless) ...")
+                # --git: the brain's content folder gets its own repository. Without it gbrain refuses
+                # to create the folder inside another git worktree, i.e. inside a cloned BABD project.
+                self.call("init", "--pglite", "--no-embedding", "--git", "--json", timeout=300)
             self.call("apply-migrations", "--yes", "--no-autopilot-install", timeout=600)
+            with open(ready, "w") as f:
+                f.write(now_stamp() + "\n")
         version = subprocess.run([self.gbrain_path(), "--version"], capture_output=True, text=True,
                                  env=self.env(), timeout=60).stdout.strip()
         return f"{version or 'gbrain'} · brain {os.path.relpath(self.home, ROOT)}"
+
+    def _answers(self):
+        try:
+            self.call("recall", "--query", "babd", "--budget-tokens", "50", "--json", timeout=120)
+            return True
+        except BrainError:
+            return False
 
     def status(self):
         return {"enabled": self.enabled, "installed": bool(self.gbrain_path()),

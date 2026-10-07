@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import time
@@ -72,7 +73,18 @@ class HermesLocal(Harness):
         if not self.cfg.get("manage_config", True):
             return [f"using existing {self.home}"]
         write_hermes_home(self.home, self.llm)
-        return [f"config {os.path.relpath(os.path.join(self.home, 'config.yaml'), ROOT)}"]
+        return [f"config {os.path.relpath(os.path.join(self.home, 'config.yaml'), ROOT)}"] + self._native_skills()
+
+    def _native_skills(self):
+        """Superpowers skills as native Hermes skills (HERMES_HOME/skills/superpowers/<name>)."""
+        from .. import superpowers
+        dest = os.path.join(self.home, "skills", "superpowers")
+        if not self.superpowers:
+            if os.path.isdir(dest):
+                shutil.rmtree(dest)
+            return []
+        superpowers.install_native(self.superpowers, dest)
+        return [f"{len(self.superpowers)} superpowers skills"]
 
     def build(self, system, messages):
         """(argv, env) for one run. Separate from complete() so it can be tested."""
@@ -198,7 +210,8 @@ class HermesGateway(Harness):
             return [f"server {self.cfg['api_base_url']}"]
         write_hermes_home(self.home, self.llm)
         self._managed_key()
-        return [f"config {os.path.relpath(self.home, ROOT)} (gateway starts on first run)"]
+        return [f"config {os.path.relpath(self.home, ROOT)} (gateway starts on first run)"] + \
+            HermesLocal._native_skills(self)
 
     def _start(self):
         """Start (or reuse) this agent's private gateway. Returns its base URL."""

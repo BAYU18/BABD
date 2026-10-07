@@ -18,12 +18,18 @@ for _cls in (Direct, HermesLocal, HermesGateway, ClaudeCode, Process):
     register_harness(_cls)
 
 
-def create_harness(agent_cfg):
+def create_harness(agent_cfg, project=None):
+    """The agent's harness. With `project`, it also knows the agent's Superpowers skills (setup copies
+    them into harnesses that load skills natively)."""
     kind = harness_config(agent_cfg).get("type", "direct")
     cls = HARNESSES.get(kind)
     if not cls:
         raise HarnessError(f"agent {agent_cfg['id']}: unknown harness {kind!r} (known: {', '.join(HARNESSES)})")
-    return cls(agent_cfg)
+    h = cls(agent_cfg)
+    if project is not None:
+        from .. import superpowers
+        h.superpowers = superpowers.assigned(agent_cfg) if superpowers.enabled(project) else []
+    return h
 
 
 # Option fields per harness for the dashboard's config form: (key, type, help).

@@ -21,6 +21,10 @@
       "ref": "latest-stable",
       "budget_tokens": 1200
     },
+    "superpowers": {
+      "enabled": true,
+      "enforce": true
+    },
     "ceo_telegram": {
       "enabled": true,
       "bot_username": "@babd_ceo_bot",
@@ -78,6 +82,18 @@
         "Planning",
         "Task Routing",
         "Reporting"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "brainstorming",
+        "writing-plans",
+        "subagent-driven-development",
+        "dispatching-parallel-agents",
+        "requesting-code-review",
+        "verification-before-completion",
+        "finishing-a-development-branch",
+        "diagnosing-superpowers",
+        "writing-skills"
       ]
     },
     {
@@ -132,6 +148,12 @@
         "System Design",
         "Web Research",
         "Diagrams"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "brainstorming",
+        "writing-plans",
+        "dispatching-parallel-agents"
       ]
     },
     {
@@ -182,6 +204,15 @@
         "Python",
         "TypeScript",
         "Git"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "test-driven-development",
+        "executing-plans",
+        "systematic-debugging",
+        "receiving-code-review",
+        "verification-before-completion",
+        "using-git-worktrees"
       ]
     },
     {
@@ -236,6 +267,13 @@
         "Unit Tests",
         "E2E Tests",
         "Bug Triage"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "test-driven-development",
+        "systematic-debugging",
+        "requesting-code-review",
+        "verification-before-completion"
       ]
     },
     {
@@ -289,6 +327,13 @@
         "Docker",
         "CI/CD",
         "Monitoring"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "verification-before-completion",
+        "finishing-a-development-branch",
+        "using-git-worktrees",
+        "systematic-debugging"
       ]
     }
   ],

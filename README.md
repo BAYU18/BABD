@@ -99,6 +99,51 @@ babd brain login lockout       # what the team knows about these words
 The dashboard shows each read and write in the run timeline, has a **Team memory** search, a GBrain
 status in the top bar, and the GBrain settings under Team settings.
 
+When the project folder is a git checkout, the brain is created with `gbrain init --git` (otherwise
+gbrain refuses with `local_conflict`). A brain that was half-made by an earlier failed setup is moved
+aside to `.gbrain.failed-<time>` and created again; a working brain is never touched.
+
+## Skills: Superpowers
+
+The 15 skills of [obra/superpowers](https://github.com/obra/superpowers) are vendored, unmodified, in
+`skills/superpowers/` (MIT, see `LICENSE` and `SOURCE.md` for the exact commit). They run **locally**:
+nothing is downloaded at run time. Each agent gets the skills its role needs:
+
+| Agent | Superpowers skills |
+| --- | --- |
+| Team Lead | using-superpowers, brainstorming, writing-plans, subagent-driven-development, dispatching-parallel-agents, requesting-code-review, verification-before-completion, finishing-a-development-branch, diagnosing-superpowers, writing-skills |
+| Architect | using-superpowers, brainstorming, writing-plans, dispatching-parallel-agents |
+| Developer | using-superpowers, test-driven-development, executing-plans, systematic-debugging, receiving-code-review, verification-before-completion, using-git-worktrees |
+| QA / Tester | using-superpowers, test-driven-development, systematic-debugging, requesting-code-review, verification-before-completion |
+| DevOps | using-superpowers, verification-before-completion, finishing-a-development-branch, using-git-worktrees, systematic-debugging |
+
+They are **always used**, enforced by BABD rather than left to the model (`babd/superpowers.py`):
+
+- every agent's system prompt has the using-superpowers rule and the list of its skills;
+- every step of a team run gets the **full text** of the agent's skills for that step, plus
+  `skills/superpowers/ADAPTATION.md` (how "your human partner", subagents and approval gates map onto
+  this team):
+
+  | Step | Skills (those the agent has) |
+  | --- | --- |
+  | plan | brainstorming, writing-plans, subagent-driven-development, dispatching-parallel-agents |
+  | design | brainstorming, writing-plans |
+  | code | test-driven-development, executing-plans, using-git-worktrees, verification-before-completion |
+  | test | test-driven-development, systematic-debugging, requesting-code-review, verification-before-completion |
+  | fix | systematic-debugging, receiving-code-review, test-driven-development, verification-before-completion |
+  | deploy | verification-before-completion, finishing-a-development-branch, using-git-worktrees |
+  | report | verification-before-completion, finishing-a-development-branch (+ diagnosing-superpowers when blocked) |
+
+- the answer must end with `Skills applied:` and one line per skill. If one is missing, the agent
+  redoes the step once; what is still missing is recorded in the run and shown with ⚠ in the timeline;
+- agents with native skill support also get the files: Hermes in `HERMES_HOME/skills/superpowers/`
+  (`hermes skills list` shows them), Claude Code in its private config dir's `skills/` (only when BABD
+  owns that dir; your own `~/.claude` is never changed).
+
+Change an agent's skills in the dashboard (Configure → Skills, defaults marked ★) or in `agents.json`
+(`superpowers` list). Team settings has `project.superpowers.enabled` and `enforce` (the redo).
+The skill texts make prompts larger (about 20–70k characters per step), so each step costs more tokens.
+
 ## How the agents talk to each other
 
 ```
@@ -127,12 +172,12 @@ Team Lead ──report──▶ CEO
 | File | Description |
 | --- | --- |
 | `install.sh` | One-command install (see above) |
-| `workspace.svg` | The illustration as a scalable vector (1920×1630) |
+| `workspace.svg` | The illustration as a scalable vector (1920×1658) |
 | `workspace.png` | The same image rendered as a PNG |
 | `agents.json` | **Configuration** for each agent (LLM, harness, Telegram bot, skills, tasks, status) and for the CEO dashboard and flow |
 | `generate_workspace.py` | Script that reads `agents.json` and writes `workspace.svg` |
 | `babd/` | The runtime: LLM clients, harnesses (`harness/`), team flow (`flow.py`), team memory (`gbrain.py`), dashboard (`dashboard/`) and the command line |
-| `skills/` | Optional instruction files for skills (see `skills/README.md`) |
+| `skills/` | Instruction files for skills (see `skills/README.md`); `skills/superpowers/` holds the vendored Superpowers skills |
 | `tests/` | Tests: GBrain read/write around every step (fake gbrain CLI), the flow with scripted agents, the dashboard API over HTTP, real HTTP calls through both SDKs to a mock LLM server, and fake `hermes` / `claude` CLIs |
 
 ## Command line

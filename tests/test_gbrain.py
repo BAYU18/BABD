@@ -96,8 +96,10 @@ class GBrainTest(unittest.TestCase):
         for a in self.cfg["agents"]:
             a["harness"] = {"type": "direct"}
         self.cfg["project"]["gbrain"] = {"command": self.fake, "home": os.path.join(self.tmp, "brain")}
+        self.cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py
         self.brain = GBrain(self.cfg["project"])
         self.brain.setup()
+        self.setup_log = self.entries()
         open(self.log, "w").close()
 
     def entries(self):
@@ -196,6 +198,19 @@ class GBrainTest(unittest.TestCase):
         env = agent.harness.child_env({})
         self.assertEqual(env["GBRAIN_HOME"], self.brain.home)
         self.assertTrue(env["PATH"].startswith(os.path.dirname(self.fake)))
+
+    def test_new_brain_is_created_with_its_own_git_repo(self):
+        init = [e for e in self.setup_log if e["cmd"] == "init"][0]
+        self.assertIn("--git", init["args"])  # gbrain refuses a content dir inside the BABD git checkout
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "brain", ".babd-brain-ready")))
+
+    def test_half_made_brain_is_moved_aside_and_recreated(self):
+        brain = GBrain({"gbrain": {"command": self.fake, "home": os.path.join(self.tmp, "brain2")}})
+        os.makedirs(os.path.join(brain.home, ".gbrain", "brain.pglite"))
+        with mock.patch.dict(os.environ, {"FAKE_GBRAIN_FAIL": "recall"}):
+            brain.setup()
+        self.assertTrue(any(n.startswith(".gbrain.failed-") for n in os.listdir(brain.home)))
+        self.assertTrue(os.path.exists(os.path.join(brain.home, ".babd-brain-ready")))
 
     def test_setup_is_idempotent(self):
         open(self.log, "w").close()

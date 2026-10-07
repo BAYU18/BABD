@@ -215,6 +215,7 @@ class HarnessTest(unittest.TestCase):
         self.addCleanup(tools_patch.stop)
         self.cfg = copy.deepcopy(load_config())
         self.cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
+        self.cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py
         for a in self.cfg["agents"]:
             if a["harness"]["type"] != "direct":
                 a["harness"]["home"] = os.path.join(self.tmp, "homes", a["id"])

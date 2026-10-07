@@ -20,6 +20,7 @@ import threading
 import time
 
 from .config import ROOT
+from . import superpowers
 from .gbrain import one_line, slugify
 
 RUNS_DIR = os.path.join(ROOT, "runs")
@@ -111,7 +112,7 @@ class Run:
             "started_at": now(), "finished_at": None, "error": None, "dir": self.dir,
             "agents": {a.id: {"status": "idle", "task": ""} for a in team.agents},
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
-            "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [],
+            "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [], "skills": [],
         }
         self.bus = MessageBus(self.emit, self.dir)
         self.state["messages"] = self.bus.messages
@@ -161,8 +162,14 @@ class Run:
 
     # -- one agent step, always through the GBrain cycle (read -> work -> write) ---------------
 
-    def work(self, agent_id, prompt, task, kind, fact=None):
+    def work(self, agent_id, prompt, task, kind, fact=None, skills_for=None):
         agent = self.team.by_id[agent_id]
+        skills = superpowers.for_step(agent.cfg | {"superpowers": agent.superpowers}, skills_for or kind)
+
+        def on_skills(entry):
+            entry = {**entry, "after_seq": len(self.bus.messages), "kind": kind}
+            self.state["skills"].append(entry)
+            self.emit("skills", entry)
         self.steps += 1
         goal_short = one_line(self.goal, 80)
 
@@ -178,7 +185,7 @@ class Run:
                           page_slug=f"babd/runs/{self.id}/{self.steps:02d}-{agent_id}-{kind}",
                           entity=f"babd/goals/{slugify(self.goal)}",
                           provenance=f"babd run {self.id} · {agent.name} · {kind}",
-                          fact=fact or default_fact, on_memory=on_memory)
+                          fact=fact or default_fact, on_memory=on_memory, skills=skills, on_skills=on_skills)
 
     # -- one exchange: Team Lead -> agent -> Team Lead -----------------------------------------
 
@@ -340,6 +347,7 @@ class Run:
             '"next_action": "<max 4 words>", "summary": "<short paragraph for the CEO>", '
             '"blocker_list": ["<blocker>"]}',
             "Report to the CEO", "report",
+            skills_for="report_blocked" if self.state["blockers"] else "report",
             fact=lambda out: f"CEO report for '{one_line(goal, 80)}' ({facts}): "
                              f"{one_line((extract_json(out) or {}).get('summary') or out, 240)}")
         rep = extract_json(report_text) or {"summary": report_text}

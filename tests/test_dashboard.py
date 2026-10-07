@@ -50,6 +50,7 @@ class DashboardTest(unittest.TestCase):
         self.cfg_path = os.path.join(self.tmp, "agents.json")
         cfg = copy.deepcopy(load_config())
         cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
+        cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py
         for a in cfg["agents"]:
             a["harness"] = {"type": "direct"}
         with open(self.cfg_path, "w") as f:

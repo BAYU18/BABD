@@ -59,7 +59,12 @@ class ClaudeCode(Harness):
         if not self.config_dir:
             return ["using this machine's Claude Code login"]
         os.makedirs(self.config_dir, mode=0o700, exist_ok=True)
-        return [f"config {os.path.relpath(self.config_dir, ROOT)}"]
+        notes = [f"config {os.path.relpath(self.config_dir, ROOT)}"]
+        if self.superpowers:  # private config dir only: never touch the machine's own ~/.claude
+            from .. import superpowers
+            superpowers.install_native(self.superpowers, os.path.join(self.config_dir, "skills"))
+            notes.append(f"{len(self.superpowers)} superpowers skills")
+        return notes
 
     def build(self, system, messages, effort=None):
         env = claude_code_routing(self.llm)

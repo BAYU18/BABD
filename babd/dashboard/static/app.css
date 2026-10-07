@@ -170,6 +170,14 @@ textarea:focus, input:focus, select:focus { border-color: var(--ceo); }
 .mem-dot { width: 7px; height: 7px; border-radius: 2px; background: #c084fc; flex: none; }
 .mem.write .mem-dot { background: #f0abfc; }
 .memory .timeline { max-height: 300px; }
+.mem.skills .mem-dot { background: #fbbf24; border-radius: 50%; }
+.mem.skills.bad { color: var(--warn); }
+.sp-list { display: grid; gap: 6px; }
+.sp-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--stroke); border-radius: 10px;
+  background: var(--panel); cursor: pointer; }
+.sp-item input { margin-top: 3px; accent-color: var(--c, var(--ceo)); }
+.sp-item b { font-size: 13px; }
+.sp-item .help { display: block; }
 .linkish { background: none; border: 0; color: var(--ceo); padding: 0; font-size: 12px; cursor: pointer; margin-top: 4px; }
 .empty { color: var(--muted); text-align: center; padding: 24px 8px; border: 1px dashed var(--stroke-2); border-radius: 12px; }
 #runHistory { width: auto; max-width: 220px; padding: 5px 8px; font-size: 12px; }

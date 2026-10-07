@@ -111,7 +111,7 @@ def main(argv=None):
                 print(f"FAIL {'gbrain':<10} {e}")
         for agent_id in targets:
             try:
-                h = create_harness(agents[agent_id])
+                h = create_harness(agents[agent_id], cfg["project"])
                 print(f"OK   {agent_id:<10} [{h.type}] {h.setup()}")
             except LLMError as e:
                 failed += 1

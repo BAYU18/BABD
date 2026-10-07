@@ -4,18 +4,21 @@ import datetime
 from .config import load_skill_text
 from .flow import Run, extract_json  # noqa: F401  (extract_json re-exported for callers)
 from .gbrain import BrainError, GBrain, format_memory, one_line
+from . import superpowers
 from .harness import create_harness
 
 
 class Agent:
-    def __init__(self, cfg, brain=None):
+    def __init__(self, cfg, brain=None, project=None):
         self.cfg = cfg
         self.id = cfg["id"]
         self.name = cfg.get("short_name") or cfg["name"]
-        self.harness = create_harness(cfg)
+        self.harness = create_harness(cfg, project)
         self.brain = brain if brain is not None and brain.enabled else None
         if self.brain:
             self.harness.extra_env = self.brain.agent_env()  # the agent's own `gbrain` command
+        self.superpowers = superpowers.assigned(cfg) if superpowers.enabled(project) else []
+        self.enforce_skills = (project or {}).get("superpowers", {}).get("enforce", True)
         self.history = []
 
     @property
@@ -37,6 +40,8 @@ class Agent:
             text = load_skill_text(skill)
             if text:
                 lines.append(f"\n## Skill: {skill}\n{text}")
+        if self.superpowers:
+            lines.append("\n" + superpowers.system_section(self.cfg | {"superpowers": self.superpowers}))
         lines.append("\nWork concretely: produce the actual design, code, tests or steps, not a description "
                      "of what you would do. Say plainly what is still missing or blocked.")
         return "\n".join(lines)
@@ -46,7 +51,7 @@ class Agent:
         return self.harness.complete(self.system_prompt(), [{"role": "user", "content": message}], **kwargs)
 
     def work(self, prompt, *, query, page_slug, page_title, entity, provenance, task="", fact=None, on_memory=None,
-             **kwargs):
+             skills=(), on_skills=None, **kwargs):
         """One task with the GBrain cycle: READ gbrain -> work -> WRITE gbrain.
 
         `query`: texts whose keywords select the memory to read. After the agent answers, its full
@@ -54,7 +59,7 @@ class Agent:
         is remembered under `entity` with `provenance`. `on_memory(event)` reports both steps.
         """
         if not self.brain:
-            return self.ask(prompt, **kwargs)
+            return self._with_skills(prompt, skills, on_skills, **kwargs)
         emit = on_memory or (lambda e: None)
         memory = self._brain_step("read", lambda: self.brain.recall(*query))
         if memory is not None:
@@ -62,7 +67,7 @@ class Agent:
                   "pages": len(memory["results"]), "at": now(),
                   "items": [f.get("fact") for f in memory["facts"]][:5] + [r.get("slug") for r in memory["results"]][:5]})
             prompt = f"{format_memory(memory)}\n\n---\n\n{prompt}"
-        out = self.ask(prompt, **kwargs)
+        out = self._with_skills(prompt, skills, on_skills, **kwargs)
         summary = fact(out) if fact else f"{self.name}: {one_line(out, 240)}"
         body = f"## Task\n{task or page_title}\n\n## Output from {self.name}\n{out}"
         written = self._brain_step("write", lambda: (
@@ -71,6 +76,27 @@ class Agent:
         if written is not None:
             emit({"agent": self.id, "op": "write", "page": page_slug, "entity": entity, "fact": summary,
                   "fact_id": (written[1] or {}).get("id"), "at": now()})
+        return out
+
+    def _with_skills(self, prompt, skills, on_skills=None, **kwargs):
+        """Run the step with its Superpowers skills in the prompt; check the answer accounts for each
+        one in "Skills applied:", and ask once to redo the step when one is missing."""
+        skills = [s for s in skills if s in self.superpowers]
+        if not skills:
+            return self.ask(prompt, **kwargs)
+        full = f"{superpowers.step_block(skills)}\n\n---\n\n{prompt}"
+        out = self.ask(full, **kwargs)
+        miss, retried = superpowers.missing(out, skills), False
+        if miss and self.enforce_skills:
+            retried = True
+            out = self.ask(f"{full}\n\n---\n\n## Your previous answer\n{out}\n\n## Redo required\n"
+                           f"You did not show how you applied: {', '.join(miss)}. Redo the task following "
+                           f"{'that skill' if len(miss) == 1 else 'those skills'}, and end with the "
+                           f"\"Skills applied:\" section, one line for each of: {', '.join(skills)}.", **kwargs)
+            miss = superpowers.missing(out, skills)
+        if on_skills:
+            on_skills({"agent": self.id, "op": "skills", "skills": skills, "missing": miss, "retried": retried,
+                       "at": now()})
         return out
 
     def _brain_step(self, op, fn):
@@ -112,7 +138,7 @@ class Team:
     def __init__(self, cfg, log=print, brain=None):
         self.cfg = cfg
         self.brain = brain or GBrain(cfg.get("project"))
-        self.agents = [Agent(a, self.brain) for a in cfg["agents"]]
+        self.agents = [Agent(a, self.brain, cfg.get("project")) for a in cfg["agents"]]
         self.lead, self.specialists = self.agents[0], self.agents[1:]
         self.by_id = {a.id: a for a in self.agents}
         self.log = log
