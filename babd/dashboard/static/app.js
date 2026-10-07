@@ -156,6 +156,15 @@ function renderTaskOptions() {
   }
 }
 
+function packagesBlock(r) {
+  const ps = r.packages || [];
+  if (!ps.length) return "";
+  const icon = { todo: "○", working: "◐", done: "●", failed: "✕" };
+  return `<div class="packages"><div class="muted small">Work packages: each starts as soon as what it needs is done</div>
+    ${ps.map((p) => `<div class="pkg ${esc(p.status)}"><span class="pkg-dot">${icon[p.status] || "○"}</span>
+      <b>${esc(p.id)}</b> ${esc(p.title)} <span class="muted small">· ${esc(nameOf(p.agent))}${p.depends_on?.length ? ` · after ${p.depends_on.map(esc).join(", ")}` : " · starts at once"}</span></div>`).join("")}</div>`;
+}
+
 function routeLabel(t) {
   const r = t.route;
   if (!r) return t.task_options?.mode && t.task_options.mode !== "auto" ? ` · mode ${esc(t.task_options.mode)}` : "";
@@ -549,6 +558,7 @@ function renderRun() {
       ${!isLive(r) && r.finished_at ? `<button type="button" class="btn small ghost" style="margin-top:8px" data-export-run="${esc(r.id)}">Export report (.md)</button>` : ""}
     </div>
     <div class="stepper">${stages}</div>
+    ${packagesBlock(r)}
     ${approval}${report}
     <ol class="timeline" id="timeline">${timelineItems(r)}</ol>`;
   const tl = $("#timeline");
@@ -1533,6 +1543,8 @@ function connect() {
     if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`);
     if (d.event === "memory") flashMemory(d.data.agent, d.data.op);
     if (d.event === "route") logLine("route", `${d.data.route === "answer" ? "Team Lead answers directly" : d.data.route === "direct" ? "⚡ fast lane → " + nameOf(d.data.agent) : "team: " + (d.data.agents || []).map(nameOf).join(", ")}${d.data.reason ? " (" + d.data.reason + ")" : ""}`, "ok");
+    if (d.event === "package") logLine("package", `${d.data.id} ${d.data.title} · ${nameOf(d.data.agent)}: ${d.data.status}`, d.data.status === "failed" ? "bad" : "ok");
+    if (d.event === "paused" || d.event === "unpaused") { logLine("task", d.event === "paused" ? "paused" : "continuing"); refreshSoon(); boardSoon(); }
     if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok");
     if (d.event === "memory") logLine("gbrain", `${nameOf(d.data.agent)} ${d.data.op === "read" ? `read ${d.data.facts} fact(s), ${d.data.pages} page(s)` : `wrote ${d.data.page}`}`);
     if (d.event === "retry") logLine("retry", `${nameOf(d.data.agent)} ${d.data.kind}: ${d.data.fallback ? `trying fallback model ${d.data.fallback}` : `retry ${d.data.attempt}/${d.data.of} in ${d.data.wait}s`} (${d.data.error})`, "bad");

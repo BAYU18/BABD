@@ -32,7 +32,7 @@ EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
                "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage",
-               "evidence", "task_options", "route", "paused")
+               "evidence", "task_options", "route", "paused", "packages")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
@@ -442,7 +442,7 @@ class Dashboard:
         return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
                                   "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
-                                  "usage", "evidence", "tests", "task_options", "route", "paused", "messages")}
+                                  "usage", "evidence", "tests", "task_options", "route", "paused", "packages", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None

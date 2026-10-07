@@ -32,7 +32,7 @@ import os
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .config import ROOT
 from . import projects, skillpacks, taskdocs
@@ -652,8 +652,14 @@ class Run:
                + ("" if "architect" not in self.skip else "There is no Architect on this task: put the design "
                   "decisions the Developer needs into your plan.\n")
                + ("" if "devops" not in self.skip else "This task has no deploy.\n")) +
-            "Plan the work and assign one concrete task to every agent. Answer with only a JSON object:\n"
-            '{"plan_summary": "<2-4 sentences>", "assignments": {' + slots + "}}",
+            "Plan the work and assign one concrete task to every agent.\n"
+            "If the task is complex, also split it into small work packages that agents can do AT THE SAME TIME "
+            "(for example backend, frontend, database, tests, deploy setup). Each package names one agent of the "
+            "team and lists in depends_on only the packages whose output it really needs; a package starts as "
+            "soon as those are done, the others run in parallel. Keep it to 2-8 packages; for a simple task leave "
+            "work_packages empty. Answer with only a JSON object:\n"
+            '{"plan_summary": "<2-4 sentences>", "assignments": {' + slots + '}, "work_packages": [{"id": "p1", '
+            '"title": "<short>", "agent": "<agent id>", "task": "<what exactly to do>", "depends_on": []}]}',
             "Plan the work and assign agents", "plan",
             fact=lambda out: f"Team Lead plan for '{one_line(goal, 80)}': "
                              f"{one_line((extract_json(out) or {}).get('plan_summary') or out, 240)}"))
@@ -669,45 +675,49 @@ class Run:
 
         context = f"{self.goal_block}\n\nTeam Lead plan:\n{summary}"
 
-        # DESIGN
-        if "architect" in self.skip:
-            design = f"(No Architect on this task: follow the Team Lead's plan.)\n\n{plan_text}"
-            self.finish_stage("design", "skipped")
+        packages = self.packages_of(plan)
+        if packages:  # a complex task split into work packages: each starts as soon as what it needs is done
+            design, code, test_plan, prep = self.run_packages(packages, context, plan_text)
         else:
-            self.stage("design")
-            design = self.step("design", lambda: self.delegate("architect", "assign", task_for("architect"),
-                               f"{context}\n\nYour assignment:\n{task_for('architect')}", "design"))
-            self.write("02-architect.md", design)
-            self.finish_stage("design")
+            # DESIGN
+            if "architect" in self.skip:
+                design = f"(No Architect on this task: follow the Team Lead's plan.)\n\n{plan_text}"
+                self.finish_stage("design", "skipped")
+            else:
+                self.stage("design")
+                design = self.step("design", lambda: self.delegate("architect", "assign", task_for("architect"),
+                                   f"{context}\n\nYour assignment:\n{task_for('architect')}", "design"))
+                self.write("02-architect.md", design)
+                self.finish_stage("design")
 
-        # CODE, with QA's test plan and DevOps' deploy preparation at the same time
-        self.stage("code")
-        jobs = {"developer": lambda: self.step("code", lambda: self.delegate(
-            "developer", "assign", task_for("developer"),
-            f"{context}\n\nYour assignment:\n{task_for('developer')}\n\n### Design from {names['architect']}\n{design}",
-            "code"))}
-        if self.parallel_prep:
-            jobs["qa"] = lambda: self.step("test_plan", lambda: self.delegate(
-                "qa", "prepare", "Write the test plan from the design while the Developer builds.",
-                f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design from {names['architect']}\n{design}\n\n"
-                "The Developer is building it now. Prepare the tests first: the test cases (acceptance criteria, "
-                "edge cases, failure cases) and the test code you will run against the build. Do not give a "
-                "verdict yet.", "test_plan"))
-            jobs["devops"] = lambda: self.step("deploy_prep", lambda: self.delegate(
-                "devops", "prepare", "Prepare the deployment while the Developer builds.",
-                f"{context}\n\nYour assignment:\n{task_for('devops')}\n\n### Design from {names['architect']}\n{design}\n\n"
-                "The Developer is building it now. Prepare the deployment: environments, pipeline, "
-                "configuration and secrets needed (names only), health checks, monitoring and alerts, rollback "
-                "plan, and any step a person must do by hand. Do not deploy yet: that waits for QA and the CEO.",
-                "deploy_prep"))
-        out = self.parallel(jobs)
-        code, test_plan, prep = out["developer"], out.get("qa"), out.get("devops")
-        self.write("03-developer.md", code)
-        if test_plan:
-            self.write("03-qa-test-plan.md", test_plan)
-        if prep:
-            self.write("03-devops-prep.md", prep)
-        self.finish_stage("code")
+            # CODE, with QA's test plan and DevOps' deploy preparation at the same time
+            self.stage("code")
+            jobs = {"developer": lambda: self.step("code", lambda: self.delegate(
+                "developer", "assign", task_for("developer"),
+                f"{context}\n\nYour assignment:\n{task_for('developer')}\n\n### Design from {names['architect']}\n{design}",
+                "code"))}
+            if self.parallel_prep:
+                jobs["qa"] = lambda: self.step("test_plan", lambda: self.delegate(
+                    "qa", "prepare", "Write the test plan from the design while the Developer builds.",
+                    f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design from {names['architect']}\n{design}\n\n"
+                    "The Developer is building it now. Prepare the tests first: the test cases (acceptance criteria, "
+                    "edge cases, failure cases) and the test code you will run against the build. Do not give a "
+                    "verdict yet.", "test_plan"))
+                jobs["devops"] = lambda: self.step("deploy_prep", lambda: self.delegate(
+                    "devops", "prepare", "Prepare the deployment while the Developer builds.",
+                    f"{context}\n\nYour assignment:\n{task_for('devops')}\n\n### Design from {names['architect']}\n{design}\n\n"
+                    "The Developer is building it now. Prepare the deployment: environments, pipeline, "
+                    "configuration and secrets needed (names only), health checks, monitoring and alerts, rollback "
+                    "plan, and any step a person must do by hand. Do not deploy yet: that waits for QA and the CEO.",
+                    "deploy_prep"))
+            out = self.parallel(jobs)
+            code, test_plan, prep = out["developer"], out.get("qa"), out.get("devops")
+            self.write("03-developer.md", code)
+            if test_plan:
+                self.write("03-qa-test-plan.md", test_plan)
+            if prep:
+                self.write("03-devops-prep.md", prep)
+            self.finish_stage("code")
 
         # TEST, with the fix loop
         self.stage("test")
@@ -807,6 +817,135 @@ class Run:
         self.bus.send("lead", "ceo", "report", rep.get("summary") or report_text, report=rep)
         self.agent("lead", "done")
         self.finish_stage("report")
+
+    # -- work packages: a complex task split into parts that run at the same time ----------------
+
+    MAX_PACKAGES = 8
+
+    def packages_of(self, plan):
+        """The plan's work packages, cleaned: known agents that are on this task, unique ids, only known
+        dependencies, no cycles. Fewer than two packages = no split (the normal flow)."""
+        raw = plan.get("work_packages") if isinstance(plan, dict) else None
+        if not isinstance(raw, list):
+            return []
+        allowed = [r for r in ROLES[1:] if r not in self.skip]
+        out, ids = [], set()
+        for i, p in enumerate(raw[:self.MAX_PACKAGES]):
+            if not isinstance(p, dict) or not str(p.get("task") or "").strip():
+                continue
+            agent = str(p.get("agent") or "").strip().lower()
+            if agent not in allowed:
+                agent = "developer"
+            pid = re.sub(r"[^A-Za-z0-9_-]", "", str(p.get("id") or "")) or f"p{i + 1}"
+            while pid in ids:
+                pid += "x"
+            ids.add(pid)
+            deps = p.get("depends_on") if isinstance(p.get("depends_on"), list) else []
+            out.append({"id": pid, "title": one_line(str(p.get("title") or p["task"]), 80), "agent": agent,
+                        "task": str(p["task"]).strip(), "depends_on": [str(d) for d in deps]})
+        for p in out:
+            p["depends_on"] = [d for d in dict.fromkeys(p["depends_on"]) if d in ids and d != p["id"]]
+        # break cycles: a package may only depend on packages that can finish without it
+        done, ordered = set(), []
+        pending = list(out)
+        while pending:
+            ready = [p for p in pending if all(d in done for d in p["depends_on"])]
+            if not ready:  # a cycle: drop the dependencies of the first package left
+                pending[0]["depends_on"] = [d for d in pending[0]["depends_on"] if d in done]
+                continue
+            for p in ready:
+                done.add(p["id"])
+                ordered.append(p)
+                pending.remove(p)
+        if not any(p["agent"] == "developer" for p in ordered):
+            return []  # nothing gets built: the normal flow
+        return ordered if len(ordered) >= 2 else []
+
+    def run_packages(self, packages, context, plan_text):
+        """Run the work packages: each one as soon as the packages it depends on are done, the rest at the
+        same time (each agent still runs at most `parallel` steps at once). Returns (design, code, test_plan, prep)."""
+        names = {a.id: a.name for a in self.team.agents}
+        with self.lock:
+            self.state["packages"] = [{**p, "status": "todo", "started_at": None, "finished_at": None} for p in packages]
+        state_of = {p["id"]: p for p in self.state["packages"]}
+        self.emit("packages", {"packages": self.state["packages"]})
+        self.write("01-work-packages.json", json.dumps(packages, indent=2, ensure_ascii=False))
+        has_design = any(p["agent"] == "architect" for p in packages)
+        if not has_design:
+            self.finish_stage("design", "skipped")
+        self.stage("design" if has_design else "code")
+        results = {}
+
+        def set_status(pid, status):
+            with self.lock:
+                st = state_of[pid]
+                st["status"] = status
+                st["started_at" if status == "working" else "finished_at"] = now()
+            self.emit("package", dict(state_of[pid]))
+
+        def job(p):
+            set_status(p["id"], "working")
+            inputs = "".join(f"\n\n### {names[results_of['agent']]} finished {d}: {results_of['title']}\n{results[d]}"
+                             for d in p["depends_on"] for results_of in [next(x for x in packages if x["id"] == d)])
+            others = "\n".join(f"- {x['id']} ({names[x['agent']]}): {x['title']}" for x in packages if x["id"] != p["id"])
+            kind = {"architect": "design", "developer": "code", "qa": "test_plan", "devops": "deploy_prep"}[p["agent"]]
+            extra = {"qa": " Prepare the tests (cases and test code); do not give a verdict yet: the full test "
+                           "round comes after the build.",
+                     "devops": " Prepare only: do not deploy yet, that waits for QA and the CEO."}.get(p["agent"], "")
+            try:
+                out = self.step(f"pkg-{p['id']}", lambda: self.delegate(
+                    p["agent"], "assign", f"{p['id']}: {p['title']}",
+                    f"{context}\n\nThe Team Lead split this task into work packages that run at the same time. "
+                    f"Yours is {p['id']}: {p['title']}\n\n{p['task']}{extra}\n\nOther packages (done by others, "
+                    f"do not do them):\n{others}{inputs}", kind))
+            except BaseException:
+                set_status(p["id"], "failed")
+                raise
+            set_status(p["id"], "done")
+            return out
+
+        pending = {p["id"]: p for p in packages}
+        running = {}
+        errors = []
+        with ThreadPoolExecutor(max_workers=len(packages), thread_name_prefix=f"pkg-{self.id}") as pool:
+            while pending or running:
+                if not errors:
+                    for pid, p in list(pending.items()):
+                        if all(d in results for d in p["depends_on"]):
+                            running[pool.submit(job, p)] = pid
+                            del pending[pid]
+                if not running:
+                    break
+                finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
+                for f in finished:
+                    pid = running.pop(f)
+                    if f.exception() is not None:
+                        errors.append(f.exception())
+                    else:
+                        results[pid] = f.result()
+                if has_design and all(p["id"] in results for p in packages if p["agent"] == "architect") \
+                        and self.state["stages"].get("design") == "active":
+                    self.finish_stage("design")
+                    self.stage("code")
+        if errors:
+            cancelled = [e for e in errors if isinstance(e, FlowCancelled)]
+            raise (cancelled or errors)[0]
+
+        def joined(agent):
+            parts = [f"## {p['id']}: {p['title']}\n{results[p['id']]}" for p in packages if p["agent"] == agent]
+            return "\n\n".join(parts) or None
+        design = joined("architect") or f"(No separate design: follow the Team Lead's plan.)\n\n{plan_text}"
+        code, test_plan, prep = joined("developer"), joined("qa"), joined("devops")
+        self.write("02-architect.md", design)
+        self.write("03-developer.md", code)
+        if test_plan:
+            self.write("03-qa-test-plan.md", test_plan)
+        if prep:
+            self.write("03-devops-prep.md", prep)
+        if self.state["stages"].get("design") == "active":
+            self.finish_stage("design")
+        self.finish_stage("code")
+        return design, code, test_plan, prep
 
     # -- triage and the fast lane -----------------------------------------------------------------
 

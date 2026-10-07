@@ -259,6 +259,9 @@ A direct job uses a short system prompt and no skill texts, so the model has far
 
 - The route, its reason and the chosen agents are in the task's state (`route`), on the task board
   (⚡ / 👥) and in the live log. A direct task's report is the agent's answer itself (no extra call).
+- Pause, continue or stop a task: **⏸ Pause** (task board or task panel; the steps already working
+  finish, the next ones wait), **▶ Resume**, **⏹ Stop** (kills the agent's running program at once).
+  API `POST /api/runs/<id>/pause|resume|cancel`, Telegram `/pause <id>`, `/resume <id>`, `/cancel <id>`.
 - Force it per task: **Task options → Who works on it** (Auto / ⚡ Quick / Whole team), the API
   (`"options": {"mode": "quick"}`), `babd run --mode quick|full`, Telegram `/quick <goal>` or
   `/full <goal>`. Quick never runs the whole team; Whole team always does.
@@ -269,6 +272,28 @@ A direct job uses a short system prompt and no skill texts, so the model has far
   the task's worktree; the agents are told to keep secrets in their usual place and give only paths.
 - A direct task that changed files keeps them on its branch `babd/<task id>` for review (it had no
   QA round, so it is never merged on its own).
+
+## Work packages: a complex task split into parts that run at the same time
+
+For a complex task the Team Lead's plan also lists **work packages**: small parts (backend, frontend,
+database, tests, deploy setup, …), each for one agent, with `depends_on` naming only the packages
+whose output it really needs. BABD starts every package as soon as its dependencies are done, so
+independent parts run at the same time instead of one stage after the other; a package gets the
+output of the packages it depends on. Each agent still runs at most `parallel` steps at once
+(Configure → Role → Parallel steps), so give the Developer 2–3 when it often gets several packages.
+
+```
+p1 Architect: API design ─┬─▶ p2 Developer: backend ─┐
+                          └─▶ p4 QA: tests           ├─▶ QA test round ─▶ approval ─▶ deploy ─▶ report
+p3 Developer: frontend ──────────────────────────────┤
+p5 DevOps: deploy setup ─────────────────────────────┘
+```
+
+After the packages, QA tests the whole build (with the fix loop), then approval, deploy and report as
+usual. A simple task gets no packages and runs the normal flow. Packages, their dependencies and their
+status are on the task panel and in the live log; each finished package is a checkpoint, so Resume
+continues after it. Packages naming an agent that is left out of the task go to the Developer;
+dependency cycles are broken.
 
 ## How the agents talk to each other
 
