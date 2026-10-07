@@ -17,6 +17,7 @@
     "parallel_prep": true,
     "use_projects": true,
     "default_project": "default",
+    "auto_resume": true,
     "gbrain": {
       "enabled": true,
       "strict": true,

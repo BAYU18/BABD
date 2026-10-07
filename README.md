@@ -305,6 +305,18 @@ build, test plan, deploy preparation, test, deploy, report), and it is saved as
 `runs/<run>/00-task.md` for agents with file tools. In the dashboard the task shows its documents,
 and *View document* opens what the team received.
 
+## Surviving restarts and failures
+
+- **Checkpoints**: every finished step (plan, design, build, test plan, deploy preparation, each QA
+  round and fix, the CEO's approval, deploy, report) is saved in `runs/<run>/ckpt/`.
+- **Resume**: a failed, stopped or interrupted task continues from its last finished step: nothing
+  already done is asked again (the CEO's approval included), in the same run, branch and worktree.
+  Dashboard: **Resume** on the task (task board or run panel); Telegram: `/resume <task id>`;
+  command line: `babd resume <run id> [--approve]`.
+- **Restart**: the task queue is kept in `runs/_queue.json`. When the dashboard starts, runs that were
+  still running are marked *interrupted* and, with `project.auto_resume` (default on), queued again
+  to continue. A run still alive in another BABD process (e.g. `babd run`) is left alone.
+
 ## Telegram
 
 The dashboard runs real Telegram bots (long polling: no public address or webhook needed). Create

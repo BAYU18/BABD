@@ -106,6 +106,7 @@ class Dashboard:
         self.last_run = None       # the run started last (the dashboard's "current run")
         self.telegram = telegram.Manager(self)
         self.telegram_on = False   # serve() turns the bots on; tests and scripts don't
+        self.recover()
         add_listener(lambda source, msg: self.hub.publish("log", {"source": source, "msg": msg, "at": time.time()}))
 
     # -- config ------------------------------------------------------------------------------
@@ -314,6 +315,80 @@ class Dashboard:
 
     # -- team runs: many tasks at once ---------------------------------------------------------
 
+    # -- surviving restarts: the queue is on disk, interrupted runs are picked up again -------------
+
+    @property
+    def queue_path(self):
+        return os.path.join(flow.RUNS_DIR, "_queue.json")
+
+    def save_queue(self):
+        with self.tasks_lock:
+            data = json.dumps(self.queue, ensure_ascii=False)
+        os.makedirs(flow.RUNS_DIR, exist_ok=True)
+        tmp = self.queue_path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(data)
+        os.replace(tmp, self.queue_path)
+
+    def recover(self):
+        """At start-up: reload the queue, and mark runs that were running when BABD stopped as
+        "interrupted" (project.auto_resume, on by default, queues them again to continue)."""
+        try:
+            with open(self.queue_path) as f:
+                self.queue = [q for q in json.load(f) if isinstance(q, dict) and q.get("id")]
+        except (OSError, ValueError):
+            self.queue = []
+        auto = self.load()["project"].get("auto_resume", True)
+        resumed = []
+        for s in self.saved_states(200):
+            if s.get("status") not in ("running", "waiting_approval"):
+                continue
+            pid = s.get("pid")
+            if pid and pid != os.getpid() and _alive(pid):
+                continue  # still running in another BABD process (e.g. `babd run`)
+            s.update(status="interrupted", error="BABD stopped while this task was running", finished_at=flow.now())
+            try:
+                with open(os.path.join(flow.RUNS_DIR, s["id"], "state.json"), "w") as f:
+                    json.dump(s, f, indent=2, ensure_ascii=False)
+            except OSError:
+                continue
+            if auto and not any(q["id"] == s["id"] for q in self.queue):
+                resumed.append(self.resume_entry(s))
+        if resumed:
+            log(f"resuming {len(resumed)} interrupted task(s)", "dashboard")
+            self.queue = resumed + self.queue
+        if self.queue:
+            self.save_queue()
+            self._pump()
+
+    def resume_entry(self, s):
+        opts = s.get("options") or {}
+        return {"id": s["id"], "goal": s["goal"], "status": "queued", "queued_at": flow.now(), "resume": True,
+                "auto_approve": bool(opts.get("auto_approve")), "update_dashboard": opts.get("update_dashboard", True),
+                "docs": [], "documents": s.get("documents") or [], "project": (s.get("workspace") or {}).get("project")}
+
+    def resume_run(self, run_id):
+        """Continue a failed, stopped or interrupted task from its last finished step."""
+        run_id = os.path.basename(run_id)
+        with self.tasks_lock:
+            if run_id in self.active or any(q["id"] == run_id for q in self.queue):
+                raise ApiError(409, "this task is already running or queued")
+        path = os.path.join(flow.RUNS_DIR, run_id, "state.json")
+        if not os.path.exists(path):
+            raise ApiError(404, f"no run {run_id!r}")
+        with open(path) as f:
+            s = json.load(f)
+        if s.get("status") not in ("failed", "cancelled", "interrupted"):
+            raise ApiError(409, f"only a failed, stopped or interrupted task can be resumed (this one is {s.get('status')})")
+        with self.tasks_lock:
+            entry = self.resume_entry(s)
+            self.queue.insert(0, entry)
+        self.save_queue()
+        self._pump()
+        with self.tasks_lock:
+            ctx = self.active.get(run_id)
+        return self.summary(ctx["run"]) if ctx else {**{k: v for k, v in entry.items() if k != "docs"}, "position": 1}
+
     def max_parallel_tasks(self):
         try:
             return max(1, int(self.load()["project"].get("max_parallel_tasks", DEFAULT_PARALLEL_TASKS)))
@@ -489,6 +564,7 @@ class Dashboard:
                      "auto_approve": bool(auto_approve), "update_dashboard": bool(update_dashboard),
                      "docs": docs, "documents": [taskdocs.summary(d) for d in docs], "project": project}
             self.queue.append(entry)
+        self.save_queue()
         self.hub.publish("tasks", {"event": "queued", "task": {k: v for k, v in entry.items() if k != "docs"}})
         self._pump()
         with self.tasks_lock:
@@ -531,6 +607,8 @@ class Dashboard:
                 except Exception as e:  # e.g. agents.json broke while the task waited
                     self.failed_starts.append({**entry, "status": "failed", "error": f"{type(e).__name__}: {e}"})
                     self.failed_starts = self.failed_starts[-20:]
+        if started or self.failed_starts:
+            self.save_queue()
         for run in started:
             self.hub.publish("tasks", {"event": "started", "task": {"id": run.id, "goal": run.goal}})
 
@@ -555,7 +633,8 @@ class Dashboard:
             self.hub.publish("run", {"event": kind, "data": data, "summary": self.summary(run)})
 
         run = flow.Run(team, entry["goal"], approver=approver, on_event=on_event, run_id=entry["id"], slots=self.slots,
-                       docs=entry.get("docs"), project_id=entry.get("project"))
+                       docs=entry.get("docs"), project_id=entry.get("project"), resume=entry.get("resume", False))
+        run.state["options"] = {"auto_approve": entry["auto_approve"], "update_dashboard": entry["update_dashboard"]}
         ctx["run"] = run
         self.active[run.id] = ctx
         self.last_run = run
@@ -590,7 +669,8 @@ class Dashboard:
             for i, q in enumerate(self.queue):
                 if q["id"] == run_id:
                     self.queue.pop(i)
-                    self.hub.publish("tasks", {"event": "removed", "task": q})
+                    self.save_queue()
+                    self.hub.publish("tasks", {"event": "removed", "task": {k: v for k, v in q.items() if k != "docs"}})
                     return {"ok": True, "note": "removed from the queue"}
             self.failed_starts = [f for f in self.failed_starts if f["id"] != run_id]
             ctx = self.active.get(run_id)
@@ -639,6 +719,14 @@ class Dashboard:
                 "limits": {"max_parallel_tasks": self.max_parallel_tasks(),
                            "parallel_prep": bool(cfg["project"].get("parallel_prep", True))},
                 "stages": [{"key": k, "label": l, "owner": o} for k, l, o, _ in flow.STAGES]}
+
+
+def _alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def make_handler(dash, token, allowed_hosts):
@@ -802,6 +890,8 @@ def make_handler(dash, token, allowed_hosts):
                     return d.resolve_approval(parts[1], b.get("approved"), b.get("note", ""))
                 if method == "POST" and parts[2:] == ["cancel"]:
                     return d.cancel_run(parts[1])
+                if method == "POST" and parts[2:] == ["resume"]:
+                    return d.resume_run(parts[1])
             raise ApiError(404, "unknown API call")
 
         def events(self):

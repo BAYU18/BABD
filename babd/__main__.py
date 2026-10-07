@@ -15,6 +15,8 @@
                                                A goal can be a .md file or a link to one:
   python -m babd run specs/login.md https://github.com/o/r/blob/main/spec.md
   python -m babd run "Build what the spec says" --doc spec.md [--doc <link>]
+  python -m babd resume <run id> [--approve]  continue a failed / stopped / interrupted task from its
+                                               last finished step
 """
 import argparse
 import json
@@ -63,6 +65,9 @@ def main(argv=None):
     r.add_argument("--approve", action="store_true", help="approve the deploy without asking (CEO approval gate)")
     r.add_argument("--update-dashboard", action="store_true",
                    help="write the CEO report into agents.json and regenerate workspace.svg")
+    rs = sub.add_parser("resume", help="continue a failed, stopped or interrupted task from its last finished step")
+    rs.add_argument("run_id")
+    rs.add_argument("--approve", action="store_true", help="approve the deploy without asking")
     args = p.parse_args(argv)
 
     if args.cmd == "harnesses":
@@ -166,6 +171,21 @@ def main(argv=None):
 
     if args.cmd == "run":
         return run_goals(args, cfg, team)
+
+    if args.cmd == "resume":
+        from .flow import FlowError, Run
+        try:
+            run = Run(team, "", approver=lambda r: (args.approve, "auto-approved (--approve)" if args.approve else
+                                                    "no approval given (use --approve or the dashboard)"),
+                      run_id=args.run_id, resume=True)
+        except FlowError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        done = len(run.state["checkpoints"])
+        print(f"resuming {run.id}: {run.goal} ({done} step(s) already done)", file=sys.stderr)
+        state = run.execute()
+        print(f"run {state['status']}" + (f": {state['error']}" if state.get("error") else ""))
+        return 0 if state["status"] == "done" else 1
 
 
 def read_doc(ref):

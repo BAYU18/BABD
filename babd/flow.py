@@ -154,7 +154,7 @@ class Run:
     """One team run on a goal. State is plain JSON so the dashboard can show it as-is."""
 
     def __init__(self, team, goal, approver=None, on_event=None, run_id=None, slots=None, docs=None,
-                 project_id=None):
+                 project_id=None, resume=False):
         self.team = team
         self.goal = goal
         self.docs = list(docs or [])       # task documents (babd/taskdocs.py): the brief every agent gets
@@ -163,6 +163,34 @@ class Run:
         self.slots = slots or AgentSlots(team.cfg)  # shared between runs by the dashboard
         self.cancelled = threading.Event()
         self.lock = threading.RLock()      # steps of one run can run at the same time
+        project = team.cfg.get("project", {})
+        self.require_approval = project.get("require_approval", ["deploy"])
+        self.max_fix_rounds = int(project.get("max_fix_rounds", 2))
+        self.parallel_prep = bool(project.get("parallel_prep", True))
+        self.resumed = bool(resume)
+        if resume:
+            self._load(run_id)
+        else:
+            self._create(run_id, goal, team)
+        # Where the agents work: a git worktree of the task's project, never the BABD installation.
+        self.project, self.workspace = None, None
+        if project.get("use_projects", True):
+            project_id = (self.state.get("workspace") or {}).get("project") if resume else project_id
+            self.project = projects.get(team.cfg, project_id)  # fails now for an unknown project
+            ws = self.state.get("workspace") or {}
+            ws.pop("result", None)
+            self.state["workspace"] = {**ws, "project": self.project["id"], "name": self.project["name"]}
+        self.state["pid"] = os.getpid()
+        self.bus = MessageBus(self.emit, self.dir, self.lock)
+        if resume:
+            mp = os.path.join(self.dir, "messages.jsonl")
+            if os.path.exists(mp):
+                with open(mp) as f:
+                    self.bus.messages.extend(json.loads(line) for line in f if line.strip())
+        self.state["messages"] = self.bus.messages
+        self.steps = max([st.get("n", 0) for st in self.state["steps"]] or [0])
+
+    def _create(self, run_id, goal, team):
         base = run_id or datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         self.id, n = base, 1
         os.makedirs(RUNS_DIR, exist_ok=True)
@@ -174,28 +202,58 @@ class Run:
                 n += 1
                 self.id = f"{base}-{n}"
         self.dir = os.path.join(RUNS_DIR, self.id)
-        project = team.cfg.get("project", {})
-        self.require_approval = project.get("require_approval", ["deploy"])
-        self.max_fix_rounds = int(project.get("max_fix_rounds", 2))
-        self.parallel_prep = bool(project.get("parallel_prep", True))
+        self.brief = taskdocs.brief_of(self.docs) if self.docs else ""
         self.state = {
             "id": self.id, "goal": goal, "status": "running", "stage": None, "progress": 0,
             "started_at": now(), "finished_at": None, "error": None, "dir": self.dir,
             "agents": {a.id: {"status": "idle", "task": ""} for a in team.agents},
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
             "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [], "skills": [],
-            "steps": [], "documents": [taskdocs.summary(d) for d in self.docs],
+            "steps": [], "documents": [taskdocs.summary(d) for d in self.docs], "checkpoints": [], "resumes": 0,
         }
         if self.docs:
-            self.write("00-task.md", taskdocs.brief_of(self.docs) + "\n")
-        # Where the agents work: a git worktree of the task's project, never the BABD installation.
-        self.project, self.workspace = None, None
-        if project.get("use_projects", True):
-            self.project = projects.get(team.cfg, project_id)  # fails now for an unknown project
-            self.state["workspace"] = {"project": self.project["id"], "name": self.project["name"]}
-        self.bus = MessageBus(self.emit, self.dir, self.lock)
-        self.state["messages"] = self.bus.messages
-        self.steps = 0
+            self.write("00-task.md", self.brief + "\n")
+
+    def _load(self, run_id):
+        """Pick up a run that was interrupted, failed or stopped: steps already done are reused."""
+        self.id = os.path.basename(run_id or "")
+        self.dir = os.path.join(RUNS_DIR, self.id)
+        try:
+            with open(os.path.join(self.dir, "state.json")) as f:
+                self.state = json.load(f)
+        except (OSError, ValueError) as e:
+            raise FlowError(f"cannot resume {run_id!r}: no saved run") from e
+        self.goal = self.state["goal"]
+        brief_path = os.path.join(self.dir, "00-task.md")
+        self.brief = open(brief_path).read().strip() if os.path.exists(brief_path) else ""
+        st = self.state
+        st.update(status="running", error=None, finished_at=None, report=None, blockers=[], stage=None, progress=0,
+                  verdict=None, deployed=False, resumes=st.get("resumes", 0) + 1)
+        st.setdefault("checkpoints", [])
+        st.setdefault("steps", [])
+        st["stages"] = {k: "todo" for k, *_ in STAGES}
+        for a in st["agents"].values():
+            a.update(status="idle", task="")
+        for step in st["steps"]:
+            if step.get("status") in ("queued", "working"):
+                step["status"] = "interrupted"
+
+    # -- checkpoints: each finished step is kept, so a resumed run continues after it -------------
+
+    def step(self, key, fn):
+        path = os.path.join(self.dir, "ckpt", f"{key}.txt")
+        if key in self.state["checkpoints"] and os.path.exists(path):
+            with open(path) as f:
+                return f.read()
+        out = fn()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(out)
+        with self.lock:
+            if key not in self.state["checkpoints"]:
+                self.state["checkpoints"].append(key)
+        self.save()
+        return out
 
     # -- state + events ----------------------------------------------------------------------
 
@@ -219,9 +277,9 @@ class Run:
     def goal_block(self):
         """The goal as every prompt shows it: the CEO's words plus the full task documents."""
         text = f"CEO goal:\n{self.goal}"
-        if self.docs:
+        if self.brief:
             text += (f"\n\nThe CEO gave the task as document(s); follow them. (Agents with file tools can also read "
-                     f"them at {os.path.join(self.dir, '00-task.md')}.)\n\n{taskdocs.brief_of(self.docs)}")
+                     f"them at {os.path.join(self.dir, '00-task.md')}.)\n\n{self.brief}")
         if self.workspace:
             ws = self.workspace
             text += (f"\n\n## Workspace\nProject: {ws['name']}. Work ONLY in this folder: {ws['dir']} (git branch "
@@ -388,8 +446,9 @@ class Run:
         if missing:
             raise FlowError(f"agents.json needs agents with these ids: {', '.join(missing)}")
         names = {a.id: a.name for a in team.agents}
-        self.emit("started", {"goal": goal})
-        self.bus.send("ceo", "lead", "goal", goal)
+        self.emit("started", {"goal": goal, "resumed": self.resumed})
+        if not self.bus.messages:
+            self.bus.send("ceo", "lead", "goal", goal)
 
         # PLAN
         self.stage("plan")
@@ -398,7 +457,7 @@ class Run:
         team_desc = "\n".join(f"- {r}: {names[r]} - main task {team.by_id[r].main_task}; skills: "
                               f"{', '.join(team.by_id[r].cfg.get('skills', []))}" for r in specialists)
         slots = ", ".join(f'"{r}": "<task>"' for r in specialists)
-        plan_text = self.work("lead",
+        plan_text = self.step("plan", lambda: self.work("lead",
             f"{self.goal_block}\n\nYour team:\n{team_desc}\n\n"
             "The work flows through you: Architect designs, Developer builds, QA tests (failed tests go back "
             "to the Developer), DevOps deploys and sets up monitoring after QA passes and the CEO approves.\n"
@@ -406,7 +465,7 @@ class Run:
             '{"plan_summary": "<2-4 sentences>", "assignments": {' + slots + "}}",
             "Plan the work and assign agents", "plan",
             fact=lambda out: f"Team Lead plan for '{one_line(goal, 80)}': "
-                             f"{one_line((extract_json(out) or {}).get('plan_summary') or out, 240)}")
+                             f"{one_line((extract_json(out) or {}).get('plan_summary') or out, 240)}"))
         plan = extract_json(plan_text) or {}
         assignments = plan.get("assignments") if isinstance(plan.get("assignments"), dict) else {}
         summary = plan.get("plan_summary") or plan_text
@@ -421,31 +480,31 @@ class Run:
 
         # DESIGN
         self.stage("design")
-        design = self.delegate("architect", "assign", task_for("architect"),
-                               f"{context}\n\nYour assignment:\n{task_for('architect')}", "design")
+        design = self.step("design", lambda: self.delegate("architect", "assign", task_for("architect"),
+                           f"{context}\n\nYour assignment:\n{task_for('architect')}", "design"))
         self.write("02-architect.md", design)
         self.finish_stage("design")
 
         # CODE, with QA's test plan and DevOps' deploy preparation at the same time
         self.stage("code")
-        jobs = {"developer": lambda: self.delegate(
+        jobs = {"developer": lambda: self.step("code", lambda: self.delegate(
             "developer", "assign", task_for("developer"),
             f"{context}\n\nYour assignment:\n{task_for('developer')}\n\n### Design from {names['architect']}\n{design}",
-            "code")}
+            "code"))}
         if self.parallel_prep:
-            jobs["qa"] = lambda: self.delegate(
+            jobs["qa"] = lambda: self.step("test_plan", lambda: self.delegate(
                 "qa", "prepare", "Write the test plan from the design while the Developer builds.",
                 f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design from {names['architect']}\n{design}\n\n"
                 "The Developer is building it now. Prepare the tests first: the test cases (acceptance criteria, "
                 "edge cases, failure cases) and the test code you will run against the build. Do not give a "
-                "verdict yet.", "test_plan")
-            jobs["devops"] = lambda: self.delegate(
+                "verdict yet.", "test_plan"))
+            jobs["devops"] = lambda: self.step("deploy_prep", lambda: self.delegate(
                 "devops", "prepare", "Prepare the deployment while the Developer builds.",
                 f"{context}\n\nYour assignment:\n{task_for('devops')}\n\n### Design from {names['architect']}\n{design}\n\n"
                 "The Developer is building it now. Prepare the deployment: environments, pipeline, "
                 "configuration and secrets needed (names only), health checks, monitoring and alerts, rollback "
                 "plan, and any step a person must do by hand. Do not deploy yet: that waits for QA and the CEO.",
-                "deploy_prep")
+                "deploy_prep"))
         out = self.parallel(jobs)
         code, test_plan, prep = out["developer"], out.get("qa"), out.get("devops")
         self.write("03-developer.md", code)
@@ -460,9 +519,9 @@ class Run:
         qa_instr = ("\n\nTest the work against the goal and the design. List every bug you find. "
                     "End your answer with exactly one line: VERDICT: PASS or VERDICT: FAIL")
         plan_part = f"\n\n### Your test plan\n{test_plan}" if test_plan else ""
-        report = self.delegate("qa", "assign", task_for("qa"),
-                               f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design\n{design}{plan_part}\n\n"
-                               f"### Code from {names['developer']}\n{code}{qa_instr}", "test_report")
+        report = self.step("qa0", lambda: self.delegate("qa", "assign", task_for("qa"),
+                           f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design\n{design}{plan_part}\n\n"
+                           f"### Code from {names['developer']}\n{code}{qa_instr}", "test_report"))
         verdict = parse_verdict(report)
         self.write("04-qa-round0.md", report)
         rounds = 0
@@ -470,13 +529,13 @@ class Run:
             rounds += 1
             self.state["qa_rounds"] = rounds
             fix_task = f"Fix the bugs QA reported (round {rounds})."
-            code = self.delegate("developer", "fix_request", fix_task,
-                                 f"{context}\n\n{fix_task}\n\n### Your previous code\n{code}\n\n"
-                                 f"### QA report\n{report}\n\nReturn the complete fixed code.", "fix")
+            code = self.step(f"fix{rounds}", lambda: self.delegate(
+                "developer", "fix_request", fix_task, f"{context}\n\n{fix_task}\n\n### Your previous code\n{code}\n\n"
+                f"### QA report\n{report}\n\nReturn the complete fixed code.", "fix"))
             self.write(f"03-developer-fix{rounds}.md", code)
-            report = self.delegate("qa", "retest", f"Verify the fixes (round {rounds}).",
-                                   f"{context}\n\nVerify the fixes for your earlier report.\n\n### Your earlier "
-                                   f"report\n{report}\n\n### Fixed code\n{code}{qa_instr}", "test_report")
+            report = self.step(f"qa{rounds}", lambda: self.delegate(
+                "qa", "retest", f"Verify the fixes (round {rounds}).", f"{context}\n\nVerify the fixes for your earlier "
+                f"report.\n\n### Your earlier report\n{report}\n\n### Fixed code\n{code}{qa_instr}", "test_report"))
             verdict = parse_verdict(report)
             self.write(f"04-qa-round{rounds}.md", report)
         self.state["verdict"] = verdict
@@ -495,12 +554,12 @@ class Run:
                 self.finish_stage("approval", "skipped")
             if approved:
                 self.stage("deploy")
-                deploy = self.delegate("devops", "assign", task_for("devops"),
+                deploy = self.step("deploy", lambda: self.delegate("devops", "assign", task_for("devops"),
                                        f"{context}\n\nYour assignment:\n{task_for('devops')}\n\nQA verdict: PASS"
                                        f"\nCEO approval: {note or 'approved'}\n\n### Design\n{design}\n\n"
                                        f"### Code\n{code}\n\n### QA report\n{report}\n\n"
                                        + (f"### Your deploy preparation\n{prep}\n\n" if prep else "")
-                                       + "Deploy it and set up monitoring.", "deploy_report")
+                                       + "Deploy it and set up monitoring.", "deploy_report"))
                 self.write("05-devops.md", deploy)
                 self.state["deployed"] = True
                 self.finish_stage("deploy")
@@ -521,7 +580,7 @@ class Run:
         outputs = f"### Design\n{design}\n\n### Code\n{code}\n\n### QA report\n{report}"
         if deploy:
             outputs += f"\n\n### Deploy report\n{deploy}"
-        report_text = self.work("lead",
+        report_text = self.step("report", lambda: self.work("lead",
             f"{self.goal_block}\n\nFacts: {facts}\n\nTeam output:\n\n{outputs}\n\n"
             "Write the CEO report: high-level status only, no code. Answer with only a JSON object:\n"
             '{"current_goal": "<max 4 words>", "active_task": "<max 3 words>", "recent_result": "<max 4 words>", '
@@ -530,7 +589,7 @@ class Run:
             "Report to the CEO", "report",
             skills_for="report_blocked" if self.state["blockers"] else "report",
             fact=lambda out: f"CEO report for '{one_line(goal, 80)}' ({facts}): "
-                             f"{one_line((extract_json(out) or {}).get('summary') or out, 240)}")
+                             f"{one_line((extract_json(out) or {}).get('summary') or out, 240)}"))
         rep = extract_json(report_text) or {"summary": report_text}
         rep.update(self._facts(verdict, bool(deploy)))
         self.state["report"] = rep
@@ -564,6 +623,12 @@ class Run:
         return {k: f.result() for k, f in futures.items()}
 
     def _ask_ceo(self, question):
+        if "approval" in self.state["checkpoints"]:  # resumed after the CEO already answered
+            decided = json.loads(self.step("approval", lambda: "{}"))
+            if not decided["approved"]:
+                self.state["blockers"].append(f"Deploy not approved by the CEO{': ' + decided['note'] if decided['note'] else ''}")
+            self.finish_stage("approval", "done" if decided["approved"] else "rejected")
+            return decided["approved"], decided["note"]
         self.stage("approval")
         request = {"question": question, "requested_at": now(), "result": "pending", "note": ""}
         self.state["approval"] = request
@@ -580,6 +645,7 @@ class Run:
         self.bus.send("ceo", "lead", "approval", f"{request['result'].upper()}{': ' + note if note else ''}")
         if not approved:
             self.state["blockers"].append(f"Deploy not approved by the CEO{': ' + note if note else ''}")
+        self.step("approval", lambda: json.dumps({"approved": bool(approved), "note": note or ""}))
         self.finish_stage("approval", "done" if approved else "rejected")
         return approved, note
 

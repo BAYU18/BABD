@@ -472,7 +472,7 @@ function renderRun() {
     return;
   }
   const stages = S.flow.stages.map((s) => `<div class="step ${esc(r.stages?.[s.key] || "todo")}" title="${esc(nameOf(s.owner))}"><i></i>${esc(s.label)}</div>`).join("");
-  const statusColor = { running: "var(--good)", waiting_approval: "var(--warn)", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)" }[r.status];
+  const statusColor = { running: "var(--good)", waiting_approval: "var(--warn)", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" }[r.status];
   const approval = r.approval?.result === "pending" && !viewingHistory ? `
     <div class="approval">
       <div class="eyebrow" style="color:var(--warn)">CEO approval needed</div>
@@ -502,6 +502,7 @@ function renderRun() {
       <div class="run-meta">${pill(r.status.replace("_", " "), statusColor, r.status === "running")}
         <span class="muted small">${esc(r.id)} · ${r.progress ?? 0}%${r.qa_rounds ? ` · ${r.qa_rounds} QA fix round(s)` : ""}</span></div>
       ${r.error ? `<div class="note warn" style="margin-top:8px">${esc(r.error)}</div>` : ""}
+      ${RESUMABLE.includes(r.status) ? `<button type="button" class="btn small" style="margin-top:8px" data-resume-run="${esc(r.id)}">Resume from the last finished step</button>` : ""}
     </div>
     <div class="stepper">${stages}</div>
     ${approval}${report}
@@ -516,6 +517,12 @@ $("#runBody").addEventListener("click", async (e) => {
     const key = `${viewRun.id}:${more.dataset.seq}`;
     shown.has(key) ? shown.delete(key) : shown.add(key);
     renderRun();
+    return;
+  }
+  const rs = e.target.closest("[data-resume-run]");
+  if (rs) {
+    try { const r = await api("POST", `runs/${rs.dataset.resumeRun}/resume`); toast(`Resuming: ${r.goal}`, "ok"); viewingHistory = false; pinnedRun = rs.dataset.resumeRun; refreshSoon(); }
+    catch (err) { toast(err.message, "bad"); }
     return;
   }
   const ap = e.target.closest("[data-approve]");
@@ -962,8 +969,9 @@ let taskFilter = "all";
 const openTasks = new Set();
 const KIND_LABELS = { plan: "Plan", design: "Design", code: "Build", test_plan: "Test plan", deploy_prep: "Deploy prep",
   test_report: "Test", fix: "Fix", deploy_report: "Deploy", report: "Report" };
-const TASK_COLORS = { running: "var(--good)", waiting_approval: "var(--warn)", queued: "#7dd3fc", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)" };
-const TASK_LABELS = { running: "running", waiting_approval: "waiting for you", queued: "queued", done: "done", failed: "failed", cancelled: "stopped" };
+const TASK_COLORS = { running: "var(--good)", waiting_approval: "var(--warn)", queued: "#7dd3fc", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" };
+const TASK_LABELS = { running: "running", waiting_approval: "waiting for you", queued: "queued", done: "done", failed: "failed", cancelled: "stopped", interrupted: "interrupted" };
+const RESUMABLE = ["failed", "cancelled", "interrupted"];
 const ms = (iso) => (iso ? new Date(iso).getTime() : NaN);
 const serverNow = () => Date.now() + boardOffset;
 
@@ -1017,7 +1025,7 @@ function renderBoard() {
     tile("Waiting for you", c.waiting_approval || 0, c.waiting_approval ? "var(--warn)" : "", "CEO approval"),
     tile("Queued", c.queued || 0, "", `up to ${B.limits.max_parallel_tasks} at once`),
     tile("Done", c.done || 0),
-    tile("Failed / stopped", (c.failed || 0) + (c.cancelled || 0), (c.failed ? "var(--bad)" : "")),
+    tile("Failed / stopped", (c.failed || 0) + (c.cancelled || 0) + (c.interrupted || 0), (c.failed ? "var(--bad)" : ""), c.interrupted ? `${c.interrupted} interrupted` : ""),
     tile("Agents busy", `${busy}<span class="of"> / ${B.agents.length}</span>`, "", `${steps} step(s) in parallel`),
   ].join("");
   $("#boardLimits").textContent = `Up to ${B.limits.max_parallel_tasks} tasks run at the same time; the rest wait in the queue.${B.limits.parallel_prep ? " Inside a task, QA and DevOps prepare while the Developer builds." : ""}`;
@@ -1108,7 +1116,7 @@ function renderTasks() {
     || (taskFilter === "active" && ["running", "waiting_approval"].includes(t.status))
     || (taskFilter === "queued" && t.status === "queued")
     || (taskFilter === "done" && t.status === "done")
-    || (taskFilter === "problem" && ["failed", "cancelled"].includes(t.status)))
+    || (taskFilter === "problem" && RESUMABLE.includes(t.status)))
     .sort((a, b) => (order[a.status] ?? 2) - (order[b.status] ?? 2)
       || (a.status === "queued" ? (a.position || 0) - (b.position || 0) : (b.started_at || b.queued_at || "").localeCompare(a.started_at || a.queued_at || "")));
   if (!shownTasks.length) { $("#taskList").innerHTML = `<div class="empty">No tasks here yet. Add some above.</div>`; return; }
@@ -1120,7 +1128,7 @@ function renderTasks() {
     const now = [...working.map((st) => `<span class="who-chip" style="--c:${colorOf(st.agent)}">${esc(nameOf(st.agent))} · ${esc(KIND_LABELS[st.kind] || st.kind)}</span>`),
       ...waiting.map((st) => `<span class="who-chip wait" style="--c:${colorOf(st.agent)}">${esc(nameOf(st.agent))} · waiting for a slot</span>`)].join("");
     const meta = t.status === "queued" ? `#${t.position} in the queue · added ${clock(ms(t.queued_at))}`
-      : `${esc(t.id)} · started ${clock(startedMs)} · ${live ? `<span data-since="${esc(t.started_at)}">${fmtDur((endMs - startedMs) / 1000)}</span>` : `took ${fmtDur((endMs - startedMs) / 1000)}`}`;
+      : `${t.resume ? "resume · " : ""}${esc(t.id)} · started ${clock(startedMs)} · ${live ? `<span data-since="${esc(t.started_at)}">${fmtDur((endMs - startedMs) / 1000)}</span>` : `took ${fmtDur((endMs - startedMs) / 1000)}`}`;
     const open = openTasks.has(t.id);
     const stepRows = (t.steps || []).map((st) => {
       const waited = st.started_at ? (ms(st.started_at) - ms(st.queued_at)) / 1000 : null;
@@ -1139,6 +1147,7 @@ function renderTasks() {
           ${t.status !== "queued" ? `<button type="button" class="btn small" data-open="${esc(t.id)}">Open</button>` : ""}
           ${t.waiting_ceo ? `<button type="button" class="btn small good" data-approve-task="${esc(t.id)}">Approve deploy</button><button type="button" class="btn small danger" data-reject-task="${esc(t.id)}">Reject</button>` : ""}
           ${live || t.status === "queued" ? `<button type="button" class="btn small ghost" data-cancel="${esc(t.id)}">${t.status === "queued" ? "Remove" : "Stop"}</button>` : ""}
+          ${RESUMABLE.includes(t.status) ? `<button type="button" class="btn small" data-resume="${esc(t.id)}" title="Continue from the last finished step">Resume</button>` : ""}
         </div>
       </div>
       ${t.error ? `<div class="note warn">${esc(t.error)}</div>` : ""}
@@ -1181,6 +1190,9 @@ $("#boardView").addEventListener("click", async (e) => {
     const ok = !!t("[data-approve-task]");
     const id = (t("[data-approve-task]") || t("[data-reject-task]")).dataset[ok ? "approveTask" : "rejectTask"];
     try { await api("POST", `runs/${id}/approve`, { approved: ok }); toast(ok ? "Deploy approved" : "Deploy rejected", ok ? "ok" : ""); boardSoon(); }
+    catch (err) { toast(err.message, "bad"); }
+  } else if (t("[data-resume]")) {
+    try { const r = await api("POST", `runs/${t("[data-resume]").dataset.resume}/resume`); toast(`Resuming: ${r.goal}`, "ok"); boardSoon(); refreshSoon(); }
     catch (err) { toast(err.message, "bad"); }
   } else if (t("[data-cancel]")) {
     try { const r = await api("POST", `runs/${t("[data-cancel]").dataset.cancel}/cancel`); toast(r.note); boardSoon(); refreshSoon(); }

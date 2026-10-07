@@ -6,6 +6,7 @@ CEO bot (`project.ceo_telegram`): the CEO's line to the team.
   - /status, /tasks          -> what is running, queued, done
   - /project <id>            -> the project new tasks from this chat go to
   - /cancel <task id>        -> stop a task, or take it out of the queue
+  - /resume <task id>        -> continue a failed, stopped or interrupted task
   - approvals arrive with Approve / Reject buttons; finished, failed and blocked tasks are reported
     (`notify`: "Approvals", "Blockers", "Reports", "Daily Report")
 
@@ -217,7 +218,7 @@ class CeoBot(Bot):
             return self.api.send(chat, "BABD CEO bot.\n\nSend a goal as a message, or a .md file, or a link to one: "
                                        "it becomes a task for the team.\n\n/status - what the team is doing\n"
                                        "/tasks - recent tasks\n/project <id> - where new tasks go\n"
-                                       "/cancel <task id> - stop or unqueue a task")
+                                       "/cancel <task id> - stop or unqueue a task\n/resume <task id> - continue a failed or interrupted task")
         if cmd == "/status":
             return self.api.send(chat, self.status_text())
         if cmd == "/tasks":
@@ -233,6 +234,10 @@ class CeoBot(Bot):
             self.chat_project[str(chat)] = arg
             self.persist()
             return self.api.send(chat, f"New tasks from this chat go to project {arg}.")
+        if cmd == "/resume":
+            if not arg:
+                return self.api.send(chat, "Usage: /resume <task id> (a failed, stopped or interrupted task)")
+            return self.api.send(chat, self.safe(lambda: f"Resuming: {self.dash.resume_run(arg)['goal']}"))
         if cmd == "/cancel":
             if not arg:
                 return self.api.send(chat, "Usage: /cancel <task id> (see /tasks)")
