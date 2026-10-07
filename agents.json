@@ -13,6 +13,8 @@
       "deploy"
     ],
     "max_fix_rounds": 2,
+    "max_parallel_tasks": 3,
+    "parallel_prep": true,
     "gbrain": {
       "enabled": true,
       "strict": true,
@@ -83,6 +85,7 @@
         "timeout_sec": 1200,
         "yolo": false
       },
+      "parallel": 2,
       "telegram": {
         "enabled": true,
         "bot_username": "@babd_lead_bot",
@@ -160,6 +163,7 @@
         "timeout_sec": 900,
         "yolo": false
       },
+      "parallel": 2,
       "telegram": {
         "enabled": true,
         "bot_username": "@babd_architect_bot",
@@ -222,6 +226,7 @@
       "harness": {
         "type": "hermes_local"
       },
+      "parallel": 2,
       "telegram": {
         "enabled": true,
         "bot_username": "@babd_dev_bot",
@@ -294,6 +299,7 @@
         "timeout_sec": 1200,
         "yolo": false
       },
+      "parallel": 2,
       "telegram": {
         "enabled": true,
         "bot_username": "@babd_qa_bot",
@@ -353,6 +359,7 @@
         "timeout_sec": 1200,
         "yolo": false
       },
+      "parallel": 2,
       "telegram": {
         "enabled": false,
         "bot_username": "@babd_devops_bot",

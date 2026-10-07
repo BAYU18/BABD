@@ -28,6 +28,8 @@ STEP_SKILLS = {
                     "verification-before-completion"],
     "fix": ["systematic-debugging", "receiving-code-review", "test-driven-development",
             "verification-before-completion"],
+    "test_plan": ["test-driven-development"],
+    "deploy_prep": ["verification-before-completion", "using-git-worktrees"],
     "deploy_report": ["verification-before-completion", "finishing-a-development-branch", "using-git-worktrees"],
     "report": ["verification-before-completion", "finishing-a-development-branch"],
     "report_blocked": ["verification-before-completion", "diagnosing-superpowers"],

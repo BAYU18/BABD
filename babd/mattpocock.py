@@ -24,6 +24,8 @@ STEP_SKILLS = {
     "code": ["implement", "tdd", "codebase-design"],
     "test_report": ["code-review", "tdd", "diagnosing-bugs"],
     "fix": ["diagnosing-bugs", "tdd"],
+    "test_plan": ["tdd"],
+    "deploy_prep": ["wizard", "setup-pre-commit"],
     "deploy_report": ["wizard", "pr"],
     "report": ["wait-what", "retro"],
     "report_blocked": ["wait-what", "retro", "to-questionnaire"],

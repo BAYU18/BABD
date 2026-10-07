@@ -50,6 +50,7 @@ class DashboardTest(unittest.TestCase):
         self.cfg_path = os.path.join(self.tmp, "agents.json")
         cfg = copy.deepcopy(load_config())
         cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
+        cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py
         cfg["project"]["mattpocock"] = {"enabled": False}  # covered in test_mattpocock.py
         for a in cfg["agents"]:
@@ -86,6 +87,10 @@ class DashboardTest(unittest.TestCase):
                 return r.status, json.loads(raw) if r.headers.get("Content-Type", "").startswith("application/json") else raw
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
+
+    def waiting(self, run_id):
+        ctx = self.dash.active.get(run_id)
+        return bool(ctx and ctx["approval"])
 
     def wait(self, cond, timeout=10):
         end = time.time() + timeout
@@ -193,15 +198,14 @@ class DashboardTest(unittest.TestCase):
         with mock.patch.object(Agent, "ask", scripted_ask):
             status, run = self.call("POST", "/api/runs", {"goal": "Build login"})
             self.assertEqual(status, 200, run)
-            self.assertEqual(self.call("POST", "/api/runs", {"goal": "again"})[0], 409)  # one run at a time
             run_id = run["id"]
-            self.wait(lambda: self.dash.approval)
+            self.wait(lambda: self.waiting(run_id))
             _, state = self.call("GET", "/api/state")
             self.assertEqual(state["run"]["status"], "waiting_approval")
             self.assertEqual(state["run"]["agents"]["devops"]["status"], "waiting")
             status, _ = self.call("POST", f"/api/runs/{run_id}/approve", {"approved": True, "note": "ship it"})
             self.assertEqual(status, 200)
-            self.wait(lambda: not self.dash.run_thread.is_alive())
+            self.wait(lambda: run_id not in self.dash.active)
         _, r = self.call("GET", f"/api/runs/{run_id}")
         self.assertEqual(r["status"], "done")
         self.assertTrue(r["deployed"])
@@ -215,11 +219,11 @@ class DashboardTest(unittest.TestCase):
     def test_cancel_while_waiting(self):
         with mock.patch.object(Agent, "ask", scripted_ask):
             _, run = self.call("POST", "/api/runs", {"goal": "Build login"})
-            self.wait(lambda: self.dash.approval)
+            self.wait(lambda: self.waiting(run["id"]))
             self.assertEqual(self.call("POST", f"/api/runs/{run['id']}/cancel")[0], 200)
-            self.wait(lambda: not self.dash.run_thread.is_alive())
-        self.assertEqual(self.dash.run.state["status"], "cancelled")
-        self.assertFalse(self.dash.run.state["deployed"])
+            self.wait(lambda: run["id"] not in self.dash.active)
+        self.assertEqual(self.dash.last_run.state["status"], "cancelled")
+        self.assertFalse(self.dash.last_run.state["deployed"])
 
     def test_event_stream(self):
         req = urllib.request.Request(self.base + f"/api/events?token={TOKEN}")

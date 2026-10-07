@@ -5,7 +5,7 @@ const params = new URLSearchParams(location.search);
 let token = params.get("token") || sessionStorage.getItem("babd-token") || "";
 if (params.get("token")) {
   sessionStorage.setItem("babd-token", token);
-  history.replaceState(null, "", location.pathname); // keep the token out of the address bar
+  history.replaceState(null, "", location.pathname + location.hash); // keep the token out of the address bar
 }
 
 async function api(method, path, body) {
@@ -23,7 +23,7 @@ async function api(method, path, body) {
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "");
-const STATUS_COLORS = { working: "var(--good)", done: "var(--ceo)", waiting: "var(--warn)", blocked: "var(--bad)", idle: "var(--dim)", setup: "#c084fc" };
+const STATUS_COLORS = { working: "var(--good)", done: "var(--ceo)", waiting: "var(--warn)", blocked: "var(--bad)", idle: "var(--dim)", setup: "#c084fc", queued: "#7dd3fc" };
 const PROJECT_COLORS = { ACTIVE: "var(--good)", DONE: "var(--ceo)", BLOCKED: "var(--bad)" };
 
 function toast(msg, kind = "") {
@@ -92,6 +92,9 @@ function station(a) {
 let S = null;             // /api/state
 let viewRun = null;       // run shown in the side panel (live or from history)
 let viewingHistory = false;
+let liveRuns = {};        // run id -> summary, for every task running or waiting for the CEO
+let pinnedRun = null;     // a live task picked in the run panel (else the panel follows the latest task)
+let view = "command";    // "command" | "board"
 const jobs = {};          // job id -> job
 const chats = {};         // agent id -> [{role, content}]
 const checks = {};        // agent id -> {ok, summary}
@@ -100,12 +103,16 @@ let drawer = null;        // {mode: "config"|"chat", agentId, tab}
 const agentById = (id) => S.agents.find((a) => a.id === id);
 const colorOf = (id) => (id === "ceo" ? "var(--ceo)" : agentById(id)?.color || "var(--muted)");
 const nameOf = (id) => (id === "ceo" ? "CEO" : agentById(id)?.short_name || id);
-const runActive = () => S?.run && ["running", "waiting_approval"].includes(S.run.status);
+const isLive = (r) => r && ["running", "waiting_approval"].includes(r.status);
+const runActive = () => Object.values(liveRuns).some(isLive);
+const liveList = () => Object.values(liveRuns).filter(isLive).sort((a, b) => (a.started_at || "").localeCompare(b.started_at || ""));
 
 async function refresh() {
   S = await api("GET", "state");
-  if (!viewingHistory) viewRun = S.run;
+  liveRuns = Object.fromEntries((S.active_runs || []).map((r) => [r.id, r]));
+  if (!viewingHistory) viewRun = (pinnedRun && (liveRuns[pinnedRun] || (viewRun?.id === pinnedRun ? viewRun : null))) || S.run;
   renderAll();
+  if (view === "board") loadBoard();
 }
 
 let refreshTimer = null;
@@ -119,9 +126,14 @@ function renderAll() {
   renderAgents();
   renderRun();
   renderHistory();
-  $("#btnRun").disabled = !!runActive();
-  $("#btnCancel").classList.toggle("hidden", !runActive());
+  renderRunButtons();
+  renderNav();
   if (drawer?.mode === "chat") renderChat();
+}
+
+function renderRunButtons() {
+  $("#btnCancel").classList.toggle("hidden", !(viewRun && isLive(liveRuns[viewRun.id] || viewRun) && !viewingHistory));
+  $("#btnRun").textContent = runActive() ? "Add task" : "Run team";
 }
 
 // ---- top bar -----------------------------------------------------------------------------
@@ -139,24 +151,38 @@ function brainTitle() {
 function renderTop() {
   const p = S.project;
   $("#projectName").textContent = p.name;
-  const live = S.run && runActive() ? S.run : null;
-  const status = live ? (live.status === "waiting_approval" ? "WAITING" : "RUNNING") : p.status;
-  const progress = live ? live.progress : p.progress;
-  const working = live ? Object.values(live.agents).filter((a) => a.status === "working").length
+  const lives = liveList();
+  const live = lives.length ? lives : null;
+  const waitingCeo = lives.filter((r) => r.approval?.result === "pending").length;
+  const status = live ? (waitingCeo === lives.length ? "WAITING" : "RUNNING") : p.status;
+  const progress = live ? Math.round(lives.reduce((n, r) => n + (r.progress || 0), 0) / lives.length) : p.progress;
+  const working = live ? S.agents.filter((a) => agentState(a) === "working").length
     : S.agents.filter((a) => a.status === "working").length;
+  const blockers = live ? lives.reduce((n, r) => n + (r.blockers || []).length, 0) : p.blockers;
+  const queued = (S.queue || []).filter((q) => q.status === "queued").length;
   $("#kpis").innerHTML = `
     <div class="kpi"><div class="l">Status</div><div class="v">${pill(status, PROJECT_COLORS[status] || "var(--warn)", !!live)}</div></div>
-    <div class="kpi progress"><div class="l">Progress · ${progress}%</div><div class="bar"><i style="width:${progress}%"></i></div></div>
+    <div class="kpi progress"><div class="l">Progress · ${progress}%${lives.length > 1 ? ` · ${lives.length} tasks` : ""}</div><div class="bar"><i style="width:${progress}%"></i></div></div>
+    <div class="kpi"><div class="l">Tasks</div><div class="v">${lives.length}<span class="muted small"> running${queued ? ` · ${queued} queued` : ""}</span></div></div>
     <div class="kpi"><div class="l">Agents working</div><div class="v">${working} / ${S.agents.length}</div></div>
-    <div class="kpi"><div class="l">Approval needed</div><div class="v" style="color:${(live?.approval?.result === "pending" || p.approval_needed) ? "var(--warn)" : "inherit"}">${live?.approval?.result === "pending" ? 1 : p.approval_needed}</div></div>
-    <div class="kpi"><div class="l">Blockers</div><div class="v" style="color:${(p.blockers && !live) ? "var(--bad)" : "inherit"}">${live ? live.blockers.length : p.blockers}</div></div>
-    <div class="kpi" title="${esc(brainTitle())}"><div class="l">GBrain memory</div><div class="v">${brainPill()}</div></div>
-    <div class="kpi"><div class="l">Next action</div><div class="v small">${esc(live ? (live.stage || "").toUpperCase() : p.next_action)}</div></div>`;
+    <div class="kpi"><div class="l">Approval needed</div><div class="v" style="color:${(waitingCeo || (!live && p.approval_needed)) ? "var(--warn)" : "inherit"}">${live ? waitingCeo : p.approval_needed}</div></div>
+    <div class="kpi"><div class="l">Blockers</div><div class="v" style="color:${blockers ? "var(--bad)" : "inherit"}">${blockers}</div></div>
+    <div class="kpi" title="${esc(brainTitle())}"><div class="l">GBrain memory</div><div class="v">${brainPill()}</div></div>`;
 }
 
 // ---- agent cards -------------------------------------------------------------------------
+// The agent across every live task: working beats queued beats waiting; the task line names what it does.
 function agentLive(a) {
-  return S.run && runActive() ? S.run.agents[a.id] : null;
+  const mine = liveList().map((r) => ({ r, s: r.agents?.[a.id] })).filter((x) => x.s && !["idle", "done"].includes(x.s.status));
+  if (!mine.length) return null;
+  for (const status of ["working", "queued", "waiting", "blocked"]) {
+    const hit = mine.filter((x) => x.s.status === status);
+    if (!hit.length) continue;
+    const many = liveList().length > 1;
+    const task = hit.map((x) => (many ? `${x.s.task} — ${x.r.goal.slice(0, 40)}` : x.s.task)).join("\n");
+    return { status, task, count: hit.length };
+  }
+  return null;
 }
 
 // What the agent is really doing now: the live run first, then a running chat/setup job; outside a run
@@ -188,7 +214,7 @@ function agentCard(a) {
     </div>
     <div style="display:grid;gap:10px;align-content:start">
       <ul class="subtasks">${subs}</ul>
-      ${live?.task ? `<div class="agent-task-now">${esc(live.task)}</div>` : ""}
+      ${live?.task ? `<div class="agent-task-now">${live.count > 1 ? `<b>${live.count} tasks at once</b><br>` : ""}${esc(live.task).replaceAll("\n", "<br>")}</div>` : ""}
     </div>
     <div style="display:grid;gap:10px;align-content:start">
       <div class="chips">
@@ -306,7 +332,7 @@ function renderAgents() {
       stations[a.id] = t.content.firstChild;
       stations[a.id].dataset.key = key;
     }
-    stations[a.id].dataset.state = agentState(a);
+    stations[a.id].dataset.state = agentState(a) === "queued" ? "waiting" : agentState(a);
     slot.appendChild(stations[a.id]);
   }
 }
@@ -340,17 +366,25 @@ $("#agents").addEventListener("click", async (e) => {
 function renderHistory() {
   const sel = $("#runHistory");
   const current = sel.value;
-  sel.innerHTML = `<option value="">Current run</option>` + S.runs
-    .map((r) => `<option value="${esc(r.id)}">${esc(r.id)} · ${esc(r.status)} · ${esc((r.goal || "").slice(0, 32))}</option>`).join("");
-  sel.value = current;
+  const lives = liveList();
+  const liveIds = new Set(lives.map((r) => r.id));
+  sel.innerHTML = `<option value="">Latest task</option>`
+    + (lives.length ? `<optgroup label="Running now">${lives.map((r) => `<option value="live:${esc(r.id)}">● ${esc(r.status === "waiting_approval" ? "waiting CEO" : "running")} · ${esc((r.goal || "").slice(0, 34))}</option>`).join("")}</optgroup>` : "")
+    + `<optgroup label="History">${S.runs.filter((r) => !liveIds.has(r.id))
+      .map((r) => `<option value="${esc(r.id)}">${esc(r.id)} · ${esc(r.status)} · ${esc((r.goal || "").slice(0, 32))}</option>`).join("")}</optgroup>`;
+  sel.value = [...sel.options].some((o) => o.value === current) ? current : "";
 }
 
-$("#runHistory").addEventListener("change", async (e) => {
-  const id = e.target.value;
-  viewingHistory = !!id;
-  try { viewRun = id ? await api("GET", `runs/${id}`) : S.run; } catch (err) { toast(err.message, "bad"); }
+async function showRun(id) {
+  const liveId = id.startsWith("live:") ? id.slice(5) : (liveRuns[id] ? id : null);
+  viewingHistory = !!id && !liveId;
+  try { viewRun = liveId ? liveRuns[liveId] : id ? await api("GET", `runs/${id}`) : S.run; } catch (err) { toast(err.message, "bad"); }
+  pinnedRun = liveId || null;
   renderRun();
-});
+  renderRunButtons();
+}
+
+$("#runHistory").addEventListener("change", (e) => showRun(e.target.value));
 
 const shown = new Set();
 function messageItem(m) {
@@ -469,16 +503,22 @@ $("#btnRun").addEventListener("click", async () => {
   try {
     viewingHistory = false;
     $("#runHistory").value = "";
-    S.run = await api("POST", "runs", { goal, auto_approve: $("#autoApprove").checked, update_dashboard: $("#updateImage").checked });
-    viewRun = S.run;
+    const r = await api("POST", "runs", { goal, auto_approve: $("#autoApprove").checked, update_dashboard: $("#updateImage").checked });
+    $("#goal").value = "";
+    if (r.status === "queued") {
+      toast(`Task queued (#${r.position}): it starts when a task slot is free`);
+      refreshSoon();
+      return;
+    }
+    S.run = r; liveRuns[r.id] = r; viewRun = r; pinnedRun = null;
     renderAll();
-    toast("Team run started");
+    toast(liveList().length > 1 ? `Task started · ${liveList().length} tasks running in parallel` : "Team run started");
   } catch (err) { toast(err.message, "bad"); }
 });
 
 $("#btnCancel").addEventListener("click", async () => {
-  if (!S.run) return;
-  try { await api("POST", `runs/${S.run.id}/cancel`); toast("Stopping after the current step…"); }
+  if (!viewRun) return;
+  try { await api("POST", `runs/${viewRun.id}/cancel`); toast("Stopping after the current step…"); }
   catch (err) { toast(err.message, "bad"); }
 });
 
@@ -579,6 +619,7 @@ function renderConfig() {
       <div class="row2">${field("Main task · line 1", text("main0", f.main_task[0]))}${field("Main task · line 2", text("main1", f.main_task[1]))}</div>
       ${f.sub_tasks.map((s, i) => field(`Sub-task ${i + 1}`, `<div class="sub-row">${text(`sub${i}`, s.name)}${select(`substate${i}`, s.state, [["todo", "To do"], ["active", "Active"], ["done", "Done"]])}</div>`)).join("")}
       ${field("Status on the dashboard", select("status", f.status, [["idle", "Idle"], ["working", "Working"], ["waiting", "Waiting"], ["blocked", "Blocked"]]))}
+      ${field("Parallel steps", `<input type="number" name="parallel" min="1" max="8" value="${esc(f.parallel ?? 2)}">`, "How many steps this agent works on at the same time, across all tasks (1–8). More = faster with many tasks, but more LLM calls at once.")}
       <div class="note">Main task and sub-tasks also go into the agent's system prompt.</div>`;
   } else if (drawer.tab === "llm") {
     html = `
@@ -693,6 +734,7 @@ function readForm() {
     form.main_task = [get("main0"), get("main1")].filter((x) => x);
     form.sub_tasks = form.sub_tasks.map((s, i) => ({ name: get(`sub${i}`), state: get(`substate${i}`) }));
     form.status = get("status");
+    if (get("parallel")) form.parallel = Number(get("parallel"));
   } else if (tab === "llm") {
     for (const k of ["provider", "api", "base_url", "model", "effort", "api_key_env"]) form.llm[k] = get(k);
     form.llm.max_tokens = get("max_tokens") ? Number(get("max_tokens")) : "";
@@ -726,7 +768,7 @@ async function saveConfig(setup) {
   const f = form;
   const body = {
     name: f.name, short_name: f.short_name, main_task: f.main_task, sub_tasks: f.sub_tasks, status: f.status,
-    skills: f.skills, telegram: f.telegram, harness: f.harness,
+    skills: f.skills, telegram: f.telegram, harness: f.harness, ...(f.parallel ? { parallel: f.parallel } : {}),
     ...Object.fromEntries(PACKS().filter((p) => f[p.key]).map((p) => [p.key, f[p.key]])),
     llm: Object.fromEntries(["provider", "api", "base_url", "model", "effort", "api_key_env", "max_tokens"].map((k) => [k, f.llm[k] ?? ""])),
   };
@@ -800,6 +842,10 @@ $("#btnSettings").addEventListener("click", () => {
     ${field("Project name", text("p_name", p.name))}
     <label class="check"><input type="checkbox" id="p_approval" ${(p.require_approval || []).includes("deploy") ? "checked" : ""}> CEO must approve before DevOps deploys</label>
     ${field("QA fix rounds", `<input type="number" id="p_rounds" min="0" max="5" value="${esc(p.max_fix_rounds ?? 2)}">`, "How many times a failed QA report goes back to the Developer before the run is blocked.")}
+    <div class="field"><label>Parallel work</label>
+      ${field("Tasks at the same time", `<input type="number" id="p_tasks" min="1" max="10" value="${esc(p.max_parallel_tasks ?? 3)}">`, "More tasks wait in the queue. A task waiting for your approval does not count.")}
+      <label class="check"><input type="checkbox" id="p_prep" ${(p.parallel_prep ?? true) ? "checked" : ""}> While the Developer builds, QA writes the test plan and DevOps prepares the deploy</label>
+      <div class="help">How many steps each agent runs at once is set per agent (Configure → Role → Parallel steps).</div></div>
     <div class="field"><label>GBrain team memory</label>
       <label class="check"><input type="checkbox" id="g_enabled" ${(p.gbrain?.enabled ?? true) ? "checked" : ""}> Every agent reads gbrain before a task and writes to it after</label>
       <label class="check"><input type="checkbox" id="g_strict" ${(p.gbrain?.strict ?? true) ? "checked" : ""}> Stop the agent step when gbrain can't be read or written</label>
@@ -814,12 +860,277 @@ $("#btnSettings").addEventListener("click", () => {
   $("#p_save").onclick = async () => {
     try {
       await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
+        max_parallel_tasks: Number($("#p_tasks").value), parallel_prep: $("#p_prep").checked,
         gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked },
         ...Object.fromEntries(PACKS().map((k) => [k.key, { enabled: $(`#pk_en_${k.key}`).checked, enforce: $(`#pk_enf_${k.key}`).checked }])) });
       toast("Settings saved", "ok"); closeModal(); refresh();
     } catch (err) { toast(err.message, "bad"); }
   };
 });
+
+// ---- task board: every task and what each agent is doing ----------------------------------
+let B = null;              // /api/board
+let boardOffset = 0;       // server clock minus browser clock (ms)
+let boardSpan = 0;         // seconds shown in the activity timeline (0 = fit the recent activity)
+let taskFilter = "all";
+const openTasks = new Set();
+const KIND_LABELS = { plan: "Plan", design: "Design", code: "Build", test_plan: "Test plan", deploy_prep: "Deploy prep",
+  test_report: "Test", fix: "Fix", deploy_report: "Deploy", report: "Report" };
+const TASK_COLORS = { running: "var(--good)", waiting_approval: "var(--warn)", queued: "#7dd3fc", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)" };
+const TASK_LABELS = { running: "running", waiting_approval: "waiting for you", queued: "queued", done: "done", failed: "failed", cancelled: "stopped" };
+const ms = (iso) => (iso ? new Date(iso).getTime() : NaN);
+const serverNow = () => Date.now() + boardOffset;
+
+function fmtDur(sec) {
+  if (sec == null || !isFinite(sec)) return "—";
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`;
+  return `${Math.floor(sec / 3600)}h ${String(Math.floor(sec / 60) % 60).padStart(2, "0")}m`;
+}
+const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+function setView(v) {
+  view = v;
+  $("#commandView").classList.toggle("hidden", v !== "command");
+  $("#boardView").classList.toggle("hidden", v !== "board");
+  try { localStorage.setItem("babd.view", v); } catch { /* private mode: fine */ }
+  renderNav();
+  if (v === "board") loadBoard();
+  window.scrollTo(0, 0);
+}
+function renderNav() {
+  for (const b of document.querySelectorAll("#views [data-view]")) b.classList.toggle("on", b.dataset.view === view);
+  const n = liveList().length + (S?.queue || []).filter((q) => q.status === "queued").length;
+  $("#navCount").textContent = n ? n : "";
+}
+$("#views").addEventListener("click", (e) => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
+
+async function loadBoard() {
+  try {
+    B = await api("GET", "board");
+    boardOffset = ms(B.now) - Date.now();
+    renderBoard();
+  } catch (err) { toast(err.message, "bad"); }
+}
+let boardTimer = null;
+function boardSoon() {
+  if (view !== "board") return;
+  clearTimeout(boardTimer);
+  boardTimer = setTimeout(loadBoard, 400);
+}
+
+function renderBoard() {
+  if (!B) return;
+  const c = B.counts || {};
+  const busy = B.agents.filter((a) => a.working.length).length;
+  const steps = B.agents.reduce((n, a) => n + a.working.length, 0);
+  const tile = (label, value, color, sub = "") => `<div class="tile"><div class="l">${esc(label)}</div><div class="v"${color ? ` style="color:${color}"` : ""}>${value}</div>${sub ? `<div class="s">${sub}</div>` : ""}</div>`;
+  $("#boardKpis").innerHTML = [
+    tile("Running", c.running || 0, c.running ? "var(--good)" : ""),
+    tile("Waiting for you", c.waiting_approval || 0, c.waiting_approval ? "var(--warn)" : "", "CEO approval"),
+    tile("Queued", c.queued || 0, "", `up to ${B.limits.max_parallel_tasks} at once`),
+    tile("Done", c.done || 0),
+    tile("Failed / stopped", (c.failed || 0) + (c.cancelled || 0), (c.failed ? "var(--bad)" : "")),
+    tile("Agents busy", `${busy}<span class="of"> / ${B.agents.length}</span>`, "", `${steps} step(s) in parallel`),
+  ].join("");
+  $("#boardLimits").textContent = `Up to ${B.limits.max_parallel_tasks} tasks run at the same time; the rest wait in the queue.${B.limits.parallel_prep ? " Inside a task, QA and DevOps prepare while the Developer builds." : ""}`;
+  renderLanes();
+  renderGantt();
+  renderTasks();
+}
+
+function renderLanes() {
+  $("#lanes").innerHTML = B.agents.map((a) => {
+    const boxes = Array.from({ length: a.capacity }, (_, i) => `<i class="${i < a.active ? "on" : ""}"></i>`).join("");
+    const now = a.working.map((st) => `<div class="now-item"><span class="kind">${esc(KIND_LABELS[st.kind] || st.kind)}</span>
+      <span class="goal" title="${esc(st.goal)}">${esc(st.goal)}</span><span class="since" data-since="${esc(st.started_at)}">${fmtDur((serverNow() - ms(st.started_at)) / 1000)}</span></div>`).join("");
+    const wait = a.queued.length ? `<div class="lane-wait">${a.queued.length} step(s) waiting for a free slot: ${a.queued.map((st) => esc(`${KIND_LABELS[st.kind] || st.kind} · ${st.goal.slice(0, 30)}`)).join(", ")}</div>` : "";
+    return `<div class="lane ${a.working.length ? "busy" : ""}" style="--c:${esc(a.color)}">
+      <div class="lane-head"><b>${esc(a.name)}</b><span class="slots" title="${a.active} of ${a.capacity} slots busy">${boxes}</span><span class="muted small">${a.active}/${a.capacity} slots</span></div>
+      <div class="lane-now">${now || '<div class="muted small">Idle: ready for the next step</div>'}</div>${wait}
+      <div class="lane-stats"><span><b>${a.done}</b> done</span><span>avg <b>${fmtDur(a.avg_seconds)}</b></span><span>busy <b>${fmtDur(a.busy_seconds)}</b></span>${a.failed ? `<span class="bad"><b>${a.failed}</b> failed</span>` : ""}</div>
+    </div>`;
+  }).join("");
+}
+
+function renderGantt() {
+  const box = $("#gantt");
+  const W = Math.max(320, box.clientWidth || 900);
+  const labelW = W < 560 ? 76 : 110, padR = 12, barH = 12, gap = 2, rowPad = 8, axisH = 22;
+  const all = B.tasks.flatMap((t) => (t.steps || []).map((st) => ({ ...st, run: t.id, goal: t.goal })));
+  const end = serverNow();
+  let span = boardSpan;
+  if (!span) {  // auto: from the first step of the active tasks (or of the last day) to now, at least 1 minute
+    const live = new Set(B.tasks.filter((t) => ["running", "waiting_approval"].includes(t.status)).map((t) => t.id));
+    const pool = all.filter((st) => live.has(st.run));
+    const firsts = (pool.length ? pool : all).map((st) => ms(st.queued_at || st.started_at)).filter((t) => isFinite(t) && end - t < 86400e3);
+    span = Math.max(60, Math.min(86400, ((end - Math.min(end - 60e3, ...firsts)) / 1000) * 1.08));
+  }
+  const start = end - span * 1000;
+  const x = (t) => labelW + ((Math.max(start, Math.min(end, t)) - start) / (end - start)) * (W - labelW - padR);
+  let y = axisH;
+  const rows = B.agents.map((a) => {
+    const items = all.filter((st) => st.agent === a.id).map((st) => {
+      const q = ms(st.queued_at), b = ms(st.started_at), f = ms(st.finished_at);
+      const from = isFinite(q) ? q : b;
+      const to = isFinite(f) ? f : end;
+      return { st, from, b, to };
+    }).filter((it) => isFinite(it.from) && it.to >= start).sort((p, q) => p.from - q.from);
+    const laneEnds = [];
+    for (const it of items) {  // parallel steps of one agent go on separate lines
+      let lane = laneEnds.findIndex((e) => e <= it.from);
+      if (lane < 0) { lane = laneEnds.length; laneEnds.push(0); }
+      laneEnds[lane] = it.to;
+      it.lane = lane;
+    }
+    const h = Math.max(1, laneEnds.length) * (barH + gap) - gap + rowPad * 2;
+    const top = y;
+    y += h;
+    const marks = items.map((it) => {
+      const by = top + rowPad + it.lane * (barH + gap);
+      const st = it.st;
+      const tip = `<b>${esc(KIND_LABELS[st.kind] || st.kind)}</b> · ${esc(nameOf(st.agent))}<br>${esc(st.goal)}<br>${esc(st.status)}${st.started_at ? ` · ${clock(it.b)}` : ""}${st.seconds != null ? ` · took ${fmtDur(st.seconds)}` : st.status === "working" ? ` · ${fmtDur((end - it.b) / 1000)} so far` : ""}${isFinite(it.b) && it.b - it.from > 1500 ? `<br>waited ${fmtDur((it.b - it.from) / 1000)} for a slot` : ""}`;
+      const waitTo = isFinite(it.b) ? it.b : end;
+      const waitEl = waitTo - it.from > 1500 ? `<line class="g-wait" x1="${x(it.from)}" x2="${x(waitTo)}" y1="${by + barH / 2}" y2="${by + barH / 2}"/>` : "";
+      if (!isFinite(it.b)) return `<g data-tip="${esc(tip)}" data-run="${esc(st.run)}">${waitEl}<rect class="g-hit" x="${x(it.from)}" y="${by - 2}" width="${Math.max(6, x(end) - x(it.from))}" height="${barH + 4}"/></g>`;
+      const bx = x(it.b), bw = Math.max(4, x(it.to) - bx);
+      return `<g data-tip="${esc(tip)}" data-run="${esc(st.run)}">${waitEl}<rect class="g-bar ${esc(st.status)}" x="${bx}" y="${by}" width="${bw}" height="${barH}" rx="3" style="fill:${esc(a.color)}"/>
+        <rect class="g-hit" x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${barH + 4}"/></g>`;
+    }).join("");
+    return `<line class="g-row" x1="0" x2="${W}" y1="${top + h}" y2="${top + h}"/>
+      <text class="g-label" x="0" y="${top + h / 2 + 4}" style="fill:${esc(a.color)}">${esc(a.name)}</text>${marks}`;
+  });
+  const steps = [60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600];
+  const stepS = steps.find((s) => span / s <= (W < 560 ? 4 : 7)) || 21600;
+  const ticks = [];
+  for (let t = Math.ceil(start / (stepS * 1000)) * stepS * 1000; t <= end; t += stepS * 1000) {
+    ticks.push(`<line class="g-grid" x1="${x(t)}" x2="${x(t)}" y1="${axisH - 4}" y2="${y}"/><text class="g-tick" x="${x(t)}" y="12" text-anchor="middle">${clock(t)}</text>`);
+  }
+  box.innerHTML = `<svg width="${W}" height="${y + 2}" viewBox="0 0 ${W} ${y + 2}" role="img" aria-label="When each agent worked on which task">
+    ${ticks.join("")}${rows.join("")}<line class="g-now" x1="${x(end)}" x2="${x(end)}" y1="${axisH - 4}" y2="${y}"/></svg>
+    ${all.some((st) => ms(st.finished_at || st.started_at || st.queued_at) >= start || st.status === "working") ? "" : '<div class="gantt-empty muted small">No agent work in this time range yet.</div>'}`;
+}
+
+function stageTrack(t) {
+  return `<div class="stage-track" aria-hidden="true">${B.stages.map((s) => `<i class="${esc(t.stages?.[s.key] || "todo")}" title="${esc(s.label)}"></i>`).join("")}</div>`;
+}
+
+function renderTasks() {
+  const order = { running: 0, waiting_approval: 0, queued: 1 };
+  const shownTasks = B.tasks.filter((t) => taskFilter === "all"
+    || (taskFilter === "active" && ["running", "waiting_approval"].includes(t.status))
+    || (taskFilter === "queued" && t.status === "queued")
+    || (taskFilter === "done" && t.status === "done")
+    || (taskFilter === "problem" && ["failed", "cancelled"].includes(t.status)))
+    .sort((a, b) => (order[a.status] ?? 2) - (order[b.status] ?? 2)
+      || (a.status === "queued" ? (a.position || 0) - (b.position || 0) : (b.started_at || b.queued_at || "").localeCompare(a.started_at || a.queued_at || "")));
+  if (!shownTasks.length) { $("#taskList").innerHTML = `<div class="empty">No tasks here yet. Add some above.</div>`; return; }
+  $("#taskList").innerHTML = shownTasks.map((t) => {
+    const live = ["running", "waiting_approval"].includes(t.status);
+    const startedMs = ms(t.started_at), endMs = t.finished_at ? ms(t.finished_at) : serverNow();
+    const working = (t.steps || []).filter((st) => st.status === "working");
+    const waiting = (t.steps || []).filter((st) => st.status === "queued");
+    const now = [...working.map((st) => `<span class="who-chip" style="--c:${colorOf(st.agent)}">${esc(nameOf(st.agent))} · ${esc(KIND_LABELS[st.kind] || st.kind)}</span>`),
+      ...waiting.map((st) => `<span class="who-chip wait" style="--c:${colorOf(st.agent)}">${esc(nameOf(st.agent))} · waiting for a slot</span>`)].join("");
+    const meta = t.status === "queued" ? `#${t.position} in the queue · added ${clock(ms(t.queued_at))}`
+      : `${esc(t.id)} · started ${clock(startedMs)} · ${live ? `<span data-since="${esc(t.started_at)}">${fmtDur((endMs - startedMs) / 1000)}</span>` : `took ${fmtDur((endMs - startedMs) / 1000)}`}`;
+    const open = openTasks.has(t.id);
+    const stepRows = (t.steps || []).map((st) => {
+      const waited = st.started_at ? (ms(st.started_at) - ms(st.queued_at)) / 1000 : null;
+      return `<tr><td><span class="dot" style="background:${colorOf(st.agent)}"></span>${esc(nameOf(st.agent))}</td><td>${esc(KIND_LABELS[st.kind] || st.kind)}</td>
+        <td>${pill(st.status, STATUS_COLORS[st.status] || (st.status === "failed" ? "var(--bad)" : "var(--dim)"), st.status === "working")}</td>
+        <td>${waited != null && waited >= 1 ? fmtDur(waited) : "—"}</td><td>${st.seconds != null ? fmtDur(st.seconds) : st.status === "working" ? `<span data-since="${esc(st.started_at)}"></span>` : "—"}</td></tr>`;
+    }).join("");
+    return `<article class="task" data-task="${esc(t.id)}">
+      <div class="task-row">
+        <button type="button" class="task-toggle" data-toggle="${esc(t.id)}" aria-expanded="${open}" aria-label="Show steps">${open ? "▾" : "▸"}</button>
+        <div class="task-title"><div class="goal">${esc(t.goal)}</div><div class="muted small">${meta}</div></div>
+        <div class="task-status">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")}</div>
+        <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
+        <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
+        <div class="task-actions">
+          ${t.status !== "queued" ? `<button type="button" class="btn small" data-open="${esc(t.id)}">Open</button>` : ""}
+          ${t.waiting_ceo ? `<button type="button" class="btn small good" data-approve-task="${esc(t.id)}">Approve deploy</button><button type="button" class="btn small danger" data-reject-task="${esc(t.id)}">Reject</button>` : ""}
+          ${live || t.status === "queued" ? `<button type="button" class="btn small ghost" data-cancel="${esc(t.id)}">${t.status === "queued" ? "Remove" : "Stop"}</button>` : ""}
+        </div>
+      </div>
+      ${t.error ? `<div class="note warn">${esc(t.error)}</div>` : ""}
+      ${open ? `<div class="task-steps">${stepRows ? `<table><thead><tr><th>Agent</th><th>Step</th><th>Status</th><th>Waited</th><th>Took</th></tr></thead><tbody>${stepRows}</tbody></table>` : '<div class="muted small">No steps yet.</div>'}</div>` : ""}
+    </article>`;
+  }).join("");
+}
+
+$("#boardView").addEventListener("click", async (e) => {
+  const t = (sel) => e.target.closest(sel);
+  if (t("[data-span]")) {
+    boardSpan = Number(t("[data-span]").dataset.span);
+    for (const b of document.querySelectorAll("#spanSeg button")) b.classList.toggle("on", b === t("[data-span]"));
+    renderGantt();
+  } else if (t("[data-filter]")) {
+    taskFilter = t("[data-filter]").dataset.filter;
+    for (const b of document.querySelectorAll("#taskFilter button")) b.classList.toggle("on", b === t("[data-filter]"));
+    renderTasks();
+  } else if (t("[data-toggle]")) {
+    const id = t("[data-toggle]").dataset.toggle;
+    openTasks.has(id) ? openTasks.delete(id) : openTasks.add(id);
+    renderTasks();
+  } else if (t("[data-run]")) {
+    const id = t("[data-run]").dataset.run;
+    openTasks.add(id);
+    taskFilter = "all";
+    for (const b of document.querySelectorAll("#taskFilter button")) b.classList.toggle("on", b.dataset.filter === "all");
+    renderTasks();
+    document.querySelector(`[data-task="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  } else if (t("[data-open]")) {
+    const id = t("[data-open]").dataset.open;
+    const key = liveRuns[id] && isLive(liveRuns[id]) ? `live:${id}` : id;
+    setView("command");
+    renderHistory();
+    $("#runHistory").value = key;
+    await showRun(key);
+  } else if (t("[data-approve-task]") || t("[data-reject-task]")) {
+    const ok = !!t("[data-approve-task]");
+    const id = (t("[data-approve-task]") || t("[data-reject-task]")).dataset[ok ? "approveTask" : "rejectTask"];
+    try { await api("POST", `runs/${id}/approve`, { approved: ok }); toast(ok ? "Deploy approved" : "Deploy rejected", ok ? "ok" : ""); boardSoon(); }
+    catch (err) { toast(err.message, "bad"); }
+  } else if (t("[data-cancel]")) {
+    try { const r = await api("POST", `runs/${t("[data-cancel]").dataset.cancel}/cancel`); toast(r.note); boardSoon(); refreshSoon(); }
+    catch (err) { toast(err.message, "bad"); }
+  }
+});
+
+$("#btnAddTasks").addEventListener("click", async () => {
+  const goals = $("#taskGoals").value.split("\n").map((g) => g.trim()).filter(Boolean);
+  if (!goals.length) { toast("Write at least one task, one per line", "bad"); $("#taskGoals").focus(); return; }
+  try {
+    const r = await api("POST", "tasks", { goals, auto_approve: $("#taskAutoApprove").checked });
+    const started = r.tasks.filter((t) => t.status !== "queued").length;
+    toast(`${goals.length} task(s) added: ${started} started, ${goals.length - started} queued`, "ok");
+    $("#taskGoals").value = "";
+    refreshSoon(); boardSoon();
+  } catch (err) { toast(err.message, "bad"); }
+});
+
+// hover tooltips for the timeline (delegated, so they survive re-renders)
+$("#gantt").addEventListener("mousemove", (e) => {
+  const g = e.target.closest("[data-tip]");
+  const tip = $("#tip");
+  if (!g) { tip.classList.add("hidden"); return; }
+  tip.innerHTML = g.dataset.tip;
+  tip.classList.remove("hidden");
+  const r = tip.getBoundingClientRect();
+  tip.style.left = `${Math.min(window.innerWidth - r.width - 8, e.clientX + 14)}px`;
+  tip.style.top = `${Math.max(8, e.clientY - r.height - 12)}px`;
+});
+$("#gantt").addEventListener("mouseleave", () => $("#tip").classList.add("hidden"));
+window.addEventListener("resize", () => { if (view === "board" && B) renderGantt(); });
+
+setInterval(() => {  // live clocks: elapsed times tick and running bars grow
+  if (view !== "board" || !B) return;
+  for (const el of document.querySelectorAll("#boardView [data-since]")) el.textContent = fmtDur((serverNow() - ms(el.dataset.since)) / 1000);
+  renderGantt();
+}, 1000);
 
 // ---- live events -------------------------------------------------------------------------
 function connect() {
@@ -828,19 +1139,21 @@ function connect() {
   es.addEventListener("job", (e) => onJob(JSON.parse(e.data)));
   es.addEventListener("memory", (e) => { const m = JSON.parse(e.data); flashMemory(m.agent, m.op); logLine("gbrain", `${nameOf(m.agent)} ${m.op === "read" ? "read" : "wrote"} gbrain`); });
   es.addEventListener("config", () => refreshSoon());
-  es.addEventListener("approval", (e) => { toast(`Approval needed: ${JSON.parse(e.data).question}`); });
+  es.addEventListener("approval", (e) => { toast(`Approval needed: ${JSON.parse(e.data).question}`); boardSoon(); });
+  es.addEventListener("tasks", () => { refreshSoon(); boardSoon(); });
   es.addEventListener("run", (e) => {
     const d = JSON.parse(e.data);
-    S.run = d.summary;
-    if (!viewingHistory) viewRun = S.run;
+    liveRuns[d.summary.id] = d.summary;
+    if (!S.run || d.summary.id === S.run.id || (d.summary.started_at || "") >= (S.run.started_at || "")) S.run = d.summary;
+    if (!viewingHistory) viewRun = pinnedRun ? liveRuns[pinnedRun] || viewRun : S.run;
+    if (viewRun && viewRun.id === d.summary.id) viewRun = d.summary;
+    boardSoon();
     if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`);
     if (d.event === "memory") flashMemory(d.data.agent, d.data.op);
     if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok");
     if (d.event === "memory") logLine("gbrain", `${nameOf(d.data.agent)} ${d.data.op === "read" ? `read ${d.data.facts} fact(s), ${d.data.pages} page(s)` : `wrote ${d.data.page}`}`);
-    if (d.event === "finished") { toast(`Run ${d.data.status}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
-    renderTop(); renderAgents(); renderRun();
-    $("#btnRun").disabled = !!runActive();
-    $("#btnCancel").classList.toggle("hidden", !runActive());
+    if (d.event === "finished") { toast(`Task ${d.data.status}: ${d.summary.goal.slice(0, 50)}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
+    renderTop(); renderAgents(); renderRun(); renderRunButtons(); renderNav();
   });
   es.onerror = () => { /* EventSource reconnects by itself */ };
 }
@@ -850,7 +1163,12 @@ function connect() {
     document.body.innerHTML = `<div class="empty" style="margin:15vh auto;max-width:520px">Open the dashboard with the URL printed by <code>babd dashboard</code> (it contains the access token).</div>`;
     return;
   }
-  try { await refresh(); connect(); }
+  try {
+    await refresh(); connect();
+    let saved = "command";
+    try { saved = localStorage.getItem("babd.view") || "command"; } catch { /* private mode */ }
+    if (location.hash === "#board" || saved === "board") setView("board");
+  }
   catch (err) {
     document.body.innerHTML = `<div class="empty" style="margin:15vh auto;max-width:520px">Cannot load the dashboard: ${esc(err.message)}.<br>Restart <code>babd dashboard</code> and open the new URL.</div>`;
   }

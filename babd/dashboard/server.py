@@ -28,6 +28,9 @@ from ..team import Agent, Team, apply_run_to_config
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram")
+DEFAULT_PARALLEL_TASKS = 3
+TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
+               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback")
 
 
@@ -91,9 +94,12 @@ class Dashboard:
         self.jobs = {}
         self.chats = {}            # agent id -> (config fingerprint, Agent) for multi-turn chat
         self.chat_locks = {}
-        self.run = None            # the active flow.Run
-        self.run_thread = None
-        self.approval = None       # (threading.Event, result dict) while the run waits for the CEO
+        self.slots = flow.AgentSlots(self.load())  # how many steps each agent works on at once, all tasks
+        self.tasks_lock = threading.RLock()
+        self.active = {}           # run id -> {"run": flow.Run, "approval": (Event, result) | None, "options": {...}}
+        self.queue = []            # tasks waiting for a free task slot (project.max_parallel_tasks)
+        self.failed_starts = []    # queued tasks that could not start (e.g. a config error)
+        self.last_run = None       # the run started last (the dashboard's "current run")
         add_listener(lambda source, msg: self.hub.publish("log", {"source": source, "msg": msg, "at": time.time()}))
 
     # -- config ------------------------------------------------------------------------------
@@ -139,6 +145,9 @@ class Dashboard:
             "flow": {"stages": [{"key": k, "label": l, "owner": o} for k, l, o, _ in flow.STAGES],
                      "routes": sorted(list(r) for r in flow.ROUTES)},
             "run": self.run_summary(),
+            "active_runs": [self.summary(ctx["run"]) for ctx in self.active_list()],
+            "queue": self.queued(),
+            "slots": self.slots.load(),
             "runs": self.history(),
             "jobs": sorted(self.jobs.values(), key=lambda j: j["started"], reverse=True)[:30],
         }
@@ -159,6 +168,8 @@ class Dashboard:
             for k in EDITABLE_AGENT_FIELDS:
                 if k in body:
                     a[k] = body[k]
+            if "parallel" in body:
+                a["parallel"] = max(1, min(8, int(body["parallel"])))
             if "llm" in body:
                 for k in LLM_FIELDS:
                     if k in body["llm"]:
@@ -186,6 +197,7 @@ class Dashboard:
                     a["harness"] = {"type": kind, **opts}
             create_harness(a)  # validate before saving
             self.save(cfg)
+            self.slots.configure(cfg)
             self.chats.pop(agent_id, None)
             return public_agent(a)
 
@@ -210,7 +222,12 @@ class Dashboard:
                         g[k] = bool(body["gbrain"][k])
             if "max_fix_rounds" in body:
                 p["max_fix_rounds"] = max(0, min(5, int(body["max_fix_rounds"])))
+            if "max_parallel_tasks" in body:
+                p["max_parallel_tasks"] = max(1, min(10, int(body["max_parallel_tasks"])))
+            if "parallel_prep" in body:
+                p["parallel_prep"] = bool(body["parallel_prep"])
             self.save(cfg)
+            self._pump()
             return p
 
     # -- background jobs (setup, check, chat) -------------------------------------------------
@@ -273,33 +290,56 @@ class Dashboard:
             reply = agent.chat(message, on_memory=lambda e: self.hub.publish("memory", e))
             return {"reply": reply, "history": agent.history}
 
-    # -- team runs ---------------------------------------------------------------------------
+    # -- team runs: many tasks at once ---------------------------------------------------------
 
-    def run_summary(self):
-        if not self.run:
-            return None
-        s = self.run.state
+    def max_parallel_tasks(self):
+        try:
+            return max(1, int(self.load()["project"].get("max_parallel_tasks", DEFAULT_PARALLEL_TASKS)))
+        except (TypeError, ValueError):
+            return DEFAULT_PARALLEL_TASKS
+
+    def active_list(self):
+        with self.tasks_lock:
+            return sorted(self.active.values(), key=lambda c: c["run"].state["started_at"])
+
+    def queued(self):
+        with self.tasks_lock:
+            return [{**q, "position": i + 1} for i, q in enumerate(self.queue)] + [dict(f) for f in self.failed_starts]
+
+    def summary(self, run):
+        s = run.snapshot()
         return {k: s[k] for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
-                                  "blockers", "report", "memory", "skills")} | {"messages": s["messages"]}
+                                  "blockers", "report", "memory", "skills", "steps", "messages")}
 
-    def history(self):
+    def run_summary(self):
+        return self.summary(self.last_run) if self.last_run else None
+
+    def history(self, limit=20):
+        return [{k: s.get(k) for k in ("id", "goal", "status", "started_at", "finished_at", "verdict", "deployed")}
+                for s in self.saved_states(limit)]
+
+    def saved_states(self, limit=20):
         out = []
         if os.path.isdir(flow.RUNS_DIR):
-            for rid in sorted(os.listdir(flow.RUNS_DIR), reverse=True)[:20]:
+            for rid in sorted(os.listdir(flow.RUNS_DIR), reverse=True):
+                if len(out) >= limit:
+                    break
                 p = os.path.join(flow.RUNS_DIR, rid, "state.json")
                 if os.path.exists(p):
                     try:
                         with open(p) as f:
-                            s = json.load(f)
-                        out.append({k: s.get(k) for k in ("id", "goal", "status", "started_at", "finished_at",
-                                                          "verdict", "deployed")})
+                            out.append(json.load(f))
                     except (OSError, json.JSONDecodeError):
                         continue
         return out
 
     def load_run(self, run_id):
-        if self.run and self.run.id == run_id:
+        with self.tasks_lock:
+            ctx = self.active.get(run_id)
+        if ctx:
+            return self.summary(ctx["run"])
+        if self.last_run and self.last_run.id == run_id:
             return self.run_summary()
         d = os.path.join(flow.RUNS_DIR, os.path.basename(run_id))
         if not os.path.exists(os.path.join(d, "state.json")):
@@ -314,57 +354,171 @@ class Dashboard:
         s["messages"] = msgs
         return s
 
+    def new_run_id(self):
+        base = time.strftime("%Y%m%d-%H%M%S")
+        taken = set(self.active) | {q["id"] for q in self.queue}
+        rid, n = base, 1
+        while rid in taken or os.path.exists(os.path.join(flow.RUNS_DIR, rid)):
+            n += 1
+            rid = f"{base}-{n}"
+        return rid
+
     def start_run(self, goal, auto_approve=False, update_dashboard=True):
+        """Add a task. It starts now when a task slot is free, else it waits in the queue."""
         goal = (goal or "").strip()
         if not goal:
             raise ApiError(400, "goal is empty")
-        if self.run_thread and self.run_thread.is_alive():
-            raise ApiError(409, "a team run is already in progress")
+        if len(goal) > 20000:
+            raise ApiError(400, "goal is too long")
+        Team(self.load(), log=lambda m: None)  # a broken config fails here, not later in the queue
+        with self.tasks_lock:
+            entry = {"id": self.new_run_id(), "goal": goal, "status": "queued", "queued_at": flow.now(),
+                     "auto_approve": bool(auto_approve), "update_dashboard": bool(update_dashboard)}
+            self.queue.append(entry)
+        self.hub.publish("tasks", {"event": "queued", "task": entry})
+        self._pump()
+        with self.tasks_lock:
+            ctx = self.active.get(entry["id"])
+        return self.summary(ctx["run"]) if ctx else {**entry, "position": self.queued_position(entry["id"])}
+
+    def start_tasks(self, goals, auto_approve=False, update_dashboard=True):
+        goals = [g.strip() for g in goals if isinstance(g, str) and g.strip()]
+        if not goals:
+            raise ApiError(400, "no tasks given")
+        if len(goals) > 50:
+            raise ApiError(400, "at most 50 tasks at once")
+        return {"tasks": [self.start_run(g, auto_approve, update_dashboard) for g in goals]}
+
+    def queued_position(self, run_id):
+        with self.tasks_lock:
+            for i, q in enumerate(self.queue):
+                if q["id"] == run_id:
+                    return i + 1
+        return None
+
+    def _pump(self):
+        """Start queued tasks while fewer than max_parallel_tasks are busy. A task waiting for the CEO's
+        approval does not hold a slot: the agents are free for other tasks meanwhile."""
+        limit = self.max_parallel_tasks()
+        started = []
+        with self.tasks_lock:
+            while self.queue:
+                busy = sum(1 for c in self.active.values() if c["run"].state["status"] == "running")
+                if busy >= limit:
+                    break
+                entry = self.queue.pop(0)
+                try:
+                    started.append(self._launch(entry))
+                except Exception as e:  # e.g. agents.json broke while the task waited
+                    self.failed_starts.append({**entry, "status": "failed", "error": f"{type(e).__name__}: {e}"})
+                    self.failed_starts = self.failed_starts[-20:]
+        for run in started:
+            self.hub.publish("tasks", {"event": "started", "task": {"id": run.id, "goal": run.goal}})
+
+    def _launch(self, entry):
         team = Team(self.load(), log=lambda m: None)
+        ctx = {"approval": None, "options": entry}
 
         def approver(request):
-            if auto_approve:
+            if entry["auto_approve"]:
                 return True, "auto-approved from the dashboard"
             ev, result = threading.Event(), {}
-            self.approval = (ev, result)
-            self.hub.publish("approval", {"run": run.id, **request})
+            ctx["approval"] = (ev, result)
+            self.hub.publish("approval", {"run": run.id, "goal": run.goal, **request})
+            self._pump()  # this task now waits for the CEO: its slot goes to the next task
             while not ev.wait(1):
                 if run.cancelled.is_set():
                     return False, "run cancelled"
-            self.approval = None
+            ctx["approval"] = None
             return result.get("approved", False), result.get("note", "")
 
         def on_event(kind, data):
-            self.hub.publish("run", {"event": kind, "data": data, "summary": self.run_summary()})
+            self.hub.publish("run", {"event": kind, "data": data, "summary": self.summary(run)})
 
-        run = flow.Run(team, goal, approver=approver, on_event=on_event)
-        self.run = run
+        run = flow.Run(team, entry["goal"], approver=approver, on_event=on_event, run_id=entry["id"], slots=self.slots)
+        ctx["run"] = run
+        self.active[run.id] = ctx
+        self.last_run = run
 
         def work():
-            state = run.execute()
-            if update_dashboard and state.get("report"):
-                with self.cfg_lock:
-                    self.save(apply_run_to_config(self.load(), state))
+            try:
+                state = run.execute()
+                if entry["update_dashboard"] and state.get("report"):
+                    with self.cfg_lock:
+                        self.save(apply_run_to_config(self.load(), state))
+            finally:
+                with self.tasks_lock:
+                    self.active.pop(run.id, None)
+                self._pump()
+                self.hub.publish("tasks", {"event": "finished", "task": {"id": run.id, "status": run.state["status"]}})
 
-        self.run_thread = threading.Thread(target=work, daemon=True, name="team-run")
-        self.run_thread.start()
-        return self.run_summary()
+        threading.Thread(target=work, daemon=True, name=f"team-run-{run.id}").start()
+        return run
 
     def resolve_approval(self, run_id, approved, note=""):
-        if not self.run or self.run.id != run_id or not self.approval:
+        with self.tasks_lock:
+            ctx = self.active.get(run_id)
+        if not ctx or not ctx["approval"]:
             raise ApiError(409, "this run is not waiting for approval")
-        ev, result = self.approval
+        ev, result = ctx["approval"]
         result.update(approved=bool(approved), note=str(note or "")[:300])
         ev.set()
         return {"ok": True}
 
     def cancel_run(self, run_id):
-        if not self.run or self.run.id != run_id:
-            raise ApiError(404, "no such active run")
-        self.run.cancelled.set()
-        if self.approval:
-            self.approval[0].set()
+        with self.tasks_lock:
+            for i, q in enumerate(self.queue):
+                if q["id"] == run_id:
+                    self.queue.pop(i)
+                    self.hub.publish("tasks", {"event": "removed", "task": q})
+                    return {"ok": True, "note": "removed from the queue"}
+            self.failed_starts = [f for f in self.failed_starts if f["id"] != run_id]
+            ctx = self.active.get(run_id)
+        if not ctx:
+            raise ApiError(404, "no such active or queued task")
+        ctx["run"].cancelled.set()
+        if ctx["approval"]:
+            ctx["approval"][0].set()
         return {"ok": True, "note": "the run stops after the current agent step"}
+
+    # -- task board ------------------------------------------------------------------------------
+
+    def board(self, history=30):
+        """Every task (queued, running, recent) and what each agent is doing, for the task board."""
+        cfg = self.load()
+        tasks = [{**q, "progress": 0, "stages": {}, "steps": [], "agents": {}} for q in self.queued()]
+        seen = set()
+        for ctx in self.active_list():
+            s = ctx["run"].snapshot()
+            seen.add(s["id"])
+            tasks.append({k: s.get(k) for k in TASK_FIELDS} | {"waiting_ceo": bool(ctx["approval"])})
+        for s in self.saved_states(history):
+            if s.get("id") not in seen:
+                seen.add(s.get("id"))
+                tasks.append({k: s.get(k) for k in TASK_FIELDS} | {"steps": s.get("steps") or []})
+        load = self.slots.load()
+        agents = []
+        for a in cfg["agents"]:
+            steps = [{**st, "run": t["id"], "goal": t["goal"]} for t in tasks for st in (t.get("steps") or [])
+                     if st.get("agent") == a["id"]]
+            done = [st for st in steps if st.get("status") == "done"]
+            secs = [st["seconds"] for st in done if isinstance(st.get("seconds"), (int, float))]
+            agents.append({
+                "id": a["id"], "name": a.get("short_name") or a["name"], "color": a.get("color"),
+                "capacity": load.get(a["id"], {}).get("capacity", flow.parallel_of(a)),
+                "active": load.get(a["id"], {}).get("active", 0),
+                "working": [st for st in steps if st.get("status") == "working"],
+                "queued": [st for st in steps if st.get("status") == "queued"],
+                "done": len(done), "failed": sum(1 for st in steps if st.get("status") == "failed"),
+                "busy_seconds": round(sum(secs), 1), "avg_seconds": round(sum(secs) / len(secs), 1) if secs else None,
+            })
+        counts = {}
+        for t in tasks:
+            counts[t["status"]] = counts.get(t["status"], 0) + 1
+        return {"now": flow.now(), "tasks": tasks, "agents": agents, "counts": counts,
+                "limits": {"max_parallel_tasks": self.max_parallel_tasks(),
+                           "parallel_prep": bool(cfg["project"].get("parallel_prep", True))},
+                "stages": [{"key": k, "label": l, "owner": o} for k, l, o, _ in flow.STAGES]}
 
 
 def make_handler(dash, token, allowed_hosts):
@@ -495,6 +649,14 @@ def make_handler(dash, token, allowed_hosts):
                 if method == "POST" and parts[2:] == ["chat", "reset"]:
                     d.chats.pop(agent_id, None)
                     return {"ok": True}
+            if method == "GET" and parts == ["board"]:
+                return d.board()
+            if method == "POST" and parts == ["tasks"]:
+                b = self.body()
+                goals = b.get("goals")
+                if not isinstance(goals, list):
+                    raise ApiError(400, "goals must be a list of task descriptions")
+                return d.start_tasks(goals, bool(b.get("auto_approve")), b.get("update_dashboard", True))
             if parts[:1] == ["runs"]:
                 if method == "POST" and len(parts) == 1:
                     b = self.body()

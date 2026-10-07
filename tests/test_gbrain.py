@@ -98,6 +98,7 @@ class GBrainTest(unittest.TestCase):
         self.cfg["project"]["gbrain"] = {"command": self.fake, "home": os.path.join(self.tmp, "brain")}
         self.cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py
         self.cfg["project"]["mattpocock"] = {"enabled": False}  # covered in test_mattpocock.py
+        self.cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         self.brain = GBrain(self.cfg["project"])
         self.brain.setup()
         self.setup_log = self.entries()

@@ -53,6 +53,7 @@ class FlowTest(unittest.TestCase):
         self.addCleanup(p.stop)
         self.cfg = copy.deepcopy(load_config())
         self.cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
+        self.cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         self.cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py
         self.cfg["project"]["mattpocock"] = {"enabled": False}  # covered in test_mattpocock.py
         for a in self.cfg["agents"]:

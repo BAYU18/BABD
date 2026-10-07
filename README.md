@@ -45,7 +45,10 @@ Opens the CEO command center in your browser (`http://127.0.0.1:8800/?token=…`
 
   ![Agent animations: idle, working, waiting, blocked, setting up](docs/agent-states.gif)
 - **Give the team a goal** and watch the run live: the stage stepper, every message between the
-  agents, and the CEO report at the end.
+  agents, and the CEO report at the end. While tasks run you can add more ("Add task"); the run panel
+  switches between the tasks running now and the history.
+- **Task board** (tab at the top): every task and what every agent is doing, see
+  [Many tasks at once](#many-tasks-at-once-and-agents-in-parallel).
 - **Approve or reject the deploy** when QA has passed (or tick "approve automatically").
 - **Configure each agent**: role and tasks, LLM (provider, API style, base URL, model, effort,
   API key), harness and its options, Telegram, skills. Saving writes `agents.json`, redraws the
@@ -54,7 +57,8 @@ Opens the CEO command center in your browser (`http://127.0.0.1:8800/?token=…`
   are never sent back to the browser.
 - **Chat with one agent** directly through its harness.
 - **Check agents** (send each a short test message), **Set up all**, team settings (project name,
-  CEO approval before deploy, QA fix rounds), run history, and an activity log with install output.
+  CEO approval before deploy, QA fix rounds, tasks at the same time, parallel preparation), run
+  history, and an activity log with install output.
 
 The panel listens on 127.0.0.1 only. Every API call needs the token from the start-up URL, and the
 Host header must be the panel's own address, so other web pages can't drive it.
@@ -165,6 +169,8 @@ BABD enforces the skills around every step rather than leaving it to the model (
   | plan | brainstorming, writing-plans, subagent-driven-development, dispatching-parallel-agents | grilling, to-spec, to-tickets |
   | design | brainstorming, writing-plans | domain-modeling, codebase-design, grilling |
   | code | test-driven-development, executing-plans, using-git-worktrees, verification-before-completion | implement, tdd, codebase-design |
+  | test plan (QA, while the Developer builds) | test-driven-development | tdd |
+  | deploy prep (DevOps, while the Developer builds) | verification-before-completion, using-git-worktrees | wizard, setup-pre-commit |
   | test | test-driven-development, systematic-debugging, requesting-code-review, verification-before-completion | code-review, tdd, diagnosing-bugs |
   | fix | systematic-debugging, receiving-code-review, test-driven-development, verification-before-completion | diagnosing-bugs, tdd |
   | deploy | verification-before-completion, finishing-a-development-branch, using-git-worktrees | wizard, pr |
@@ -191,7 +197,9 @@ The skill texts make prompts larger: in a team run a step's skills add about 20�
 ```
 CEO ──goal──▶ Team Lead ──plan──┐
                                 ├─▶ Architect ──design──▶ Team Lead
-                                ├─▶ Developer ──code────▶ Team Lead
+                                ├─▶ Developer ──code────────────▶ Team Lead  ┐
+                                ├─▶ QA ──test plan (from design)─▶ Team Lead  ├ at the same time
+                                ├─▶ DevOps ──deploy preparation──▶ Team Lead  ┘ (parallel_prep)
                                 ├─▶ QA ──test report + VERDICT──▶ Team Lead
                                 │      FAIL: Team Lead ─▶ Developer (fix) ─▶ Team Lead ─▶ QA (re-test)
                                 │            … up to max_fix_rounds, then the run is BLOCKED
@@ -202,12 +210,61 @@ Team Lead ──report──▶ CEO
 
 - The Team Lead is the hub: specialists only talk to the Team Lead, and only the Team Lead talks to
   the CEO. Any other route is refused (`babd/flow.py`, `MessageBus`).
-- Each agent gets the work it builds on: the Developer gets the design, QA gets design + code,
-  DevOps gets code + QA report + the CEO's approval note.
+- Each agent gets the work it builds on: the Developer gets the design, QA gets design + its test
+  plan + code, DevOps gets code + QA report + its deploy preparation + the CEO's approval note.
 - QA must end with `VERDICT: PASS` or `VERDICT: FAIL`; a missing verdict counts as FAIL.
 - The report's status, progress, approvals and blockers are computed from what happened (QA verdict,
   approval, deploy), not taken from the model.
 - Every message is saved in `runs/<id>/messages.jsonl`, with `state.json` and one file per step.
+
+## Many tasks at once, and agents in parallel
+
+BABD runs several tasks (goals) at the same time, and the agents work in parallel:
+
+- **Between tasks**: up to `project.max_parallel_tasks` tasks run at once (default 3); more wait in a
+  queue and start as soon as one finishes. A task waiting for your deploy approval does not hold a
+  place, so the agents keep working on other tasks meanwhile. While task A is being tested, task B
+  can be designed and task C built.
+- **Inside a task**: once the design is ready, the Developer builds while QA writes the test plan
+  from the design and DevOps prepares the deployment (`project.parallel_prep`, default on). QA then
+  tests the build against its plan, and DevOps deploys from its preparation.
+- **Per agent**: `parallel` in `agents.json` (default 2, 1–8) is how many steps one agent works on
+  at the same time, across all tasks. A step that finds the agent busy waits for a free slot, and
+  the dashboard shows it as *waiting for a free slot*. Set it to 1 for an agent on a local model that
+  can only answer one request at a time.
+
+Messages, run state and GBrain writes are safe with steps running at the same time (one lock per
+run; GBrain calls go one at a time). The CEO approval is asked per task.
+
+**Task board** (the *Task board* tab in the dashboard):
+
+![Task board](docs/task-board.png)
+
+- tiles: running, waiting for you, queued, done, failed or stopped, agents busy;
+- **Add tasks**: one per line, all queued at once;
+- **Agents**: per agent its slots (busy / total), the steps it works on now with a live timer, steps
+  waiting for a free slot, and how many steps it finished, its average step time and busy time;
+- **Activity timeline**: one row per agent, a bar per step (steps at the same time on separate
+  lines), dashed lines while a step waited for a slot; hover a bar for the task, step and times, click
+  it to open the task. Range: auto, 15 min, 1 hour, 6 hours, 24 hours;
+- **Tasks**: every task with its status, stage progress, who works on it now, how long it has run,
+  and Open / Approve deploy / Reject / Stop (or Remove from the queue); expand a task for its steps
+  with how long each one waited and took.
+
+From the command line, give several goals to run them at the same time:
+
+```bash
+.venv/bin/babd run "Build a login page" "Add CSV export to reports" --approve
+```
+
+| Setting | Where | Default |
+| --- | --- | --- |
+| `project.max_parallel_tasks` | Team settings → Tasks at the same time | 3 |
+| `project.parallel_prep` | Team settings → QA and DevOps prepare while the Developer builds | on |
+| `agents[].parallel` | Configure → Role → Parallel steps | 2 |
+
+Running in parallel does not make a task cheaper: parallel preparation adds two LLM steps per task
+(QA's test plan, DevOps' preparation), and more tasks at once means more LLM calls at the same time.
 
 ## Files
 
@@ -237,7 +294,8 @@ babd chat architect                           # interactive multi-turn chat
 babd run "Build a login page with email + password" --update-dashboard [--approve]
 ```
 
-`run` follows the flow above and prints each message as it is sent. The CEO approval is asked in
+`run` follows the flow above and prints each message as it is sent (several goals: `babd run "goal 1"
+"goal 2"` runs them at the same time, each line tagged `[1]`, `[2]`). The CEO approval is asked in
 the terminal (or given up front with `--approve`). With `--update-dashboard`, the result is written
 into `agents.json` (project status, workflow strip, agent states) and `workspace.svg` is redrawn.
 
@@ -381,6 +439,7 @@ Each agent has an **AGENT CONFIG** section on its card, filled from `agents.json
 | `telegram.enabled` | Telegram bot gateway on/off (green dot = connected, grey = off) |
 | `telegram.bot_username` | The agent's bot username (from @BotFather) |
 | `telegram.token_env` | Name of the environment variable that holds the bot token |
+| `parallel` | How many steps this agent works on at the same time, across all tasks (1–8, default 2) |
 | `skills` | List of skills, added to the agent's system prompt. Add `skills/<name>.md` to give a skill real instructions |
 | `superpowers` | Superpowers skills of this agent (names of folders in `skills/superpowers/`). Without it: the ones recommended for the role |
 | `mattpocock` | Matt Pocock's skills of this agent (names of folders in `skills/mattpocock/`). Without it: the ones recommended for the role |

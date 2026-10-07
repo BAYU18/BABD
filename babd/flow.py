@@ -2,7 +2,9 @@
 
     CEO -> Team Lead                       goal
     Team Lead -> Architect -> Team Lead    design
-    Team Lead -> Developer -> Team Lead    code
+    Team Lead -> Developer -> Team Lead    code                    } at the same time
+    Team Lead -> QA -> Team Lead           test plan from design   } (project.parallel_prep)
+    Team Lead -> DevOps -> Team Lead       deploy preparation      }
     Team Lead -> QA -> Team Lead           test report + VERDICT
         (FAIL) Team Lead -> Developer (fix) -> Team Lead -> QA (re-test) ...  up to max_fix_rounds
     Team Lead -> CEO                       approval request before deploy   (project.require_approval)
@@ -11,6 +13,9 @@
 
 Every message goes through MessageBus.send(), which only allows the routes above: the Team Lead
 is the hub, specialists never talk to each other or to the CEO directly.
+
+Many runs (tasks) can go at once. AgentSlots, shared by all of them, sets how many steps each agent
+works on at the same time (`parallel` per agent in agents.json); a step waits for a free slot.
 """
 import datetime
 import json
@@ -18,6 +23,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from .config import ROOT
 from . import skillpacks
@@ -70,20 +76,76 @@ def now():
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
+DEFAULT_PARALLEL = 2  # steps one agent works on at the same time, when agents.json does not say
+
+
+class AgentSlots:
+    """How many steps each agent may work on at once, shared by every run. A step that finds all of
+    the agent's slots taken waits (status "queued") until one is free."""
+
+    def __init__(self, cfg=None):
+        self.cond = threading.Condition()
+        self.capacity, self.active, self.waiting = {}, {}, {}
+        if cfg:
+            self.configure(cfg)
+
+    def configure(self, cfg):
+        with self.cond:
+            for a in cfg.get("agents", []):
+                self.capacity[a["id"]] = parallel_of(a)
+            self.cond.notify_all()
+
+    def acquire(self, agent_id, cancelled=None):
+        with self.cond:
+            self.waiting[agent_id] = self.waiting.get(agent_id, 0) + 1
+            try:
+                while self.active.get(agent_id, 0) >= self.capacity.get(agent_id, DEFAULT_PARALLEL):
+                    if cancelled is not None and cancelled.is_set():
+                        raise FlowCancelled("run cancelled by the CEO")
+                    self.cond.wait(0.5)
+            finally:
+                self.waiting[agent_id] -= 1
+            self.active[agent_id] = self.active.get(agent_id, 0) + 1
+
+    def release(self, agent_id):
+        with self.cond:
+            self.active[agent_id] = max(0, self.active.get(agent_id, 0) - 1)
+            self.cond.notify_all()
+
+    def free(self, agent_id):
+        with self.cond:
+            return self.active.get(agent_id, 0) < self.capacity.get(agent_id, DEFAULT_PARALLEL)
+
+    def load(self):
+        with self.cond:
+            ids = set(self.capacity) | set(self.active)
+            return {i: {"capacity": self.capacity.get(i, DEFAULT_PARALLEL), "active": self.active.get(i, 0),
+                        "waiting": self.waiting.get(i, 0)} for i in ids}
+
+
+def parallel_of(agent_cfg):
+    try:
+        return max(1, min(8, int(agent_cfg.get("parallel", DEFAULT_PARALLEL))))
+    except (TypeError, ValueError):
+        return DEFAULT_PARALLEL
+
+
 class MessageBus:
-    def __init__(self, emit, run_dir):
+    def __init__(self, emit, run_dir, lock=None):
         self.messages = []
         self.emit = emit
+        self.lock = lock or threading.RLock()
         self.path = os.path.join(run_dir, "messages.jsonl")
 
     def send(self, sender, recipient, kind, content, **meta):
         if (sender, recipient) not in ROUTES:
             raise FlowError(f"route {sender} -> {recipient} is not part of the team flow")
-        msg = {"seq": len(self.messages) + 1, "at": now(), "from": sender, "to": recipient, "kind": kind,
-               "content": content, **meta}
-        self.messages.append(msg)
-        with open(self.path, "a") as f:
-            f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        with self.lock:
+            msg = {"seq": len(self.messages) + 1, "at": now(), "from": sender, "to": recipient, "kind": kind,
+                   "content": content, **meta}
+            self.messages.append(msg)
+            with open(self.path, "a") as f:
+                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
         self.emit("message", msg)
         return msg
 
@@ -91,30 +153,38 @@ class MessageBus:
 class Run:
     """One team run on a goal. State is plain JSON so the dashboard can show it as-is."""
 
-    def __init__(self, team, goal, approver=None, on_event=None, run_id=None):
+    def __init__(self, team, goal, approver=None, on_event=None, run_id=None, slots=None):
         self.team = team
         self.goal = goal
         self.approver = approver           # fn(request_dict) -> (approved: bool, note: str); None = no approver
         self.on_event = on_event or (lambda kind, data: None)
+        self.slots = slots or AgentSlots(team.cfg)  # shared between runs by the dashboard
         self.cancelled = threading.Event()
+        self.lock = threading.RLock()      # steps of one run can run at the same time
         base = run_id or datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         self.id, n = base, 1
-        while os.path.exists(os.path.join(RUNS_DIR, self.id)):  # two runs in the same second
-            n += 1
-            self.id = f"{base}-{n}"
+        os.makedirs(RUNS_DIR, exist_ok=True)
+        while True:  # two runs in the same second
+            try:
+                os.makedirs(os.path.join(RUNS_DIR, self.id))
+                break
+            except FileExistsError:
+                n += 1
+                self.id = f"{base}-{n}"
         self.dir = os.path.join(RUNS_DIR, self.id)
-        os.makedirs(self.dir)
         project = team.cfg.get("project", {})
         self.require_approval = project.get("require_approval", ["deploy"])
         self.max_fix_rounds = int(project.get("max_fix_rounds", 2))
+        self.parallel_prep = bool(project.get("parallel_prep", True))
         self.state = {
             "id": self.id, "goal": goal, "status": "running", "stage": None, "progress": 0,
             "started_at": now(), "finished_at": None, "error": None, "dir": self.dir,
             "agents": {a.id: {"status": "idle", "task": ""} for a in team.agents},
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
             "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [], "skills": [],
+            "steps": [],
         }
-        self.bus = MessageBus(self.emit, self.dir)
+        self.bus = MessageBus(self.emit, self.dir, self.lock)
         self.state["messages"] = self.bus.messages
         self.steps = 0
 
@@ -126,9 +196,15 @@ class Run:
         self.on_event(kind, {"run": self.id, **data} if isinstance(data, dict) else data)
 
     def save(self):
-        state = {k: v for k, v in self.state.items() if k != "messages"}
-        with open(os.path.join(self.dir, "state.json"), "w") as f:
-            json.dump(state, f, indent=2, ensure_ascii=False)
+        with self.lock:
+            state = json.dumps({k: v for k, v in self.state.items() if k != "messages"}, indent=2, ensure_ascii=False)
+            with open(os.path.join(self.dir, "state.json"), "w") as f:
+                f.write(state)
+
+    def snapshot(self):
+        """A copy of the state that is safe to read while steps are still running."""
+        with self.lock:
+            return json.loads(json.dumps(self.state, ensure_ascii=False, default=str))
 
     def write(self, name, content):
         with open(os.path.join(self.dir, name), "w") as f:
@@ -140,24 +216,28 @@ class Run:
 
     def stage(self, key):
         self.check_cancel()
-        for k, state in self.state["stages"].items():
-            if state == "active":
-                self.state["stages"][k] = "done"
-        self.state["stages"][key] = "active"
-        self.state["stage"] = key
+        with self.lock:
+            for k, state in self.state["stages"].items():
+                if state == "active":
+                    self.state["stages"][k] = "done"
+            self.state["stages"][key] = "active"
+            self.state["stage"] = key
         self.emit("stage", {"stage": key})
 
     def finish_stage(self, key, result="done"):
-        self.state["stages"][key] = result
-        if result == "done" and (key != "report" or self.state["deployed"]):
-            self.state["progress"] = max(self.state["progress"], STAGE_PROGRESS[key])
+        with self.lock:
+            self.state["stages"][key] = result
+            if result == "done" and (key != "report" or self.state["deployed"]):
+                self.state["progress"] = max(self.state["progress"], STAGE_PROGRESS[key])
         self.emit("stage", {"stage": key, "result": result})
 
     def agent(self, agent_id, status, task=None):
-        a = self.state["agents"][agent_id]
-        a["status"] = status
-        if task is not None:
-            a["task"] = task
+        with self.lock:
+            a = self.state["agents"][agent_id]
+            a["status"] = status
+            if task is not None:
+                a["task"] = task
+            a = dict(a)
         self.emit("agent", {"agent": agent_id, **a})
 
     # -- one agent step, always through the GBrain cycle (read -> work -> write) ---------------
@@ -167,25 +247,53 @@ class Run:
         skills = skillpacks.for_step(agent.skill_packs, skills_for or kind)
 
         def on_skills(entry):
-            entry = {**entry, "after_seq": len(self.bus.messages), "kind": kind}
-            self.state["skills"].append(entry)
+            with self.lock:
+                entry = {**entry, "after_seq": len(self.bus.messages), "kind": kind}
+                self.state["skills"].append(entry)
             self.emit("skills", entry)
-        self.steps += 1
+        with self.lock:
+            self.steps += 1
+            n = self.steps
+            step = {"n": n, "agent": agent_id, "kind": kind, "task": task, "queued_at": now(),
+                    "started_at": None, "finished_at": None, "seconds": None, "status": "queued"}
+            self.state["steps"].append(step)
         goal_short = one_line(self.goal, 80)
 
         def default_fact(out):
             return f"{agent.name} ({kind}) for '{goal_short}': {one_line(out, 220)}"
 
         def on_memory(entry):
-            entry = {**entry, "after_seq": len(self.bus.messages), "kind": kind}
-            self.state["memory"].append(entry)
+            with self.lock:
+                entry = {**entry, "after_seq": len(self.bus.messages), "kind": kind}
+                self.state["memory"].append(entry)
             self.emit("memory", entry)
 
-        return agent.work(prompt, query=(self.goal, task), task=task, page_title=f"{agent.name} · {kind} · {goal_short}",
-                          page_slug=f"babd/runs/{self.id}/{self.steps:02d}-{agent_id}-{kind}",
-                          entity=f"babd/goals/{slugify(self.goal)}",
-                          provenance=f"babd run {self.id} · {agent.name} · {kind}",
-                          fact=fact or default_fact, on_memory=on_memory, skills=skills, on_skills=on_skills)
+        if not self.slots.free(agent_id):
+            self.agent(agent_id, "queued", f"{task} (waiting: {agent.name} is busy with other tasks)")
+            self.emit("step", dict(step))
+        self.slots.acquire(agent_id, self.cancelled)
+        started = time.monotonic()
+        with self.lock:
+            step.update(status="working", started_at=now())
+            if self.state["agents"][agent_id]["status"] == "queued":
+                self.state["agents"][agent_id].update(status="working", task=task)
+        self.emit("step", dict(step))
+        try:
+            out = agent.work(prompt, query=(self.goal, task), task=task, page_title=f"{agent.name} · {kind} · {goal_short}",
+                             page_slug=f"babd/runs/{self.id}/{n:02d}-{agent_id}-{kind}",
+                             entity=f"babd/goals/{slugify(self.goal)}",
+                             provenance=f"babd run {self.id} · {agent.name} · {kind}",
+                             fact=fact or default_fact, on_memory=on_memory, skills=skills, on_skills=on_skills)
+            result = "done"
+            return out
+        except BaseException:
+            result = "failed"
+            raise
+        finally:
+            self.slots.release(agent_id)
+            with self.lock:
+                step.update(status=result, finished_at=now(), seconds=round(time.monotonic() - started, 1))
+            self.emit("step", dict(step))
 
     # -- one exchange: Team Lead -> agent -> Team Lead -----------------------------------------
 
@@ -253,7 +361,7 @@ class Run:
         assignments = plan.get("assignments") if isinstance(plan.get("assignments"), dict) else {}
         summary = plan.get("plan_summary") or plan_text
         self.write("01-plan.md", plan_text)
-        self.agent("lead", "working", "Coordinate results")
+        self.agent("lead", "waiting", "Coordinate results (waits for the team)")
         self.finish_stage("plan")
 
         def task_for(role):
@@ -268,20 +376,42 @@ class Run:
         self.write("02-architect.md", design)
         self.finish_stage("design")
 
-        # CODE
+        # CODE, with QA's test plan and DevOps' deploy preparation at the same time
         self.stage("code")
-        code = self.delegate("developer", "assign", task_for("developer"),
-                             f"{context}\n\nYour assignment:\n{task_for('developer')}\n\n"
-                             f"### Design from {names['architect']}\n{design}", "code")
+        jobs = {"developer": lambda: self.delegate(
+            "developer", "assign", task_for("developer"),
+            f"{context}\n\nYour assignment:\n{task_for('developer')}\n\n### Design from {names['architect']}\n{design}",
+            "code")}
+        if self.parallel_prep:
+            jobs["qa"] = lambda: self.delegate(
+                "qa", "prepare", "Write the test plan from the design while the Developer builds.",
+                f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design from {names['architect']}\n{design}\n\n"
+                "The Developer is building it now. Prepare the tests first: the test cases (acceptance criteria, "
+                "edge cases, failure cases) and the test code you will run against the build. Do not give a "
+                "verdict yet.", "test_plan")
+            jobs["devops"] = lambda: self.delegate(
+                "devops", "prepare", "Prepare the deployment while the Developer builds.",
+                f"{context}\n\nYour assignment:\n{task_for('devops')}\n\n### Design from {names['architect']}\n{design}\n\n"
+                "The Developer is building it now. Prepare the deployment: environments, pipeline, "
+                "configuration and secrets needed (names only), health checks, monitoring and alerts, rollback "
+                "plan, and any step a person must do by hand. Do not deploy yet: that waits for QA and the CEO.",
+                "deploy_prep")
+        out = self.parallel(jobs)
+        code, test_plan, prep = out["developer"], out.get("qa"), out.get("devops")
         self.write("03-developer.md", code)
+        if test_plan:
+            self.write("03-qa-test-plan.md", test_plan)
+        if prep:
+            self.write("03-devops-prep.md", prep)
         self.finish_stage("code")
 
         # TEST, with the fix loop
         self.stage("test")
         qa_instr = ("\n\nTest the work against the goal and the design. List every bug you find. "
                     "End your answer with exactly one line: VERDICT: PASS or VERDICT: FAIL")
+        plan_part = f"\n\n### Your test plan\n{test_plan}" if test_plan else ""
         report = self.delegate("qa", "assign", task_for("qa"),
-                               f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design\n{design}\n\n"
+                               f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design\n{design}{plan_part}\n\n"
                                f"### Code from {names['developer']}\n{code}{qa_instr}", "test_report")
         verdict = parse_verdict(report)
         self.write("04-qa-round0.md", report)
@@ -319,7 +449,8 @@ class Run:
                                        f"{context}\n\nYour assignment:\n{task_for('devops')}\n\nQA verdict: PASS"
                                        f"\nCEO approval: {note or 'approved'}\n\n### Design\n{design}\n\n"
                                        f"### Code\n{code}\n\n### QA report\n{report}\n\n"
-                                       "Deploy it and set up monitoring.", "deploy_report")
+                                       + (f"### Your deploy preparation\n{prep}\n\n" if prep else "")
+                                       + "Deploy it and set up monitoring.", "deploy_report")
                 self.write("05-devops.md", deploy)
                 self.state["deployed"] = True
                 self.finish_stage("deploy")
@@ -357,6 +488,19 @@ class Run:
         self.bus.send("lead", "ceo", "report", rep.get("summary") or report_text, report=rep)
         self.agent("lead", "done")
         self.finish_stage("report")
+
+    def parallel(self, jobs):
+        """Run {agent_id: fn} at the same time. Returns {agent_id: result}; re-raises the first error
+        after every job has finished (a job that is already working is never abandoned)."""
+        if len(jobs) == 1:
+            return {k: fn() for k, fn in jobs.items()}
+        with ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix=f"run-{self.id}") as pool:
+            futures = {k: pool.submit(fn) for k, fn in jobs.items()}
+            errors = [f.exception() for f in futures.values() if f.exception() is not None]
+        if errors:
+            cancelled = [e for e in errors if isinstance(e, FlowCancelled)]
+            raise (cancelled or errors)[0]
+        return {k: f.result() for k, f in futures.items()}
 
     def _ask_ceo(self, question):
         self.stage("approval")

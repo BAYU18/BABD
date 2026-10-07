@@ -96,6 +96,7 @@ class TeamTest(unittest.TestCase):
         os.environ["TEST_ANTHROPIC_KEY"] = "sk-ant-test"
         cfg = copy.deepcopy(load_config())
         cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
+        cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py
         cfg["project"]["mattpocock"] = {"enabled": False}  # covered in test_mattpocock.py
         # Point every agent at the mock: Anthropic agents keep the Anthropic API style,

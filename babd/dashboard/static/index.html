@@ -18,6 +18,10 @@
         <div class="project-name" id="projectName">Loading…</div>
       </div>
     </div>
+    <nav class="views" id="views" aria-label="Views">
+      <button type="button" data-view="command" class="on">Command center</button>
+      <button type="button" data-view="board">Task board <span class="count" id="navCount"></span></button>
+    </nav>
     <div class="kpis" id="kpis"></div>
     <div class="top-actions">
       <button class="btn ghost" id="btnCheck" title="Send a short test message to every agent">Check agents</button>
@@ -32,7 +36,7 @@
     </div>
   </header>
 
-  <main class="layout">
+  <main class="layout" id="commandView">
     <section class="col-main">
       <div class="card command">
         <div class="card-head">
@@ -83,6 +87,49 @@
       </div>
     </aside>
   </main>
+
+  <main class="board hidden" id="boardView">
+    <section class="board-kpis" id="boardKpis"></section>
+    <section class="card">
+      <div class="card-head">
+        <h2>Add tasks</h2>
+        <span class="muted small" id="boardLimits"></span>
+      </div>
+      <textarea id="taskGoals" rows="3" placeholder="One task per line, e.g.&#10;Build a login page with lockout&#10;Add CSV export to the reports page"></textarea>
+      <div class="command-row">
+        <label class="check"><input type="checkbox" id="taskAutoApprove"> Approve the deploys automatically</label>
+        <div class="spacer"></div>
+        <button class="btn primary" id="btnAddTasks">Add to queue</button>
+      </div>
+    </section>
+    <section class="card">
+      <div class="card-head">
+        <h2>Agents</h2>
+        <span class="muted small">What each agent works on now, in parallel. Slots = steps it can run at the same time.</span>
+      </div>
+      <div class="lanes" id="lanes"></div>
+    </section>
+    <section class="card">
+      <div class="card-head">
+        <h2>Activity timeline</h2>
+        <div class="seg" id="spanSeg" role="group" aria-label="Time range">
+          <button type="button" data-span="0" class="on">Auto</button><button type="button" data-span="900">15 min</button><button type="button" data-span="3600">1 hour</button><button type="button" data-span="21600">6 hours</button><button type="button" data-span="86400">24 hours</button>
+        </div>
+      </div>
+      <div class="gantt" id="gantt"></div>
+      <div class="gantt-legend muted small"><span><i class="lg bar"></i>working on a step</span><span><i class="lg wait"></i>waiting for a free slot</span><span><i class="lg live"></i>still running</span></div>
+    </section>
+    <section class="card">
+      <div class="card-head">
+        <h2>Tasks</h2>
+        <div class="seg" id="taskFilter" role="group" aria-label="Filter tasks">
+          <button type="button" data-filter="all" class="on">All</button><button type="button" data-filter="active">Active</button><button type="button" data-filter="queued">Queued</button><button type="button" data-filter="done">Done</button><button type="button" data-filter="problem">Failed / stopped</button>
+        </div>
+      </div>
+      <div class="task-list" id="taskList"></div>
+    </section>
+  </main>
+  <div class="tip hidden" id="tip" role="tooltip"></div>
 
   <!-- agent config drawer -->
   <div class="scrim hidden" id="scrim"></div>

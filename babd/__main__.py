@@ -9,12 +9,14 @@
   python -m babd brain [words ...]             team memory (GBrain): status, or recall about some words
   python -m babd ask <agent> "message"         one message to one agent
   python -m babd chat <agent>                  interactive chat with one agent
-  python -m babd run "goal" [--approve] [--update-dashboard]
-                                               full team run: plan -> work -> CEO report
+  python -m babd run "goal" ["goal 2" ...] [--approve] [--update-dashboard]
+                                               full team run: plan -> work -> CEO report; several
+                                               goals run at the same time, sharing the agents
 """
 import argparse
 import json
 import sys
+import threading
 
 from .config import ROOT, load_config, load_dotenv, save_config
 from .gbrain import BrainError, GBrain, format_memory
@@ -48,8 +50,8 @@ def main(argv=None):
     a.add_argument("message")
     c = sub.add_parser("chat", help="interactive chat with one agent")
     c.add_argument("agent")
-    r = sub.add_parser("run", help="full team run on a goal")
-    r.add_argument("goal")
+    r = sub.add_parser("run", help="full team run on a goal (several goals: run at the same time)")
+    r.add_argument("goal", nargs="+")
     r.add_argument("--approve", action="store_true", help="approve the deploy without asking (CEO approval gate)")
     r.add_argument("--update-dashboard", action="store_true",
                    help="write the CEO report into agents.json and regenerate workspace.svg")
@@ -155,22 +157,52 @@ def main(argv=None):
             return 1
 
     if args.cmd == "run":
-        def show(kind, data):
-            if kind == "message":
-                body = " ".join(str(data["content"]).split())
-                print(f"  {data['from']:>9} -> {data['to']:<9} {data['kind']:<16} {body[:90]}", file=sys.stderr)
-            elif kind == "stage" and "result" not in data:
-                print(f"== {data['stage'].upper()}", file=sys.stderr)
+        return run_goals(args, cfg, team)
 
-        def approver(request):
-            if args.approve:
-                return True, "auto-approved (--approve)"
-            if not sys.stdin.isatty():
-                return False, "no approval given (non-interactive; use --approve or the dashboard)"
+
+def run_goals(args, cfg, team):
+    from .flow import AgentSlots, Run
+    goals = [g for g in args.goal if g.strip()]
+    many = len(goals) > 1
+    out_lock = threading.Lock()
+
+    def show(n):
+        tag = f"[{n}] " if many else ""
+
+        def on_event(kind, data):
+            with out_lock:
+                if kind == "message":
+                    body = " ".join(str(data["content"]).split())
+                    print(f"{tag}  {data['from']:>9} -> {data['to']:<9} {data['kind']:<16} {body[:90]}", file=sys.stderr)
+                elif kind == "stage" and "result" not in data:
+                    print(f"{tag}== {data['stage'].upper()}", file=sys.stderr)
+        return on_event
+
+    def approver(request):
+        if args.approve:
+            return True, "auto-approved (--approve)"
+        if not sys.stdin.isatty():
+            return False, "no approval given (non-interactive; use --approve or the dashboard)"
+        with out_lock:  # one question at a time when several goals run
             answer = input(f"\nCEO approval needed: {request['question']} [y/N] ").strip().lower()
-            return answer in ("y", "yes"), "" if answer in ("y", "yes") else "rejected in the terminal"
+        return answer in ("y", "yes"), "" if answer in ("y", "yes") else "rejected in the terminal"
 
-        state = team.run(args.goal, approver=approver, on_event=show)
+    slots = AgentSlots(cfg)
+    limit = threading.BoundedSemaphore(max(1, int(cfg["project"].get("max_parallel_tasks", 3))))
+    states = [None] * len(goals)
+
+    def one(i, goal):
+        with limit:
+            states[i] = Run(team, goal, approver=approver, on_event=show(i + 1), slots=slots).execute()
+
+    threads = [threading.Thread(target=one, args=(i, g), daemon=True) for i, g in enumerate(goals)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for i, state in enumerate(states):
+        if many:
+            print(f"\n##### [{i + 1}] {goals[i]}")
         if state["status"] != "done":
             print(f"\nrun {state['status']}: {state['error']}", file=sys.stderr)
         rep = state.get("report") or {}
@@ -185,12 +217,15 @@ def main(argv=None):
             if rep.get("summary"):
                 print(f"\n{rep['summary']}")
         print(f"\nFull output saved in {state['dir']}")
-        if args.update_dashboard:
-            save_config(apply_run_to_config(cfg, state))
-            sys.path.insert(0, ROOT)
-            import generate_workspace
-            generate_workspace.main()
-        return 0 if state["status"] == "done" else 1
+    if args.update_dashboard:
+        for state in states:
+            cfg = apply_run_to_config(cfg, state)
+        save_config(cfg)
+        sys.path.insert(0, ROOT)
+        import generate_workspace
+        generate_workspace.main()
+    return 0 if all(s["status"] == "done" for s in states) else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())
