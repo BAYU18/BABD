@@ -374,6 +374,7 @@ class Dashboard:
             if pid and pid != os.getpid() and _alive(pid):
                 continue  # still running in another BABD process (e.g. `babd run`)
             s.update(status="interrupted", error="BABD stopped while this task was running", finished_at=flow.now())
+            settle(s)
             try:
                 with open(os.path.join(flow.RUNS_DIR, s["id"], "state.json"), "w") as f:
                     json.dump(s, f, indent=2, ensure_ascii=False)
@@ -484,7 +485,7 @@ class Dashboard:
             with open(mp) as f:
                 msgs = [json.loads(line) for line in f if line.strip()]
         s["messages"] = msgs
-        return s
+        return settle(s)
 
     def new_run_id(self):
         base = time.strftime("%Y%m%d-%H%M%S")
@@ -708,6 +709,9 @@ class Dashboard:
             return result.get("approved", False), result.get("note", "")
 
         def on_event(kind, data):
+            if kind == "agentlog":  # one agent's activity line: the Agent logs page appends it live
+                self.hub.publish("agentlog", data)
+                return
             self.hub.publish("run", {"event": kind, "data": data, "summary": self.summary(run)})
 
         run = flow.Run(team, entry["goal"], approver=approver, on_event=on_event, run_id=entry["id"], slots=self.slots,
@@ -789,6 +793,8 @@ class Dashboard:
             hay = " ".join([s.get("goal") or "", s.get("id") or "", json.dumps(s.get("documents") or []),
                             ((s.get("report") or {}).get("summary") or ""), json.dumps(s.get("workspace") or {})]).lower()
             if all(w in hay for w in words):
+                with self.tasks_lock:
+                    settle(s, set(self.active))
                 out.append({k: s.get(k) for k in TASK_FIELDS} | {"steps": s.get("steps") or []})
                 if len(out) >= limit:
                     break
@@ -815,6 +821,7 @@ class Dashboard:
         for s in self.saved_states(history):
             if s.get("id") not in seen:
                 seen.add(s.get("id"))
+                settle(s)
                 tasks.append({k: s.get(k) for k in TASK_FIELDS} | {"steps": s.get("steps") or []})
         load = self.slots.load()
         agents = []
@@ -843,6 +850,26 @@ class Dashboard:
                            "parallel_prep": bool(cfg["project"].get("parallel_prep", True)),
                            "fast_lane": bool(cfg["project"].get("fast_lane", True))},
                 "stages": [{"key": k, "label": l, "owner": o} for k, l, o, _ in flow.STAGES]}
+
+
+LIVE_STATUSES = ("running", "waiting_approval", "paused")
+
+
+def settle(s, active=()):
+    """A saved task that no process runs any more (BABD stopped mid-step): show it as interrupted, and
+    its unfinished steps as interrupted at the time the task ended, never as still running."""
+    running_here = s.get("id") in active
+    running_elsewhere = bool(s.get("pid")) and s["pid"] != os.getpid() and _alive(s["pid"])
+    if s.get("status") in LIVE_STATUSES and not (running_here or running_elsewhere):
+        s["status"] = "interrupted"
+    if s.get("status") in LIVE_STATUSES:
+        return s
+    for st in s.get("steps") or []:
+        if st.get("status") in ("working", "queued"):
+            st["status"] = "interrupted"
+        if st.get("status") == "interrupted" and not st.get("finished_at"):
+            st["finished_at"] = s.get("finished_at") or st.get("started_at") or st.get("queued_at")
+    return s
 
 
 _SENT = object()  # the handler already wrote the response
@@ -1084,6 +1111,18 @@ def make_handler(dash, token, allowed_hosts, security=None):
                         return templates.save(b.get("id"), b.get("title"), b.get("body"), b.get("description", ""))
                     except templates.TemplateError as e:
                         raise ApiError(400, str(e))
+            if method == "GET" and parts == ["agentlogs"]:
+                from .. import agentlog
+                return {"agents": agentlog.summary([a["id"] for a in d.load()["agents"]])}
+            if method == "GET" and len(parts) == 3 and parts[0] == "agents" and parts[2] == "log":
+                from .. import agentlog
+                if parts[1] not in {a["id"] for a in d.load()["agents"]}:
+                    raise ApiError(404, f"no agent {parts[1]!r}")
+                qs = parse_qs(urlparse(self.path).query)
+                one = lambda k: (qs.get(k) or [""])[0]  # noqa: E731
+                return {"agent": parts[1], "entries": agentlog.read(
+                    parts[1], max(1, min(1000, int(one("limit") or 200))), int(one("before") or 0) or None,
+                    one("q"), one("type"))}
             if method == "GET" and parts == ["search"]:
                 qs = parse_qs(urlparse(self.path).query)
                 one = lambda k: (qs.get(k) or [""])[0]  # noqa: E731

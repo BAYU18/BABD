@@ -21,6 +21,8 @@
     <nav class="views" id="views" aria-label="Views">
       <button type="button" data-view="command" class="on">Command center</button>
       <button type="button" data-view="board">Task board <span class="count" id="navCount"></span></button>
+      <button type="button" data-view="logs">Agent logs</button>
+      <button type="button" data-view="reports">Reports</button>
     </nav>
     <div class="kpis" id="kpis"></div>
     <div class="top-actions">
@@ -147,6 +149,42 @@
       </div>
       <div class="task-list" id="taskList"></div>
       <div class="more-row"><button type="button" class="btn small ghost" id="btnMoreTasks">Show older tasks</button></div>
+    </section>
+  </main>
+  <main class="logs hidden" id="logsView">
+    <section class="card split">
+      <aside class="split-side">
+        <div class="eyebrow">Agents</div>
+        <div class="log-agents" id="logAgents"></div>
+      </aside>
+      <div class="split-main">
+        <div class="card-head">
+          <h2 id="logTitle">Agent log</h2>
+          <input type="search" id="logSearch" class="task-search" placeholder="Search this agent's log: task, words, run id…" aria-label="Search the log">
+          <select id="logType" aria-label="Kind of activity">
+            <option value="">All activity</option><option value="step">Steps</option><option value="message">Messages</option>
+            <option value="retry">Errors and retries</option><option value="memory">GBrain memory</option><option value="skills">Skills</option>
+            <option value="files">Files</option><option value="package">Work packages</option><option value="route">Triage</option>
+          </select>
+          <label class="check"><input type="checkbox" id="logLive" checked> Live</label>
+        </div>
+        <ol class="log-list" id="logList"></ol>
+        <div class="more-row"><button type="button" class="btn small ghost" id="btnMoreLog">Older entries</button></div>
+      </div>
+    </section>
+  </main>
+
+  <main class="reports hidden" id="reportsView">
+    <section class="card split">
+      <aside class="split-side">
+        <input type="search" id="repSearch" class="task-search" placeholder="Search tasks…" aria-label="Search tasks">
+        <select id="repStatus" aria-label="Status">
+          <option value="">All tasks</option><option value="done">Done</option><option value="failed">Failed</option>
+          <option value="cancelled">Stopped</option><option value="interrupted">Interrupted</option><option value="running">Running</option>
+        </select>
+        <div class="rep-items" id="repItems"></div>
+      </aside>
+      <div class="split-main" id="repMain"><div class="empty">Pick a task to see its full report.</div></div>
     </section>
   </main>
   <div class="tip hidden" id="tip" role="tooltip"></div>

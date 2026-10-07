@@ -355,6 +355,8 @@ class Run:
         for step in st["steps"]:
             if step.get("status") in ("queued", "working"):
                 step["status"] = "interrupted"
+            if step.get("status") == "interrupted" and not step.get("finished_at"):
+                step["finished_at"] = now()
 
     # -- checkpoints: each finished step is kept, so a resumed run continues after it -------------
 
@@ -378,6 +380,9 @@ class Run:
     def emit(self, kind, data):
         if kind != "message":
             self.save()
+        from . import agentlog
+        for e in agentlog.record(self.id, self.goal, kind, data, {a.id: a.name for a in self.team.agents}):
+            self.on_event("agentlog", e)
         self.on_event(kind, {"run": self.id, **data} if isinstance(data, dict) else data)
 
     def save(self):

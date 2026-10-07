@@ -95,7 +95,7 @@ let viewRun = null;       // run shown in the side panel (live or from history)
 let viewingHistory = false;
 let liveRuns = {};        // run id -> summary, for every task running or waiting for the CEO
 let pinnedRun = null;     // a live task picked in the run panel (else the panel follows the latest task)
-let view = "command";    // "command" | "board"
+let view = "command";    // "command" | "board" | "logs" | "reports"
 const jobs = {};          // job id -> job
 const chats = {};         // agent id -> [{role, content}]
 const checks = {};        // agent id -> {ok, summary}
@@ -307,6 +307,7 @@ function agentCard(a) {
       </div>
       <div class="agent-actions">
         <button class="btn small" data-act="chat">Chat</button>
+        <button class="btn small ghost" data-act="log" title="Everything this agent did">Log</button>
         <button class="btn small" data-act="config">Configure</button>
         <button class="btn small ghost" data-act="setup" ${busy ? "disabled" : ""}>${busy?.kind === "setup" ? '<span class="spinner"></span> Setting up' : "Set up"}</button>
       </div>
@@ -435,6 +436,7 @@ $("#agents").addEventListener("click", async (e) => {
   if (btn.dataset.act === "config") openDrawer("config", id);
   if (btn.dataset.act === "skills") openDrawer("config", id, "skills");
   if (btn.dataset.act === "chat") openDrawer("chat", id);
+  if (btn.dataset.act === "log") { logAgent = id; setView("logs"); }
   if (btn.dataset.act === "setup") {
     try { trackJob(await api("POST", `agents/${id}/setup`)); toast(`Setting up ${nameOf(id)}…`); }
     catch (err) { toast(err.message, "bad"); }
@@ -1107,6 +1109,10 @@ function setView(v) {
   view = v;
   $("#commandView").classList.toggle("hidden", v !== "command");
   $("#boardView").classList.toggle("hidden", v !== "board");
+  $("#logsView").classList.toggle("hidden", v !== "logs");
+  $("#reportsView").classList.toggle("hidden", v !== "reports");
+  if (v === "logs") loadLog();
+  if (v === "reports") loadReports();
   try { localStorage.setItem("babd.view", v); } catch { /* private mode: fine */ }
   renderNav();
   if (v === "board") loadBoard();
@@ -1180,13 +1186,26 @@ function renderGantt() {
   const W = Math.max(320, box.clientWidth || 900);
   const labelW = W < 560 ? 76 : 110, padR = 12, barH = 12, gap = 2, rowPad = 8, axisH = 22;
   const all = B.tasks.flatMap((t) => (t.steps || []).map((st) => ({ ...st, run: t.id, goal: t.goal })));
-  const end = serverNow();
+  const now = serverNow();
+  let end = now;
   let span = boardSpan;
-  if (!span) {  // auto: from the first step of the active tasks (or of the last day) to now, at least 1 minute
+  if (!span) {
+    // auto: while tasks run, from their first step to now; when nothing runs, the window of the most recent
+    // activity (so finished work does not shrink to a sliver as time passes), at least 1 minute
     const live = new Set(B.tasks.filter((t) => LIVE.includes(t.status)).map((t) => t.id));
     const pool = all.filter((st) => live.has(st.run));
-    const firsts = (pool.length ? pool : all).map((st) => ms(st.queued_at || st.started_at)).filter((t) => isFinite(t) && end - t < 86400e3);
-    span = Math.max(60, Math.min(86400, ((end - Math.min(end - 60e3, ...firsts)) / 1000) * 1.08));
+    const recent = all.filter((st) => now - ms(st.finished_at || st.started_at || st.queued_at) < 86400e3);
+    if (!pool.length && recent.length) {
+      const last = Math.max(...recent.map((st) => ms(st.finished_at || st.started_at || st.queued_at)).filter(isFinite));
+      const first = Math.min(...recent.filter((st) => last - ms(st.queued_at || st.started_at) < 6 * 3600e3)
+        .map((st) => ms(st.queued_at || st.started_at)).filter(isFinite));
+      const pad = Math.max(3e3, (last - first) * 0.05, (60e3 - (last - first)) / 2);  // the work in the middle
+      end = Math.min(now, last + pad);
+      span = (end - (first - pad)) / 1000;
+    } else {
+      const firsts = (pool.length ? pool : all).map((st) => ms(st.queued_at || st.started_at)).filter((t) => isFinite(t) && now - t < 86400e3);
+      span = Math.max(60, Math.min(86400, ((now - Math.min(now - 60e3, ...firsts)) / 1000) * 1.08));
+    }
   }
   const start = end - span * 1000;
   const x = (t) => labelW + ((Math.max(start, Math.min(end, t)) - start) / (end - start)) * (W - labelW - padR);
@@ -1195,7 +1214,8 @@ function renderGantt() {
     const items = all.filter((st) => st.agent === a.id).map((st) => {
       const q = ms(st.queued_at), b = ms(st.started_at), f = ms(st.finished_at);
       const from = isFinite(q) ? q : b;
-      const to = isFinite(f) ? f : end;
+      const open = ["working", "queued"].includes(st.status);  // only these may still grow to "now"
+      const to = isFinite(f) ? f : open ? end : (isFinite(b) ? b : from);
       return { st, from, b, to };
     }).filter((it) => isFinite(it.from) && it.to >= start).sort((p, q) => p.from - q.from);
     const laneEnds = [];
@@ -1214,6 +1234,7 @@ function renderGantt() {
       const tip = `<b>${esc(KIND_LABELS[st.kind] || st.kind)}</b> · ${esc(nameOf(st.agent))}<br>${esc(st.goal)}<br>${esc(st.status)}${st.started_at ? ` · ${clock(it.b)}` : ""}${st.seconds != null ? ` · took ${fmtDur(st.seconds)}` : st.status === "working" ? ` · ${fmtDur((end - it.b) / 1000)} so far` : ""}${isFinite(it.b) && it.b - it.from > 1500 ? `<br>waited ${fmtDur((it.b - it.from) / 1000)} for a slot` : ""}`;
       const waitTo = isFinite(it.b) ? it.b : end;
       const waitEl = waitTo - it.from > 1500 ? `<line class="g-wait" x1="${x(it.from)}" x2="${x(waitTo)}" y1="${by + barH / 2}" y2="${by + barH / 2}"/>` : "";
+      if (!isFinite(it.b) && st.status !== "queued") return "";  // never started (e.g. stopped while waiting)
       if (!isFinite(it.b)) return `<g data-tip="${esc(tip)}" data-run="${esc(st.run)}">${waitEl}<rect class="g-hit" x="${x(it.from)}" y="${by - 2}" width="${Math.max(6, x(end) - x(it.from))}" height="${barH + 4}"/></g>`;
       const bx = x(it.b), bw = Math.max(4, x(it.to) - bx);
       return `<g data-tip="${esc(tip)}" data-run="${esc(st.run)}">${waitEl}<rect class="g-bar ${esc(st.status)}" x="${bx}" y="${by}" width="${bw}" height="${barH}" rx="3" style="fill:${esc(a.color)}"/>
@@ -1222,14 +1243,14 @@ function renderGantt() {
     return `<line class="g-row" x1="0" x2="${W}" y1="${top + h}" y2="${top + h}"/>
       <text class="g-label" x="0" y="${top + h / 2 + 4}" style="fill:${esc(a.color)}">${esc(a.name)}</text>${marks}`;
   });
-  const steps = [60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600];
+  const steps = [10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600];
   const stepS = steps.find((s) => span / s <= (W < 560 ? 4 : 7)) || 21600;
   const ticks = [];
   for (let t = Math.ceil(start / (stepS * 1000)) * stepS * 1000; t <= end; t += stepS * 1000) {
-    ticks.push(`<line class="g-grid" x1="${x(t)}" x2="${x(t)}" y1="${axisH - 4}" y2="${y}"/><text class="g-tick" x="${x(t)}" y="12" text-anchor="middle">${clock(t)}</text>`);
+    ticks.push(`<line class="g-grid" x1="${x(t)}" x2="${x(t)}" y1="${axisH - 4}" y2="${y}"/><text class="g-tick" x="${x(t)}" y="12" text-anchor="middle">${stepS < 60 ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : clock(t)}</text>`);
   }
   box.innerHTML = `<svg width="${W}" height="${y + 2}" viewBox="0 0 ${W} ${y + 2}" role="img" aria-label="When each agent worked on which task">
-    ${ticks.join("")}${rows.join("")}<line class="g-now" x1="${x(end)}" x2="${x(end)}" y1="${axisH - 4}" y2="${y}"/></svg>
+    ${ticks.join("")}${rows.join("")}${end >= now - 1000 ? `<line class="g-now" x1="${x(end)}" x2="${x(end)}" y1="${axisH - 4}" y2="${y}"/>` : ""}</svg>
     ${all.some((st) => ms(st.finished_at || st.started_at || st.queued_at) >= start || st.status === "working") ? "" : '<div class="gantt-empty muted small">No agent work in this time range yet.</div>'}`;
 }
 
@@ -1272,7 +1293,7 @@ function renderTasks() {
         <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
         <div class="task-actions">
-          ${t.status !== "queued" ? `<button type="button" class="btn small" data-open="${esc(t.id)}">Open</button>` : ""}
+          ${t.status !== "queued" ? `<button type="button" class="btn small" data-open="${esc(t.id)}">Open</button><button type="button" class="btn small ghost" data-report="${esc(t.id)}" title="The full report of this task">Report</button>` : ""}
           ${t.status !== "queued" && !LIVE.includes(t.status) ? `<button type="button" class="btn small ghost" data-export="${esc(t.id)}" title="Download the task as a Markdown report">Export</button>` : ""}
           ${t.waiting_ceo ? `<button type="button" class="btn small good" data-approve-task="${esc(t.id)}">Approve deploy</button><button type="button" class="btn small danger" data-reject-task="${esc(t.id)}">Reject</button>` : ""}
           ${t.status === "running" || (live && t.paused === false && t.status !== "paused" && t.status !== "waiting_approval") ? `<button type="button" class="btn small ghost" data-pause="${esc(t.id)}" title="The steps already working finish; the next ones wait">⏸ Pause</button>` : ""}
@@ -1533,9 +1554,11 @@ function connect() {
   es.addEventListener("config", () => refreshSoon());
   es.addEventListener("approval", (e) => { toast(`Approval needed: ${JSON.parse(e.data).question}`); boardSoon(); });
   es.addEventListener("tasks", () => { refreshSoon(); boardSoon(); });
+  es.addEventListener("agentlog", (e) => onAgentLog(JSON.parse(e.data)));
   es.addEventListener("run", (e) => {
     const d = JSON.parse(e.data);
     liveRuns[d.summary.id] = d.summary;
+    reportLive(d.summary);
     if (!S.run || d.summary.id === S.run.id || (d.summary.started_at || "") >= (S.run.started_at || "")) S.run = d.summary;
     if (!viewingHistory) viewRun = pinnedRun ? liveRuns[pinnedRun] || viewRun : S.run;
     if (viewRun && viewRun.id === d.summary.id) viewRun = d.summary;
@@ -1574,6 +1597,202 @@ function loginPage(message = "") {
   });
 }
 
+// ---- agent logs: everything one agent did, across all tasks --------------------------------
+let logAgent = null;
+let logEntries = [];
+let logTimer = null;
+const LOG_TYPES = { step: "step", message: "message", retry: "error", memory: "gbrain", skills: "skills", files: "files", package: "package", route: "triage" };
+
+async function loadLog(more = false) {
+  if (!S) return;
+  logAgent = logAgent && S.agents.some((a) => a.id === logAgent) ? logAgent : S.agents[0]?.id;
+  try {
+    const sum = await api("GET", "agentlogs");
+    renderLogAgents(sum.agents || {});
+  } catch { renderLogAgents({}); }
+  const q = encodeURIComponent($("#logSearch").value.trim()), type = encodeURIComponent($("#logType").value);
+  const before = more && logEntries.length ? `&before=${logEntries[logEntries.length - 1].seq}` : "";
+  try {
+    const r = await api("GET", `agents/${encodeURIComponent(logAgent)}/log?limit=200&q=${q}&type=${type}${before}`);
+    logEntries = more ? logEntries.concat(r.entries) : r.entries;
+    $("#btnMoreLog").classList.toggle("hidden", r.entries.length < 200);
+    renderLog();
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+function renderLogAgents(sum) {
+  $("#logAgents").innerHTML = S.agents.map((a) => {
+    const s = sum[a.id] || {}, st = agentState(a);
+    return `<button type="button" class="log-agent ${a.id === logAgent ? "on" : ""}" data-log-agent="${esc(a.id)}" style="--c:${esc(a.color)}">
+      <b>${esc(a.short_name || a.name)}</b> ${pill(st, STATUS_COLORS[st] || "var(--dim)", st === "working")}
+      <span class="muted small">${s.last_at ? `${esc(fmtWhen(s.last_at))} · ${esc((s.last_text || "").slice(0, 60))}` : "no activity yet"}</span></button>`;
+  }).join("");
+  $("#logTitle").textContent = `${nameOf(logAgent)} · activity log`;
+}
+
+function fmtWhen(iso) {
+  const t = ms(iso);
+  if (!isFinite(t)) return "";
+  const d = new Date(t), today = new Date();
+  return d.toDateString() === today.toDateString() ? clock(t) : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function logItem(e) {
+  const cls = e.status === "failed" || e.type === "retry" ? "bad" : e.status === "done" ? "ok" : "";
+  return `<li class="log-item ${cls}" data-seq="${e.seq}">
+    <span class="log-time" title="${esc(e.at)}">${esc(fmtWhen(e.at))}</span>
+    <span class="log-type t-${esc(e.type)}">${esc(LOG_TYPES[e.type] || e.type)}${e.dir ? (e.dir === "in" ? " ←" : " →") : ""}</span>
+    <span class="log-text">${esc(e.text)}
+      <button type="button" class="linkish muted small" data-report="${esc(e.run)}" title="Open the report of this task">${esc(e.goal || e.run)}</button>
+      ${e.detail ? `<details><summary class="muted small">details</summary><pre class="log-detail">${esc(e.detail)}</pre></details>` : ""}</span></li>`;
+}
+
+function renderLog() {
+  $("#logList").innerHTML = logEntries.length ? logEntries.map(logItem).join("")
+    : '<div class="empty">Nothing logged for this agent yet. Its steps, messages, errors and memory use show up here as soon as it works on a task.</div>';
+}
+
+function onAgentLog(e) {  // live: a new line for the agent on screen goes on top
+  if (view !== "logs" || !$("#logLive").checked) return;
+  if (e.agent !== logAgent || $("#logSearch").value.trim() || ($("#logType").value && $("#logType").value !== e.type)) {
+    clearTimeout(logTimer); logTimer = setTimeout(() => api("GET", "agentlogs").then((s) => renderLogAgents(s.agents || {})).catch(() => {}), 800);
+    return;
+  }
+  logEntries.unshift(e);
+  const list = $("#logList");
+  if (list.querySelector(".empty")) list.innerHTML = "";
+  list.insertAdjacentHTML("afterbegin", logItem(e));
+}
+
+$("#logAgents").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-log-agent]");
+  if (b) { logAgent = b.dataset.logAgent; loadLog(); }
+});
+$("#logType").addEventListener("change", () => loadLog());
+$("#logSearch").addEventListener("input", () => { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(), 300); });
+$("#btnMoreLog").addEventListener("click", () => loadLog(true));
+
+// ---- reports: the full story of every task ---------------------------------------------------
+let repId = null;
+let repTimer = null;
+
+async function loadReports() {
+  const q = encodeURIComponent($("#repSearch").value.trim()), st = encodeURIComponent($("#repStatus").value);
+  try {
+    const r = await api("GET", `search?q=${q}&status=${st}&limit=200`);
+    const live = liveList().filter((x) => !st || x.status === st).map((x) => ({ ...x, live: true }));
+    const items = [...live, ...r.tasks.filter((t) => !live.some((x) => x.id === t.id))];
+    $("#repItems").innerHTML = items.length ? items.map((t) => `
+      <button type="button" class="rep-item ${t.id === repId ? "on" : ""}" data-rep="${esc(t.id)}">
+        <span class="rep-goal">${esc(t.goal)}</span>
+        <span class="muted small">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")} ${esc(fmtWhen(t.started_at))}${t.started_at && t.finished_at ? ` · ${fmtDur((ms(t.finished_at) - ms(t.started_at)) / 1000)}` : ""}${t.verdict ? ` · QA ${esc(t.verdict)}` : ""}</span>
+      </button>`).join("") : '<div class="empty">No tasks match.</div>';
+    if (!repId && items.length) openReport(items[0].id);
+    else if (repId) openReport(repId, true);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+async function openReport(id, quiet = false) {
+  repId = id;
+  for (const b of document.querySelectorAll("#repItems [data-rep]")) b.classList.toggle("on", b.dataset.rep === id);
+  try { renderReport(await api("GET", `runs/${encodeURIComponent(id)}`)); }
+  catch (err) { if (!quiet) toast(err.message, "bad"); }
+}
+
+function sumUsage(steps) {
+  const u = { input: 0, output: 0, cost: 0, calls: 0 };
+  for (const s of steps) { const x = s.usage || {}; u.input += x.input || 0; u.output += x.output || 0; u.cost += x.cost || 0; u.calls += x.calls || 0; if (x.estimated) u.estimated = true; }
+  return u;
+}
+
+function renderReport(r) {
+  const steps = r.steps || [];
+  const rep = r.report || {};
+  const startMs = ms(r.started_at), endMs = isLive(r) ? serverNow() : ms(r.finished_at);
+  const took = isFinite(startMs) && isFinite(endMs) ? fmtDur((endMs - startMs) / 1000) : "—";
+  const route = r.route ? (r.route.route === "answer" ? "Team Lead answered" : r.route.route === "direct" ? `⚡ straight to ${nameOf(r.route.agent)}` : `👥 team: ${(r.route.agents || []).map(nameOf).join(", ")}`) : "whole team";
+  const opts = r.task_options || {};
+  const tile = (l, v, sub = "") => `<div class="rep-tile"><div class="l">${esc(l)}</div><div class="v">${v}</div>${sub ? `<div class="muted small">${sub}</div>` : ""}</div>`;
+  const byAgent = {};
+  for (const s of steps) {
+    const a = (byAgent[s.agent] ||= { steps: 0, secs: 0, failed: 0, retries: 0, list: [] });
+    a.steps += 1; a.secs += s.seconds || 0; a.failed += s.status === "failed" ? 1 : 0; a.retries += s.retries || 0; a.list.push(s);
+  }
+  const waited = (s) => (isFinite(ms(s.started_at)) && isFinite(ms(s.queued_at)) ? (ms(s.started_at) - ms(s.queued_at)) / 1000 : 0);
+  const ws = r.workspace || {}, res = ws.result || {};
+  const ev = r.evidence || {};
+  const conv = (r.messages || []).map((m) => `<details class="rep-msg"><summary><b>${esc(nameOf(m.from))} → ${esc(nameOf(m.to))}</b> · ${esc(m.kind)} <span class="muted small">${esc(fmtWhen(m.at))} · ${String(m.content || "").length.toLocaleString()} characters</span></summary><pre class="log-detail">${esc(m.content)}</pre></details>`).join("");
+  $("#repMain").innerHTML = `
+    <div class="rep-head">
+      <div><div class="run-goal">${esc(r.goal)}</div>
+        <div class="muted small">${pill(TASK_LABELS[r.status] || r.status, TASK_COLORS[r.status] || "var(--dim)", r.status === "running")} ${esc(r.id)} · started ${esc(fmtWhen(r.started_at) || "—")} · took ${took}${r.resumes ? ` · resumed ${r.resumes}×` : ""}</div></div>
+      <div class="rep-actions">
+        ${r.status === "running" && !r.paused ? `<button type="button" class="btn small ghost" data-rep-act="pause">⏸ Pause</button>` : ""}
+        ${isLive(r) && (r.paused || r.status === "paused") ? `<button type="button" class="btn small good" data-rep-act="resume">▶ Resume</button>` : ""}
+        ${isLive(r) ? `<button type="button" class="btn small ghost" data-rep-act="cancel">⏹ Stop</button>` : ""}
+        ${RESUMABLE.includes(r.status) ? `<button type="button" class="btn small" data-rep-act="resume">Resume</button>` : ""}
+        <button type="button" class="btn small ghost" data-rep-act="open">Open in Command center</button>
+        <button type="button" class="btn small ghost" data-rep-act="export">Export .md</button>
+      </div>
+    </div>
+    ${r.error ? `<div class="note warn">${esc(r.error)}</div>` : ""}
+    <div class="rep-tiles">
+      ${tile("Status", esc(rep.status || (TASK_LABELS[r.status] || r.status)), `${r.progress ?? 0}% done`)}
+      ${tile("Duration", took, `${steps.length} step(s)`)}
+      ${tile("Who worked", esc(route), r.route?.reason ? esc(r.route.reason) : "")}
+      ${tile("QA", esc(r.verdict || "—"), `${r.qa_rounds ? `${r.qa_rounds} fix round(s) · ` : ""}${ev.verified ? "✓ verified" : ev.note ? "unverified" : ""}`)}
+      ${tile("Deploy", r.deployed ? "deployed" : "not deployed", r.approval ? `approval: ${esc(r.approval.result)}` : "no approval asked")}
+      ${tile("Usage", esc(usageText(r.usage) || "—"), r.usage?.calls ? `${r.usage.calls} LLM call(s)` : "")}
+    </div>
+    ${rep.summary ? `<h3>Report to the CEO</h3><div class="rep-summary">${esc(rep.summary)}</div>` : ""}
+    ${(rep.blocker_list || r.blockers || []).length ? `<h3>Blockers</h3><ul>${(rep.blocker_list || r.blockers).map((b) => `<li class="bad">${esc(b)}</li>`).join("")}</ul>` : ""}
+    <h3>Stages</h3><div class="stepper">${S.flow.stages.map((s) => `<div class="step ${esc(r.stages?.[s.key] || "todo")}"><i></i>${esc(s.label)}</div>`).join("")}</div>
+    ${packagesBlock(r)}
+    <h3>Per agent</h3>
+    <table class="rep-table"><thead><tr><th>Agent</th><th>Steps</th><th>Working time</th><th>Tokens</th><th>Problems</th></tr></thead><tbody>
+      ${Object.entries(byAgent).map(([id, a]) => `<tr><td><button type="button" class="linkish" data-log-of="${esc(id)}" title="Open this agent's log">${esc(nameOf(id))}</button></td><td>${a.steps}</td><td>${fmtDur(a.secs)}</td><td>${esc(usageText(sumUsage(a.list)) || "—")}</td><td>${a.failed ? `<span class="bad">${a.failed} failed</span> ` : ""}${a.retries ? `${a.retries} retr${a.retries > 1 ? "ies" : "y"}` : ""}${!a.failed && !a.retries ? "—" : ""}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No steps yet.</td></tr>'}
+    </tbody></table>
+    <h3>Every step</h3>
+    <table class="rep-table"><thead><tr><th>#</th><th>Agent</th><th>Step</th><th>Task</th><th>Status</th><th>Started</th><th>Waited</th><th>Took</th><th>Tokens</th></tr></thead><tbody>
+      ${steps.map((s) => `<tr class="${s.status === "failed" ? "bad" : ""}"><td>${s.n}</td><td>${esc(nameOf(s.agent))}</td><td>${esc(KIND_LABELS[s.kind] || s.kind)}</td><td class="wrap">${esc(s.task || "")}${s.last_error ? `<div class="bad small">${esc(s.last_error)}</div>` : ""}</td><td>${esc(s.status)}${s.fallback ? ` · fallback ${esc(s.fallback)}` : ""}</td><td>${esc(fmtWhen(s.started_at) || "—")}</td><td>${waited(s) > 1 ? fmtDur(waited(s)) : "—"}</td><td>${s.seconds != null ? fmtDur(s.seconds) : s.status === "working" ? "…" : "—"}</td><td>${esc(usageText(s.usage) || "—")}</td></tr>`).join("") || '<tr><td colspan="9" class="muted">No steps yet.</td></tr>'}
+    </tbody></table>
+    ${ev.note || (r.tests || []).length ? `<h3>Tests and evidence</h3><div class="small">${ev.verified ? "✓ verified" : "not verified"}${ev.source ? ` (${esc(ev.source)})` : ""}: ${esc(ev.note || "")}</div>
+      ${(r.tests || []).map((t) => `<details><summary>Round ${t.round}: <code>${esc(t.command)}</code> → exit ${t.exit}</summary><pre class="log-detail">${esc(t.output)}</pre></details>`).join("")}` : ""}
+    ${ws.name ? `<h3>Project and code</h3><div class="small">📁 ${esc(ws.name)} · branch <code>${esc(ws.branch || "—")}</code>${res.commit ? ` · commit <code>${esc(res.commit)}</code>` : ""}${res.files ? ` · ${res.files} file(s)` : ""}${res.merged ? ` · merged into <code>${esc(ws.base)}</code>` : ""}${res.pushed ? " · pushed" : ""}${res.note ? `<br>${esc(res.note)}` : ""}</div>
+      ${(ws.files_written || []).length ? `<details><summary class="small">${ws.files_written.length} file(s) written for agents without file tools</summary><pre class="log-detail">${esc(ws.files_written.map((f) => `${f.path}  (${nameOf(f.agent)})`).join("\n"))}</pre></details>` : ""}` : ""}
+    ${(r.documents || []).length ? `<h3>Task documents</h3>${docChips(r.documents, r.id)}` : ""}
+    <div class="small muted" style="margin-top:8px">Options: mode ${esc(opts.mode || "auto")}${(opts.skip || []).length ? ` · no ${opts.skip.map(esc).join(", no ")}` : ""}${Object.keys(opts.models || {}).length ? ` · ${Object.entries(opts.models).map(([a, m]) => `${esc(nameOf(a))}: ${esc(m)}`).join(", ")}` : ""}</div>
+    <h3>Conversation (${(r.messages || []).length} messages)</h3>
+    <div class="rep-conv">${conv || '<div class="muted small">No messages yet.</div>'}</div>`;
+}
+
+$("#repItems").addEventListener("click", (e) => { const b = e.target.closest("[data-rep]"); if (b) openReport(b.dataset.rep); });
+$("#repSearch").addEventListener("input", () => { clearTimeout(repTimer); repTimer = setTimeout(loadReports, 300); });
+$("#repStatus").addEventListener("change", loadReports);
+$("#repMain").addEventListener("click", async (e) => {
+  const lg = e.target.closest("[data-log-of]");
+  if (lg) { logAgent = lg.dataset.logOf; setView("logs"); return; }
+  const b = e.target.closest("[data-rep-act]");
+  if (!b || !repId) return;
+  const act = b.dataset.repAct;
+  if (act === "export") return downloadReport(repId);
+  if (act === "open") {
+    const key = liveRuns[repId] && isLive(liveRuns[repId]) ? `live:${repId}` : repId;
+    setView("command"); renderHistory(); $("#runHistory").value = key; $("#runHistory").dispatchEvent(new Event("change"));
+    return;
+  }
+  try { const r = await api("POST", `runs/${repId}/${act}`); toast(r.note || (r.goal ? `Continuing: ${r.goal}` : "ok"), "ok"); setTimeout(() => openReport(repId, true), 400); refreshSoon(); }
+  catch (err) { toast(err.message, "bad"); }
+});
+document.addEventListener("click", (e) => {  // a task link anywhere (e.g. in an agent's log) opens its report
+  const b = e.target.closest("[data-report]");
+  if (!b) return;
+  repId = b.dataset.report; setView("reports");
+});
+function reportLive(summary) {  // the open report follows its live task
+  if (view === "reports" && summary && summary.id === repId) { clearTimeout(repTimer); repTimer = setTimeout(() => openReport(repId, true), 700); }
+}
+
 (async function start() {
   if (!token) {
     const auth = await fetch("/api/auth").then((r) => r.json()).catch(() => ({}));
@@ -1588,6 +1807,7 @@ function loginPage(message = "") {
     let saved = "command";
     try { saved = localStorage.getItem("babd.view") || "command"; } catch { /* private mode */ }
     if (location.hash === "#board" || saved === "board") setView("board");
+    else if (["logs", "reports"].includes(location.hash.slice(1)) || ["logs", "reports"].includes(saved)) setView(["logs", "reports"].includes(location.hash.slice(1)) ? location.hash.slice(1) : saved);
   }
   catch (err) {
     document.body.innerHTML = `<div class="empty" style="margin:15vh auto;max-width:520px">Cannot load the dashboard: ${esc(err.message)}.<br>Restart <code>babd dashboard</code> and open the new URL.</div>`;

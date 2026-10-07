@@ -273,6 +273,20 @@ A direct job uses a short system prompt and no skill texts, so the model has far
 - A direct task that changed files keeps them on its branch `babd/<task id>` for review (it had no
   QA round, so it is never merged on its own).
 
+## Agent logs and task reports
+
+- **Agent logs** (top menu, or **Log** on an agent card): everything one agent did, newest first and
+  live: steps started / finished / failed with their time and tokens, every message it got from the
+  Team Lead and sent back (open *details* for the full text), LLM errors and retries, GBrain reads and
+  writes, skills, files written, work packages. Filter by kind, search words, load older entries;
+  each line links to the task's report. Kept per agent in `logs/agents/<agent>.jsonl` (for dashboard,
+  Telegram and command-line tasks alike). API `GET /api/agents/<id>/log?limit=&before=&q=&type=`.
+- **Reports** (top menu, or **Report** on the task board): the full story of every task: status,
+  duration, who worked (and why), QA verdict and evidence, approval, deploy, tokens and cost, the
+  report to the CEO, blockers, stages, work packages, time and tokens per agent, every step (waited,
+  took, tokens, errors, fallback), project tests, git branch / commit / merge, documents and the whole
+  conversation. Pause, Resume, Stop and Export .md from the same page.
+
 ## Work packages: a complex task split into parts that run at the same time
 
 For a complex task the Team Lead's plan also lists **work packages**: small parts (backend, frontend,
@@ -329,6 +343,14 @@ document); **Save as template** keeps your own version. Telegram: `/templates`, 
 send the filled-in text back (a message starting with a `#` heading becomes a task document). Command
 line: copy one and run `babd run my-task.md`. Add your own `.md` files there (front matter `title`,
 `description`).
+
+## API keys
+
+Keys set in Configure → LLM go to `.env` (mode 600, never into agents.json) and a copy to
+`~/.config/babd/secrets-<id>.env`, so a reinstall, a fresh clone or `git clean` never loses them:
+at start-up BABD writes missing keys back into `.env`. A variable already set in the environment
+(systemd `Environment=`, a shell profile) wins over `.env`, except an empty one; `babd dashboard`
+warns about keys that have no value and about keys the environment overrides.
 
 ## Options per task
 
