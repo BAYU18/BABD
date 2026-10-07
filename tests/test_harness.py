@@ -20,15 +20,43 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from babd import team as team_mod  # noqa: E402
 from babd.config import load_config  # noqa: E402
 from babd.harness import HarnessError, create_harness  # noqa: E402
+from babd.harness import hermes as hermes_mod  # noqa: E402
+from babd.harness import tools  # noqa: E402
 from babd.harness.hermes import clean_hermes_output  # noqa: E402
 from babd.team import Team  # noqa: E402
 
 FAKE_HERMES = r'''#!/usr/bin/env python3
 import json, os, sys
+if sys.argv[1:3] == ["gateway", "run"]:
+    # Minimal Hermes API server: /health, POST /v1/runs, GET /v1/runs/<id>
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    key, model = os.environ["API_SERVER_KEY"], open(os.environ["HERMES_HOME"] + "/config.yaml").read()
+    with open(os.environ["FAKE_LOG"], "a") as f:
+        f.write(json.dumps({"gateway": sys.argv[1:], "key_len": len(key), "config": model,
+                            "host": os.environ["API_SERVER_HOST"]}) + "\n")
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a): pass
+        def reply(self, body, code=200):
+            data = json.dumps(body).encode()
+            self.send_response(code); self.send_header("Content-Length", str(len(data))); self.end_headers()
+            self.wfile.write(data)
+        def do_GET(self):
+            if self.path == "/health":
+                return self.reply({"status": "ok"})
+            if self.headers.get("Authorization") != "Bearer " + key:
+                return self.reply({}, 401)
+            self.reply({"status": "completed", "output": "auto gateway answer"})
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.headers.get("Authorization") != "Bearer " + key:
+                return self.reply({}, 401)
+            self.reply({"run_id": "r9", "status": "started"})
+    HTTPServer(("127.0.0.1", int(os.environ["API_SERVER_PORT"])), H).serve_forever()
 home = os.environ["HERMES_HOME"]
 cfg = open(os.path.join(home, "config.yaml")).read()
 log = {"argv": sys.argv[1:], "cwd": os.getcwd(), "config": cfg,
-       "env": {k: os.environ.get(k) for k in ("HERMES_HOME", "OPENAI_BASE_URL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")}}
+       "env": {k: os.environ.get(k) for k in ("HERMES_HOME", "OPENAI_BASE_URL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                                              "ANTHROPIC_BASE_URL")}}
 with open(os.environ["FAKE_LOG"], "a") as f:
     f.write(json.dumps(log) + "\n")
 q = sys.argv[sys.argv.index("-q") + 1]
@@ -43,7 +71,8 @@ FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys
 prompt = sys.stdin.read()
 log = {"argv": sys.argv[1:], "stdin": prompt,
-       "env": {k: os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL")}}
+       "env": {k: os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
+                                              "CLAUDE_CONFIG_DIR", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")}}
 with open(os.environ["FAKE_LOG"], "a") as f:
     f.write(json.dumps(log) + "\n")
 if os.environ.get("FAKE_CLAUDE_FAIL"):
@@ -100,6 +129,70 @@ class Gateway(BaseHTTPRequestHandler):
         self._send({"run_id": "r1", "status": "completed", "output": "gateway answer"})
 
 
+class InstallTest(unittest.TestCase):
+    """ensure_command(): explicit command -> managed install -> PATH -> auto-install."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.spec = tools.InstallSpec("faketool", "pip", "fake-tool", "fake-tool-cli")
+        patcher = mock.patch.object(tools, "TOOLS_DIR", os.path.join(self.tmp, "tools"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.runs = []
+
+        def fake_run(argv, what):  # stands in for venv creation / pip install
+            self.runs.append(argv)
+            if "pip" in argv:
+                write_exe(os.path.join(tools.tool_dir(self.spec), "bin"), "fake-tool-cli", "#!/bin/sh\necho hi\n")
+
+        os.makedirs(os.path.join(tools.TOOLS_DIR, "faketool", "bin"), exist_ok=True)
+        run_patch = mock.patch.object(tools, "_run", side_effect=fake_run)
+        run_patch.start()
+        self.addCleanup(run_patch.stop)
+        self.env = mock.patch.dict(os.environ, {"PATH": os.path.join(self.tmp, "empty")})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_auto_install_when_missing(self):
+        path = tools.ensure_command("Fake", {}, self.spec)
+        self.assertEqual(path, tools.managed_path(self.spec))
+        self.assertIn("fake-tool", self.runs[-1])
+        self.assertEqual(tools.installed_requirement(self.spec), "fake-tool")
+        self.runs.clear()
+        self.assertEqual(tools.ensure_command("Fake", {}, self.spec), path)  # already installed: no reinstall
+        self.assertEqual(self.runs, [])
+
+    def test_version_pin_reinstalls(self):
+        tools.ensure_command("Fake", {}, self.spec)
+        tools.ensure_command("Fake", {"version": "1.2.3"}, self.spec)
+        self.assertIn("fake-tool==1.2.3", self.runs[-1])
+        self.assertEqual(tools.installed_requirement(self.spec), "fake-tool==1.2.3")
+
+    def test_extras_installed_and_topped_up(self):
+        spec = tools.InstallSpec("faketool", "pip", "fake-tool", "fake-tool-cli", extras=("aiohttp>=3.9",))
+        tools.ensure_command("Fake", {}, self.spec)  # an install from before extras existed
+        self.runs.clear()
+        tools.ensure_command("Fake", {}, spec)
+        self.assertEqual(self.runs[-1][-2:], ["fake-tool", "aiohttp>=3.9"])
+        self.assertEqual(tools.installed_requirement(spec), "fake-tool aiohttp>=3.9")
+
+    def test_prefers_program_on_path(self):
+        bin_dir = os.path.join(self.tmp, "empty")
+        os.makedirs(bin_dir)
+        write_exe(bin_dir, "fake-tool-cli", "#!/bin/sh\n")
+        self.assertEqual(tools.ensure_command("Fake", {}, self.spec), os.path.join(bin_dir, "fake-tool-cli"))
+        self.assertEqual(self.runs, [])
+
+    def test_auto_install_off(self):
+        with self.assertRaisesRegex(HarnessError, "auto_install is off .*pip install fake-tool"):
+            tools.ensure_command("Fake", {"auto_install": False}, self.spec)
+
+    def test_npm_layout(self):
+        spec = tools.InstallSpec("cc", "npm", "@anthropic-ai/claude-code", "claude")
+        self.assertTrue(tools.managed_path(spec).endswith(os.path.join("cc", "node_modules", ".bin", "claude")))
+        self.assertEqual(spec.requirement("2.1.0"), "@anthropic-ai/claude-code@2.1.0")
+
+
 class HarnessTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -114,6 +207,10 @@ class HarnessTest(unittest.TestCase):
             "ANTHROPIC_API_KEY": "sk-ant-agent", "LOCAL_LLM_API_KEY": "local-secret"})
         self.env.start()
         self.addCleanup(self.env.stop)
+        # never use a real Hermes / Claude Code installed under .babd/tools
+        tools_patch = mock.patch.object(tools, "TOOLS_DIR", os.path.join(self.tmp, "tools"))
+        tools_patch.start()
+        self.addCleanup(tools_patch.stop)
         self.cfg = copy.deepcopy(load_config())
         for a in self.cfg["agents"]:
             if a["harness"]["type"] != "direct":
@@ -156,6 +253,7 @@ class HarnessTest(unittest.TestCase):
         self.assertIn('default: "claude-opus-5-5"', call["config"])
         self.assertNotIn("base_url", call["config"])
         self.assertEqual(call["env"]["ANTHROPIC_API_KEY"], "sk-ant-agent")
+        self.assertEqual(call["env"]["ANTHROPIC_BASE_URL"], "https://api.anthropic.com")
         self.assertEqual(call["argv"][call["argv"].index("--provider") + 1], "anthropic")
 
     def test_hermes_options(self):
@@ -179,6 +277,7 @@ class HarnessTest(unittest.TestCase):
     def test_claude_code(self):
         dev = copy.deepcopy(self.agents["developer"])
         dev["llm"]["base_url"] = "https://llm-proxy.example.com/v1"
+        dev["harness"]["config_dir"] = os.path.join(self.tmp, "claude-dev")
         reply = create_harness(dev).complete("SYS", [{"role": "user", "content": "write code"}])
         self.assertEqual(reply, "claude did: write code")
         call = self.calls()[-1]
@@ -191,6 +290,28 @@ class HarnessTest(unittest.TestCase):
         self.assertEqual(call["env"]["ANTHROPIC_BASE_URL"], "https://llm-proxy.example.com")
         self.assertEqual(call["env"]["ANTHROPIC_MODEL"], "claude-sonnet-5-5")
         self.assertEqual(call["env"]["ANTHROPIC_API_KEY"], "sk-ant-agent")
+        # the agent has its own key, so Claude Code gets a private config dir (not the machine's login)
+        self.assertEqual(call["env"]["CLAUDE_CONFIG_DIR"], os.path.join(self.tmp, "claude-dev"))
+
+    def test_claude_code_shared_login_without_key(self):
+        dev = copy.deepcopy(self.agents["developer"])
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "", "ANTHROPIC_BASE_URL": "http://host-proxy"}):
+            create_harness(dev).complete("S", [{"role": "user", "content": "x"}])
+        env = self.calls()[-1]["env"]
+        self.assertIsNone(env["CLAUDE_CONFIG_DIR"])
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "http://host-proxy")  # machine's own setup kept
+
+    def test_claude_code_own_key_beats_inherited_auth(self):
+        """An inherited proxy URL or OAuth token must not override the agent's own key."""
+        dev = copy.deepcopy(self.agents["developer"])
+        with mock.patch.dict(os.environ, {"ANTHROPIC_BASE_URL": "http://host-proxy",
+                                          "ANTHROPIC_AUTH_TOKEN": "other-login", "CLAUDE_CODE_OAUTH_TOKEN": "x"}):
+            create_harness(dev).complete("S", [{"role": "user", "content": "x"}])
+        env = self.calls()[-1]["env"]
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://api.anthropic.com")
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-ant-agent")
+        self.assertIsNone(env["ANTHROPIC_AUTH_TOKEN"])
+        self.assertIsNone(env["CLAUDE_CODE_OAUTH_TOKEN"])
 
     def test_claude_code_error_and_wrong_llm(self):
         with mock.patch.dict(os.environ, {"FAKE_CLAUDE_FAIL": "1"}):
@@ -200,6 +321,17 @@ class HarnessTest(unittest.TestCase):
         dev["llm"] = self.agents["devops"]["llm"]  # OpenAI-compatible endpoint
         with self.assertRaisesRegex(HarnessError, "Anthropic-compatible"):
             create_harness(dev).complete("S", [{"role": "user", "content": "x"}])
+
+    def test_process_install_runs_once(self):
+        agent = copy.deepcopy(self.agents["devops"])
+        marker = os.path.join(self.tmp, "installed.txt")
+        agent["harness"] = {"type": "process", "command": "faketool", "cwd": os.path.join(self.tmp, "workspace"),
+                            "install": [sys.executable, "-c", f"open({marker!r}, 'a').write('x')"]}
+        with mock.patch.object(tools, "TOOLS_DIR", os.path.join(self.tmp, "tools")):
+            h = create_harness(agent)
+            h.complete("S", [{"role": "user", "content": "x"}])
+            h.complete("S", [{"role": "user", "content": "y"}])
+        self.assertEqual(open(marker).read(), "x")
 
     def test_process_harness(self):
         agent = copy.deepcopy(self.agents["devops"])
@@ -213,7 +345,7 @@ class HarnessTest(unittest.TestCase):
     def test_missing_command(self):
         agent = copy.deepcopy(self.agents["qa"])
         agent["harness"]["command"] = "no-such-hermes"
-        with self.assertRaisesRegex(HarnessError, "not found on PATH"):
+        with self.assertRaisesRegex(HarnessError, "'no-such-hermes' not found"):
             create_harness(agent).complete("S", [{"role": "user", "content": "x"}])
 
     def test_unknown_harness(self):
@@ -242,6 +374,29 @@ class HarnessTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GW_KEY": "wrong"}):
             with self.assertRaisesRegex(HarnessError, "HTTP 401"):
                 create_harness(agent).complete("SYS", [{"role": "user", "content": "x"}])
+
+    def test_hermes_gateway_auto_start(self):
+        """No api_base_url: BABD starts a private gateway with the agent's LLM and a generated key."""
+        agent = copy.deepcopy(self.agents["devops"])
+        agent["harness"] = {"type": "hermes_gateway", "home": os.path.join(self.tmp, "gw"),
+                            "cwd": os.path.join(self.tmp, "workspace"), "poll_interval_sec": 0.01}
+        harness = create_harness(agent)
+        self.assertIn("gateway starts on first run", harness.setup())
+        try:
+            reply = harness.complete("SYS", [{"role": "user", "content": "hi"}])
+            self.assertEqual(reply, "auto gateway answer")
+            started = [c for c in self.calls() if "gateway" in c][0]
+            self.assertEqual(started["gateway"], ["gateway", "run", "--replace", "--accept-hooks"])
+            self.assertEqual(started["key_len"], 64)  # Hermes rejects keys under 16 chars
+            self.assertEqual(started["host"], "127.0.0.1")
+            self.assertIn("qwen2.5-coder:7b", started["config"])
+            key_file = os.path.join(self.tmp, "gw", "api_server_key")
+            self.assertEqual(stat.S_IMODE(os.stat(key_file).st_mode), 0o600)
+            # second call reuses the running gateway
+            harness.complete("SYS", [{"role": "user", "content": "again"}])
+            self.assertEqual(len([c for c in self.calls() if "gateway" in c]), 1)
+        finally:
+            hermes_mod._stop_started_gateways()
 
     def test_clean_hermes_output(self):
         out = ("⚠ tirith security scanner enabled but not available\n[tool] terminal ls\n┊ 💬 Line one\n\n\n\n"

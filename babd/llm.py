@@ -5,12 +5,38 @@ Two API styles are supported:
   * "openai"    - any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenRouter, ...)
                   via the official OpenAI SDK (Chat Completions).
 """
+import importlib
+import subprocess
+import sys
 from urllib.parse import urlparse
 
-import anthropic
-import openai
-
 from .config import resolve_api_key
+
+try:
+    import anthropic
+except ImportError:  # installed on first use, see _sdk()
+    anthropic = None
+try:
+    import openai
+except ImportError:
+    openai = None
+
+SDK_REQUIREMENTS = {"anthropic": "anthropic>=1.11.0", "openai": "openai>=3.0.0"}
+
+
+def _sdk(name):
+    """The SDK module, pip-installing it into this Python environment the first time it is needed."""
+    mod = globals().get(name)
+    if mod is None:
+        req = SDK_REQUIREMENTS[name]
+        print(f"[setup] installing {req} ...", file=sys.stderr, flush=True)
+        proc = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", req], capture_output=True, text=True)
+        if proc.returncode != 0:
+            tail = " | ".join(proc.stderr.strip().splitlines()[-2:])
+            raise LLMError(f"could not install {req} ({tail[:300]}); run: pip install -r requirements.txt")
+        mod = importlib.import_module(name)
+        globals()[name] = mod
+    return mod
 
 # Models that accept the server-side refusal fallback (`fallbacks: "default"`) on the Claude API.
 FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
@@ -33,6 +59,8 @@ class LLMClient:
         self.base_url = llm.get("base_url") or None
         key = resolve_api_key(llm)
 
+        if self.api in ("anthropic", "openai"):
+            _sdk(self.api)
         if self.api == "anthropic":
             # The SDK appends /v1/messages itself, so drop a trailing /v1 from the configured URL.
             base = self.base_url.rstrip("/") if self.base_url else None

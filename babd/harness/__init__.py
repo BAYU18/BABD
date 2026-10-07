@@ -26,4 +26,17 @@ def create_harness(agent_cfg):
     return cls(agent_cfg)
 
 
-__all__ = ["HARNESSES", "Harness", "HarnessError", "create_harness", "register_harness"]
+def select_harness(agent_cfg, kind, overrides=None):
+    """Point an agent at harness `kind`: keeps its options when the type is unchanged, otherwise
+    starts from that harness's defaults. Applies `overrides`. Edits agent_cfg in place."""
+    cls = HARNESSES.get(kind)
+    if not cls:
+        raise HarnessError(f"unknown harness {kind!r} (known: {', '.join(HARNESSES)})")
+    current = harness_config(agent_cfg)
+    new = current if current.get("type") == kind else {"type": kind, **cls.defaults}
+    new.update(overrides or {})
+    agent_cfg["harness"] = new
+    return new
+
+
+__all__ = ["HARNESSES", "Harness", "HarnessError", "create_harness", "register_harness", "select_harness"]

@@ -2,16 +2,20 @@
 
   python -m babd check                         ping every agent through its harness and LLM
   python -m babd harnesses                     list the available harness types
+  python -m babd use <agent> <harness> [--set key=value ...]
+                                               select a harness: installs and configures it
+  python -m babd setup [agent ...]             install + configure every agent's harness
   python -m babd ask <agent> "message"         one message to one agent
   python -m babd chat <agent>                  interactive chat with one agent
   python -m babd run "goal" [--update-dashboard]
                                                full team run: plan -> work -> CEO report
 """
 import argparse
+import json
 import sys
 
 from .config import ROOT, load_config, load_dotenv, save_config
-from .harness import HARNESSES
+from .harness import HARNESSES, create_harness, select_harness
 from .llm import LLMError
 from .team import Team, apply_report_to_dashboard
 
@@ -22,6 +26,14 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check", help="ping every agent through its harness and LLM")
     sub.add_parser("harnesses", help="list the available harness types")
+    u = sub.add_parser("use", help="select a harness for an agent, then install and configure it")
+    u.add_argument("agent")
+    u.add_argument("harness", choices=sorted(HARNESSES))
+    u.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                   help='harness option, e.g. --set max_turns=50 --set toolsets=\'["web","file"]\'')
+    u.add_argument("--no-setup", action="store_true", help="only change agents.json")
+    st = sub.add_parser("setup", help="install and configure the harness of every (or the named) agent")
+    st.add_argument("agents", nargs="*")
     a = sub.add_parser("ask", help="send one message to one agent")
     a.add_argument("agent")
     a.add_argument("message")
@@ -39,6 +51,40 @@ def main(argv=None):
         return 0
 
     cfg = load_config()
+    agents = {a["id"]: a for a in cfg["agents"]}
+
+    if args.cmd in ("use", "setup"):
+        targets = [args.agent] if args.cmd == "use" else (args.agents or list(agents))
+        unknown = [t for t in targets if t not in agents]
+        if unknown:
+            print(f"unknown agent {unknown[0]!r}; choose from: {', '.join(agents)}", file=sys.stderr)
+            return 2
+        if args.cmd == "use":
+            overrides = {}
+            for item in args.set:
+                key, _, value = item.partition("=")
+                try:
+                    overrides[key] = json.loads(value)
+                except json.JSONDecodeError:
+                    overrides[key] = value
+            new = select_harness(agents[args.agent], args.harness, overrides)
+            save_config(cfg)
+            print(f"{args.agent}: harness -> {json.dumps(new)}")
+            sys.path.insert(0, ROOT)
+            import generate_workspace
+            generate_workspace.main()
+            if args.no_setup:
+                return 0
+        failed = 0
+        for agent_id in targets:
+            try:
+                h = create_harness(agents[agent_id])
+                print(f"OK   {agent_id:<10} [{h.type}] {h.setup()}")
+            except LLMError as e:
+                failed += 1
+                print(f"FAIL {agent_id:<10} {e}")
+        return 1 if failed else 0
+
     team = Team(cfg, log=lambda m: print(m, file=sys.stderr))
 
     if args.cmd == "check":

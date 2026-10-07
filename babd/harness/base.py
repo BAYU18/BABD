@@ -5,7 +5,6 @@ the agent's own `llm` block and projects it into whatever that harness needs (SD
 config file, environment variables), so each agent keeps its custom LLM whatever harness it uses.
 """
 import os
-import shutil
 import subprocess
 
 from ..config import ROOT
@@ -22,6 +21,8 @@ class HarnessError(LLMError):
 class Harness:
     type = ""
     label = ""
+    install_spec = None   # tools.InstallSpec of the program this harness runs, if any
+    defaults = {}         # options written to agents.json when this harness is selected
 
     def __init__(self, agent_cfg):
         self.agent_cfg = agent_cfg
@@ -35,6 +36,24 @@ class Harness:
     def describe(self):
         """Short text for the card / CLI, e.g. 'hermes chat - terminal,file'."""
         return self.label
+
+    def setup(self):
+        """Install what this harness needs and write its configuration. Safe to run repeatedly.
+        Returns a one-line summary. Called by `babd setup` / `babd use`, and before the first run."""
+        parts = []
+        if self.install_spec:
+            path = self.command_path()
+            parts.append(os.path.relpath(path, ROOT) if path.startswith(ROOT + os.sep) else path)
+        parts += self.configure() or []
+        return " · ".join(parts) or "ready"
+
+    def configure(self):
+        """Write harness config files for this agent. Returns notes for the summary."""
+        return []
+
+    def command_path(self):
+        from .tools import ensure_command  # tools imports this module
+        return ensure_command(self.label, self.cfg, self.install_spec)
 
     # -- helpers for CLI harnesses ------------------------------------------------------------
 
@@ -50,17 +69,8 @@ class Harness:
         os.makedirs(cwd, exist_ok=True)
         return cwd
 
-    def resolve_command(self, default):
-        command = self.cfg.get("command") or default
-        path = shutil.which(command)
-        if not path:
-            raise HarnessError(f"{self.label}: command {command!r} not found on PATH")
-        return path
-
     def run_process(self, argv, env_overrides, stdin_text=None):
-        env = dict(os.environ)
-        env.update(self.cfg.get("env") or {})
-        env.update(env_overrides)
+        env = apply_env(os.environ, self.cfg.get("env") or {}, env_overrides)
         try:
             proc = subprocess.run(argv, input=stdin_text, capture_output=True, text=True, env=env,
                                   cwd=self.cwd, timeout=self.timeout)
@@ -73,6 +83,18 @@ class Harness:
             detail = " | ".join(dict.fromkeys(lines[:1] + lines[-1:])) or "no output"
             raise HarnessError(f"{self.label}: exit code {proc.returncode}: {detail[:500]}")
         return proc.stdout
+
+
+def apply_env(base, *layers):
+    """Copy of `base` with each layer applied in order; a value of None removes the variable."""
+    env = dict(base)
+    for layer in layers:
+        for k, v in layer.items():
+            if v is None:
+                env.pop(k, None)
+            else:
+                env[k] = str(v)
+    return env
 
 
 def harness_config(agent_cfg):

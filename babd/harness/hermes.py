@@ -1,15 +1,20 @@
 """Hermes Agent (NousResearch/hermes-agent) harnesses, after Paperclip's `hermes_local` and
 `hermes_gateway` adapters (packages/adapters/hermes)."""
+import atexit
 import json
 import os
 import re
+import secrets
+import socket
+import subprocess
 import time
 import urllib.error
 import urllib.request
 
 from ..config import ROOT
-from .base import Harness, HarnessError, render_prompt
+from .base import Harness, HarnessError, apply_env, render_prompt
 from .routing import hermes_routing
+from .tools import HERMES
 
 SESSION_ID_RE = re.compile(r"^session_id:\s*(\S+)", re.M)
 
@@ -30,28 +35,51 @@ def clean_hermes_output(stdout):
     return re.sub(r"\n{3,}", "\n\n", "\n".join(keep)).strip()
 
 
+def _abs(path):
+    return path if os.path.isabs(path) else os.path.join(ROOT, path)
+
+
+def _write_private(path, content):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        f.write(content)
+
+
+def write_hermes_home(home, llm):
+    """Write HERMES_HOME/config.yaml for this agent's LLM. Returns (env, provider_arg)."""
+    env, config_yaml, provider = hermes_routing(llm)
+    _write_private(os.path.join(home, "config.yaml"), config_yaml)
+    env["HERMES_HOME"] = home
+    return env, provider
+
+
 class HermesLocal(Harness):
     """Runs `hermes chat -q <prompt> -Q` with a per-agent HERMES_HOME holding this agent's model config."""
     type = "hermes_local"
     label = "Hermes Agent"
+    install_spec = HERMES
+    defaults = {"toolsets": ["terminal", "file"], "max_turns": 30, "timeout_sec": 1200, "yolo": False}
 
     @property
     def home(self):
-        home = self.cfg.get("home") or os.path.join(ROOT, ".babd", "hermes", self.agent_id)
-        if not os.path.isabs(home):
-            home = os.path.join(ROOT, home)
-        return home
+        return _abs(self.cfg.get("home") or os.path.join(".babd", "hermes", self.agent_id))
 
     def describe(self):
         tools = ",".join(self.cfg.get("toolsets") or []) or "default tools"
         return f"hermes chat · {tools}"
 
+    def configure(self):
+        if not self.cfg.get("manage_config", True):
+            return [f"using existing {self.home}"]
+        write_hermes_home(self.home, self.llm)
+        return [f"config {os.path.relpath(os.path.join(self.home, 'config.yaml'), ROOT)}"]
+
     def build(self, system, messages):
-        """(argv, env, config_yaml) for one run. Separate from complete() so it can be tested."""
-        env, config_yaml, provider = hermes_routing(self.llm)
+        """(argv, env) for one run. Separate from complete() so it can be tested."""
+        env, _, provider = hermes_routing(self.llm)
         env["HERMES_HOME"] = self.home
         prompt = render_prompt(system, messages)
-        argv = [self.resolve_command("hermes"), "chat", "-q", prompt, "-Q"]
+        argv = [self.command_path(), "chat", "-q", prompt, "-Q"]
         if self.llm.get("model"):
             argv += ["-m", self.llm["model"]]
         if provider:
@@ -72,15 +100,11 @@ class HermesLocal(Harness):
             # so tools that need approval fail unless this is on. Use it only in a sandbox.
             argv.append("--yolo")
         argv += list(self.cfg.get("extra_args") or [])
-        return argv, env, config_yaml
+        return argv, env
 
     def complete(self, system, messages, max_tokens=None, effort=None):
-        argv, env, config_yaml = self.build(system, messages)
-        if self.cfg.get("manage_config", True):
-            os.makedirs(self.home, mode=0o700, exist_ok=True)
-            path = os.path.join(self.home, "config.yaml")
-            with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
-                f.write(config_yaml)
+        self.configure()  # config.yaml always matches the agent's current llm block
+        argv, env = self.build(system, messages)
         stdout = self.run_process(argv, env)
         text = clean_hermes_output(stdout)
         if not text:
@@ -104,23 +128,115 @@ def _output_of(record):
     return None
 
 
-class HermesGateway(Harness):
-    """Calls a running Hermes API server: POST /v1/runs, then polls GET /v1/runs/{id}.
+_STARTED = {}  # agent id -> (Popen, base_url) for gateways this process started
 
-    The model is configured on the Hermes server itself; this agent's `llm` block is only sent
-    along when `send_model` is true (for gateways that accept a per-run model).
+
+def _stop_started_gateways():
+    for proc, _ in _STARTED.values():
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    _STARTED.clear()
+
+
+atexit.register(_stop_started_gateways)
+
+
+def _free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class HermesGateway(Harness):
+    """Calls a Hermes API server: POST /v1/runs, then polls GET /v1/runs/{id}.
+
+    With `api_base_url` it uses that server (its model is configured there). Without it, BABD
+    installs Hermes and starts a private gateway for this agent on 127.0.0.1, configured with the
+    agent's own LLM and a generated API key, and stops it when BABD exits.
     """
     type = "hermes_gateway"
     label = "Hermes Gateway"
+    defaults = {"timeout_sec": 1200}
+
+    @property
+    def managed(self):
+        return not self.cfg.get("api_base_url")
+
+    @property
+    def install_spec(self):
+        return HERMES if self.managed else None
+
+    @property
+    def home(self):
+        return _abs(self.cfg.get("home") or os.path.join(".babd", "hermes-gateway", self.agent_id))
 
     def describe(self):
-        return f"gateway · {self.cfg.get('api_base_url', '?')}"
+        return f"gateway · {self.cfg.get('api_base_url') or 'auto-started on 127.0.0.1'}"
 
-    def _request(self, method, url, body=None):
+    def _managed_key(self):
+        path = os.path.join(self.home, "api_server_key")
+        if not os.path.exists(path):
+            # Hermes refuses keys under 16 chars: this endpoint runs terminal-capable agent work.
+            _write_private(path, secrets.token_hex(32))
+        with open(path) as f:
+            return f.read().strip()
+
+    def _key(self):
+        if self.managed:
+            return self._managed_key()
         key = self.cfg.get("api_key") or os.environ.get(self.cfg.get("api_key_env", "HERMES_GATEWAY_API_KEY"), "")
         if not key:
             raise HarnessError("Hermes Gateway: no API key (set harness.api_key_env or harness.api_key)")
-        headers = {"Authorization": f"Bearer {key}", "Accept": "application/json",
+        return key
+
+    def configure(self):
+        if not self.managed:
+            return [f"server {self.cfg['api_base_url']}"]
+        write_hermes_home(self.home, self.llm)
+        self._managed_key()
+        return [f"config {os.path.relpath(self.home, ROOT)} (gateway starts on first run)"]
+
+    def _start(self):
+        """Start (or reuse) this agent's private gateway. Returns its base URL."""
+        started = _STARTED.get(self.agent_id)
+        if started and started[0].poll() is None:
+            return started[1]
+        hermes = self.command_path()
+        routing_env, _ = write_hermes_home(self.home, self.llm)
+        port = int(self.cfg.get("port") or _free_port())
+        env = apply_env(os.environ, self.cfg.get("env") or {}, routing_env, {
+            "API_SERVER_ENABLED": "true", "API_SERVER_KEY": self._managed_key(),
+            "API_SERVER_HOST": "127.0.0.1", "API_SERVER_PORT": str(port), "NO_COLOR": "1"})
+        log_path = os.path.join(self.home, "gateway.log")
+        log = open(log_path, "w")
+        proc = subprocess.Popen([hermes, "gateway", "run", "--replace", "--accept-hooks"], env=env, cwd=self.cwd,
+                                stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        log.close()
+        base = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + float(self.cfg.get("start_timeout_sec", 90))
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            try:
+                with urllib.request.urlopen(f"{base}/health", timeout=2) as r:
+                    if r.status == 200:
+                        _STARTED[self.agent_id] = (proc, base)
+                        return base
+            except (urllib.error.URLError, OSError):
+                pass
+            time.sleep(0.5)
+        if proc.poll() is None:
+            proc.terminate()
+        with open(log_path) as f:
+            tail = " | ".join(ln.strip() for ln in f.read().splitlines()[-3:])
+        raise HarnessError(f"Hermes Gateway: local gateway did not start: {tail[:400]}")
+
+    def _request(self, method, url, body=None):
+        headers = {"Authorization": f"Bearer {self._key()}", "Accept": "application/json",
                    "X-Hermes-Session-Key": f"babd:{self.agent_id}"}
         data = None
         if body is not None:
@@ -140,9 +256,7 @@ class HermesGateway(Harness):
             return {"text": raw}
 
     def complete(self, system, messages, max_tokens=None, effort=None):
-        base = (self.cfg.get("api_base_url") or "").rstrip("/")
-        if not base:
-            raise HarnessError("Hermes Gateway: harness.api_base_url is required")
+        base = self._start() if self.managed else self.cfg["api_base_url"].rstrip("/")
         body = {"input": render_prompt("", messages).lstrip("-\n "), "instructions": system,
                 "session_id": f"babd:{self.agent_id}"}
         if self.cfg.get("send_model") and self.llm.get("model"):

@@ -26,6 +26,8 @@ cp .env.example .env              # then fill in ANTHROPIC_API_KEY (and others y
 
 python -m babd check                              # ping every agent through its harness + LLM
 python -m babd harnesses                          # list harness types
+python -m babd use qa hermes_local               # pick a harness: installs + configures it
+python -m babd setup                              # install + configure every agent's harness
 python -m babd ask developer "Write a function that validates email addresses"
 python -m babd chat architect                     # interactive multi-turn chat
 python -m babd run "Build a login page with email + password" --update-dashboard
@@ -59,7 +61,7 @@ agent's URL, key and model in the form it understands. The design follows the ad
 | --- | --- | --- |
 | `direct` | One API call (Anthropic SDK or OpenAI-compatible SDK). No tools | SDK client with `base_url`, key, `model` |
 | `hermes_local` | [Hermes Agent](https://github.com/NousResearch/hermes-agent) CLI: `hermes chat -q … -Q` | A private `HERMES_HOME` per agent (`.babd/hermes/<agent>/config.yaml`): `provider: custom` + `base_url` + `model` for OpenAI-compatible endpoints, `provider: anthropic` for Claude. The key stays in an env var; config.yaml only references `${OPENAI_API_KEY}` |
-| `hermes_gateway` | A running Hermes API server: `POST /v1/runs`, poll `GET /v1/runs/{id}` | The model is set on the Hermes server (`send_model: true` also sends `llm.model`) |
+| `hermes_gateway` | A Hermes API server: `POST /v1/runs`, poll `GET /v1/runs/{id}` | No `api_base_url`: BABD starts a private gateway for the agent on 127.0.0.1 with the agent's LLM in its `config.yaml` and a generated key, and stops it on exit. With `api_base_url`: that server's own model is used (`send_model: true` also sends `llm.model`) |
 | `claude_local` | Claude Code CLI: `claude --print --output-format json` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` + `--model`, `--effort`. Needs an Anthropic-compatible endpoint |
 | `process` | Any command: prompt on stdin, reply on stdout | Env vars `BABD_LLM_BASE_URL`, `BABD_LLM_MODEL`, `BABD_LLM_API_KEY` (+ `OPENAI_*` or `ANTHROPIC_*`) |
 
@@ -89,13 +91,44 @@ Examples (the shipped `agents.json` uses `direct`, `hermes_local` and `claude_lo
 | `max_turns` | hermes_local, claude_local | Limit on tool-calling iterations |
 | `timeout_sec` | CLI harnesses, gateway | Stop the run after this many seconds (default 1800) |
 | `cwd` | CLI harnesses | Working directory. Default `workspace/`, shared by the agents so QA sees the Developer's files |
-| `home` / `manage_config` | hermes_local | Use another `HERMES_HOME`; `manage_config: false` stops BABD from writing its config.yaml |
+| `home` / `manage_config` | hermes_local, hermes_gateway | Use another `HERMES_HOME`; `manage_config: false` stops BABD from writing its config.yaml |
+| `version` | hermes_*, claude_local | Pin the version BABD installs (e.g. `"0.19.0"`) |
+| `auto_install` | hermes_*, claude_local | `false` = never install, report what is missing instead |
+| `command` | CLI harnesses | Use this program instead of finding / installing one |
+| `isolated_config`, `config_dir` | claude_local | Private Claude Code config dir per agent (default: on when the agent has its own key) |
+| `api_base_url`, `api_key_env`, `port` | hermes_gateway | Use an existing server, or fix the port of the auto-started one |
+| `install` | process | Command run once to install the program (re-run when it changes) |
 | `yolo` | hermes_local | Skip Hermes' approval prompts for dangerous commands. **Off by default**: without a terminal those prompts can only deny, so turn it on only inside a sandbox (container/VM) |
 | `dangerously_skip_permissions` | claude_local | Same for Claude Code. **Off by default** |
 | `env`, `extra_args` | CLI harnesses | Extra environment variables / command-line arguments |
 
-Install the harnesses you use: `pip install hermes-agent` for Hermes; Claude Code from
-https://claude.com/claude-code. `python -m babd check` says which ones are missing.
+### Automatic install and configuration
+
+Selecting a harness is enough: BABD installs what it needs and writes its configuration.
+
+```bash
+python -m babd use architect hermes_local --set max_turns=50 --set 'toolsets=["web","file"]'
+python -m babd use developer claude_local
+python -m babd use devops hermes_gateway
+python -m babd setup            # (re)install + configure all agents, e.g. after editing agents.json
+```
+
+`use` writes the harness into `agents.json` (starting from that harness's defaults, plus any `--set`),
+redraws `workspace.svg`, then runs setup for that agent. The same setup also runs automatically
+before an agent's first task, so editing `agents.json` by hand works too.
+
+| Harness | Installed automatically | Configured automatically |
+| --- | --- | --- |
+| `direct` | the `anthropic` / `openai` SDK into the current Python, if missing | SDK client from `llm` |
+| `hermes_local` | `hermes-agent` (+ `aiohttp`) in its own virtualenv: `.babd/tools/hermes/` | `.babd/hermes/<agent>/config.yaml` from `llm`, rewritten before every run |
+| `hermes_gateway` | same Hermes install | `.babd/hermes-gateway/<agent>/`: config.yaml, generated 64-char API key (file mode 600), gateway started on a free local port |
+| `claude_local` | `@anthropic-ai/claude-code` with npm into `.babd/tools/claude-code/` (needs Node.js) | `.babd/claude/<agent>/` config dir + endpoint, key and model env vars |
+| `process` | your `install` command, once | LLM settings as env vars |
+
+A program already on your PATH is used as-is unless you pin a `version`. When the agent has its own
+API key, BABD sets that agent's endpoint and key explicitly and clears inherited `ANTHROPIC_AUTH_TOKEN`,
+`CLAUDE_CODE_OAUTH_TOKEN` and Bedrock/Vertex switches, so another login on the machine can't take over.
+Without its own key, the agent uses the machine's existing Claude login.
 
 ## Structure
 
