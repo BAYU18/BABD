@@ -15,6 +15,7 @@
     "max_fix_rounds": 2,
     "max_parallel_tasks": 3,
     "parallel_prep": true,
+    "fast_lane": false,
     "gbrain": {
       "enabled": true,
       "strict": true,

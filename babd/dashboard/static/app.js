@@ -141,6 +141,10 @@ function renderTaskOptions() {
     if (body.dataset.ready) continue;  // keep what the user ticked across re-renders
     body.dataset.ready = "1";
     body.innerHTML = `
+      <div class="help">Who works on it:</div>
+      <label class="check"><input type="radio" name="mode_${box.dataset.opts}" value="auto" checked> Auto: the Team Lead picks only the agents it needs (a quick job goes straight to one agent)</label>
+      <label class="check"><input type="radio" name="mode_${box.dataset.opts}" value="quick"> ⚡ Quick: the Team Lead answers or one agent does it, never the whole team</label>
+      <label class="check"><input type="radio" name="mode_${box.dataset.opts}" value="full"> Whole team: plan, design, code, test, approval, deploy</label>
       <label class="check"><input type="checkbox" name="skip" value="architect"> No Architect: small change, the Team Lead's plan is the design</label>
       <label class="check"><input type="checkbox" name="skip" value="devops"> No DevOps: no deploy, stop after QA and the report</label>
       <label class="check"><input type="checkbox" name="skip" value="prep"> No parallel preparation (QA and DevOps don't prepare while the Developer builds)</label>
@@ -151,11 +155,19 @@ function renderTaskOptions() {
   }
 }
 
+function routeLabel(t) {
+  const r = t.route;
+  if (!r) return t.task_options?.mode && t.task_options.mode !== "auto" ? ` · mode ${esc(t.task_options.mode)}` : "";
+  const who = r.route === "answer" ? nameOf("lead") : r.route === "direct" ? nameOf(r.agent) : (r.agents || []).map(nameOf).join(", ");
+  return ` · <span title="${esc(r.reason || "")}">${r.route === "team" ? "👥 " : "⚡ "}${esc(who)}</span>`;
+}
+
 function readOptions(which) {
   const box = document.querySelector(`[data-opts="${which}"]`);
   const skip = [...box.querySelectorAll('[name="skip"]:checked')].map((c) => c.value);
   const models = Object.fromEntries([...box.querySelectorAll('[name^="model_"]')].map((i) => [i.name.slice(6), i.value.trim()]).filter(([, v]) => v));
-  return skip.length || Object.keys(models).length ? { skip, models } : undefined;
+  const mode = box.querySelector('[name^="mode_"]:checked')?.value || "auto";
+  return skip.length || Object.keys(models).length || mode !== "auto" ? { mode, skip, models } : undefined;
 }
 
 function renderProjectSelects() {
@@ -944,6 +956,7 @@ $("#btnSettings").addEventListener("click", () => {
     <div class="field"><label>Parallel work</label>
       ${field("Tasks at the same time", `<input type="number" id="p_tasks" min="1" max="10" value="${esc(p.max_parallel_tasks ?? 3)}">`, "More tasks wait in the queue. A task waiting for your approval does not count.")}
       <label class="check"><input type="checkbox" id="p_prep" ${(p.parallel_prep ?? true) ? "checked" : ""}> While the Developer builds, QA writes the test plan and DevOps prepares the deploy</label>
+      <label class="check"><input type="checkbox" id="p_fast" ${(p.fast_lane ?? true) ? "checked" : ""}> ⚡ Fast lane: the Team Lead first decides who is needed; quick jobs (a command, a key, a config change) go straight to one agent instead of the whole team</label>
       <div class="help">How many steps each agent runs at once is set per agent (Configure → Role → Parallel steps).</div></div>
     <div class="field"><label>GBrain team memory</label>
       <label class="check"><input type="checkbox" id="g_enabled" ${(p.gbrain?.enabled ?? true) ? "checked" : ""}> Every agent reads gbrain before a task and writes to it after</label>
@@ -1000,7 +1013,7 @@ $("#btnSettings").addEventListener("click", () => {
   $("#p_save").onclick = async () => {
     try {
       await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
-        max_parallel_tasks: Number($("#p_tasks").value), parallel_prep: $("#p_prep").checked,
+        max_parallel_tasks: Number($("#p_tasks").value), parallel_prep: $("#p_prep").checked, fast_lane: $("#p_fast").checked,
         retry: { attempts: Number($("#p_retries").value) }, require_evidence: $("#p_evidence").checked,
         budget: { tokens_per_task: Number($("#b_tt").value), cost_per_task: Number($("#b_ct").value), tokens_per_day: Number($("#b_td").value), cost_per_day: Number($("#b_cd").value) },
         skills_mode: $('[name="p_skills_mode"]').value,
@@ -1234,7 +1247,7 @@ function renderTasks() {
     return `<article class="task" data-task="${esc(t.id)}">
       <div class="task-row">
         <button type="button" class="task-toggle" data-toggle="${esc(t.id)}" aria-expanded="${open}" aria-label="Show steps">${open ? "▾" : "▸"}</button>
-        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${t.task_options?.skip?.length ? ` · no ${t.task_options.skip.map(esc).join(", no ")}` : ""}${Object.keys(t.task_options?.models || {}).length ? ` · ${Object.entries(t.task_options.models).map(([a, m]) => `${esc(nameOf(a))}: ${esc(m)}`).join(", ")}` : ""}${t.evidence ? ` · ${t.evidence.verified ? "✓ verified" : "unverified"}` : ""}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
+        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${routeLabel(t)}${t.task_options?.skip?.length ? ` · no ${t.task_options.skip.map(esc).join(", no ")}` : ""}${Object.keys(t.task_options?.models || {}).length ? ` · ${Object.entries(t.task_options.models).map(([a, m]) => `${esc(nameOf(a))}: ${esc(m)}`).join(", ")}` : ""}${t.evidence ? ` · ${t.evidence.verified ? "✓ verified" : "unverified"}` : ""}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
         <div class="task-status">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")}</div>
         <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
@@ -1502,6 +1515,7 @@ function connect() {
     boardSoon();
     if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`);
     if (d.event === "memory") flashMemory(d.data.agent, d.data.op);
+    if (d.event === "route") logLine("route", `${d.data.route === "answer" ? "Team Lead answers directly" : d.data.route === "direct" ? "⚡ fast lane → " + nameOf(d.data.agent) : "team: " + (d.data.agents || []).map(nameOf).join(", ")}${d.data.reason ? " (" + d.data.reason + ")" : ""}`, "ok");
     if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok");
     if (d.event === "memory") logLine("gbrain", `${nameOf(d.data.agent)} ${d.data.op === "read" ? `read ${d.data.facts} fact(s), ${d.data.pages} page(s)` : `wrote ${d.data.page}`}`);
     if (d.event === "retry") logLine("retry", `${nameOf(d.data.agent)} ${d.data.kind}: ${d.data.fallback ? `trying fallback model ${d.data.fallback}` : `retry ${d.data.attempt}/${d.data.of} in ${d.data.wait}s`} (${d.data.error})`, "bad");

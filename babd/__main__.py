@@ -67,6 +67,9 @@ def main(argv=None):
     c.add_argument("agent")
     r = sub.add_parser("run", help="full team run on a goal (several goals: run at the same time)")
     r.add_argument("goal", nargs="+", help="a goal, a .md/.txt file, or a link to one (each is a task)")
+    r.add_argument("--mode", default="auto", choices=("auto", "quick", "full"),
+                   help="auto: the Team Lead picks who is needed (default); quick: one agent, never the whole team; "
+                        "full: always the whole flow")
     r.add_argument("--skip", default="", help="leave out for these tasks: architect, devops, prep (comma separated)")
     r.add_argument("--model", action="append", default=[], metavar="AGENT=MODEL",
                    help="use another model for one agent in these tasks, e.g. developer=qwen2.5-coder:7b")
@@ -282,7 +285,7 @@ def run_goals(args, cfg, team):
     goals = [g for g, _ in tasks]
     from .flow import FlowError, apply_models, task_options
     try:
-        options = task_options({"skip": [x.strip() for x in args.skip.split(",") if x.strip()],
+        options = task_options({"mode": args.mode, "skip": [x.strip() for x in args.skip.split(",") if x.strip()],
                                 "models": dict(m.split("=", 1) for m in args.model if "=" in m)},
                                {a["id"] for a in cfg["agents"]})
     except FlowError as e:

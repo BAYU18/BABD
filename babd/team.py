@@ -51,10 +51,18 @@ class Agent:
                      "of what you would do. Say plainly what is still missing or blocked.")
         return "\n".join(lines)
 
-    def ask(self, message, **kwargs):
+    def light_system_prompt(self):
+        """A short system prompt (no skill texts) for quick jobs: much less for the model to read."""
+        return (f"You are the {self.cfg['name'].title()} of an AI software development team (BABD). "
+                "A human CEO supervises the team through the Team Lead.\n"
+                f"Your main task: {self.main_task}.\n"
+                "This is a quick job: do it directly, without ceremony. Answer briefly with what you did and the "
+                "result. Say plainly what is missing or blocked.")
+
+    def ask(self, message, system=None, **kwargs):
         """One request to the harness, no memory (used for pings and by work()); retried on temporary
         errors, then tried on the fallback model when the agent has one."""
-        return self.complete(self.system_prompt(), [{"role": "user", "content": message}], **kwargs)
+        return self.complete(system or self.system_prompt(), [{"role": "user", "content": message}], **kwargs)
 
     def complete(self, system, messages, **kwargs):
         on_retry, cancelled = self.listener.on_retry, self.listener.cancelled
@@ -109,14 +117,17 @@ class Agent:
         return self._fallback
 
     def work(self, prompt, *, query, page_slug, page_title, entity, provenance, task="", fact=None, on_memory=None,
-             skills=(), on_skills=None, **kwargs):
+             skills=(), on_skills=None, light=False, memory=True, **kwargs):
         """One task with the GBrain cycle: READ gbrain -> work -> WRITE gbrain.
 
         `query`: texts whose keywords select the memory to read. After the agent answers, its full
         output is saved as page `page_slug` and a one-line fact (`fact(output)` or the output's start)
         is remembered under `entity` with `provenance`. `on_memory(event)` reports both steps.
+        `light`: a quick job, with the short system prompt and no skills; `memory=False`: no GBrain cycle.
         """
-        if not self.brain:
+        if light:
+            skills, kwargs = (), {**kwargs, "system": self.light_system_prompt()}
+        if not self.brain or not memory:
             return self._with_skills(prompt, skills, on_skills, **kwargs)
         emit = on_memory or (lambda e: None)
         memory = self._brain_step("read", lambda: self.brain.recall(*query))

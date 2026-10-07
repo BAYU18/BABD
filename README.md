@@ -241,6 +241,35 @@ redo) per pack: `project.superpowers`, `project.mattpocock`.
 The skill texts make prompts larger: in a team run a step's skills add about 20–80k characters
 (roughly 5–20k tokens; the largest is the Team Lead's plan), so each step costs more tokens.
 
+## Fast lane: only the agents a task needs
+
+Before anything else the Team Lead triages the goal with one short call (no skill texts, no GBrain)
+and picks the fastest route that does the job properly:
+
+| Route | When | Who works | LLM calls |
+| --- | --- | --- | --- |
+| ⚡ answer | a question, an explanation, advice | the Team Lead answers itself | 1 |
+| ⚡ direct | a command or a few, an SSH key, installing a package, checking a server, a config change, a small script | one agent (usually DevOps or the Developer), with its tools | 2 |
+| 👥 team | real software work (a feature, an app, a bug fix across files) | the flow below, with only the specialists it needs: Developer + QA always, Architect only for a new system or a large change, DevOps only when something is deployed | 4+ |
+
+Example: *"buatkan saya ssh key berjudul server lpnotif"* goes straight to DevOps, which runs
+`ssh-keygen -C "server lpnotif"`, keeps the private key in `~/.ssh` and answers with the public key
+(two calls instead of the whole team's plan, design, code, test, approval, deploy and report).
+A direct job uses a short system prompt and no skill texts, so the model has far less to read.
+
+- The route, its reason and the chosen agents are in the task's state (`route`), on the task board
+  (⚡ / 👥) and in the live log. A direct task's report is the agent's answer itself (no extra call).
+- Force it per task: **Task options → Who works on it** (Auto / ⚡ Quick / Whole team), the API
+  (`"options": {"mode": "quick"}`), `babd run --mode quick|full`, Telegram `/quick <goal>` or
+  `/full <goal>`. Quick never runs the whole team; Whole team always does.
+- Turn the triage off for all tasks: Team settings → ⚡ Fast lane (`project.fast_lane`, default on).
+  When the triage call fails or its answer is unclear, the whole team works on the task.
+- Secrets are never committed: when a task ends, BABD leaves private keys (`-----BEGIN … PRIVATE
+  KEY-----`, `id_rsa`, `*.pem`, `*.key`) and `.env` files out of the commit and keeps them on disk in
+  the task's worktree; the agents are told to keep secrets in their usual place and give only paths.
+- A direct task that changed files keeps them on its branch `babd/<task id>` for review (it had no
+  QA round, so it is never merged on its own).
+
 ## How the agents talk to each other
 
 ```
@@ -279,10 +308,11 @@ line: copy one and run `babd run my-task.md`. Add your own `.md` files there (fr
 ## Options per task
 
 Not every task needs the whole team. **Task options** (goal form and task board), the API
-(`"options": {"skip": [...], "models": {...}}`) or the command line:
+(`"options": {"mode": "auto", "skip": [...], "models": {...}}`) or the command line:
 
 | Option | Effect |
 | --- | --- |
+| Who works on it (`mode`) | `auto`: the Team Lead decides (fast lane); `quick`: one agent or the Team Lead's answer; `full`: the whole flow |
 | No Architect (`architect`) | small change: the Team Lead's plan is the design |
 | No DevOps (`devops`) | no deploy and no deploy approval: the task ends after QA and the report |
 | No parallel preparation (`prep`) | QA and DevOps don't prepare while the Developer builds (two LLM calls fewer) |
@@ -292,8 +322,8 @@ Not every task needs the whole team. **Task options** (goal form and task board)
 .venv/bin/babd run "Fix the typo on the pricing page" --skip architect,devops --model qa=qwen2.5-coder:7b
 ```
 
-QA always stays: a task is never done without its tests. Telegram: `/quick <goal>` = no Architect,
-no DevOps. Options are kept with the task, so Resume uses them too.
+QA always stays in a team task: code is never done without its tests. Telegram: `/quick <goal>` =
+fast lane, `/full <goal>` = whole team. Options are kept with the task, so Resume uses them too.
 
 ## Projects: where the agents' work goes
 
@@ -512,6 +542,7 @@ From the command line, give several goals to run them at the same time:
 | --- | --- | --- |
 | `project.max_parallel_tasks` | Team settings → Tasks at the same time | 3 |
 | `project.parallel_prep` | Team settings → QA and DevOps prepare while the Developer builds | on |
+| `project.fast_lane` | Team settings → ⚡ Fast lane (the Team Lead decides who is needed) | on |
 | `agents[].parallel` | Configure → Role → Parallel steps | 2 |
 
 Running in parallel does not make a task cheaper: parallel preparation adds two LLM steps per task

@@ -11,6 +11,15 @@
     Team Lead -> DevOps -> Team Lead       deploy + monitoring              (only after PASS + approval)
     Team Lead -> CEO                       report
 
+Not every task needs the whole team. First the Team Lead triages the goal with one short call
+(project.fast_lane, on by default) and picks a route:
+    answer   the Team Lead answers the CEO itself (a question, advice)
+    direct   one specialist does it in one go (a command, a key, a config change, a small script):
+             Team Lead -> agent -> Team Lead -> CEO, no design / QA / deploy rounds
+    team     the flow above, with only the specialists the task needs (no Architect for small
+             changes, no DevOps when nothing is deployed)
+A task's `mode` option overrides it: "quick" (never the whole team) or "full" (always the flow above).
+
 Every message goes through MessageBus.send(), which only allows the routes above: the Team Lead
 is the hub, specialists never talk to each other or to the CEO directly.
 
@@ -91,9 +100,21 @@ SKIPPABLE = {"architect": "no Architect: the Team Lead's plan is the design (sma
              "prep": "no parallel preparation: QA and DevOps do not prepare while the Developer builds"}
 
 
+MODES = {"auto": "the Team Lead decides who is needed (fast for small jobs)",
+         "quick": "fast lane: the Team Lead answers or one agent does it, never the whole team",
+         "full": "the whole flow: plan, design, code, test, approval, deploy"}
+ROUTES_TAKEN = ("answer", "direct", "team")
+SECRETS_RULE = ("Secrets you create or find (private keys, passwords, tokens) never go into the workspace or "
+                "your answer: keep them in their usual place on this machine (for example ~/.ssh, mode 600) and "
+                "give only their path. Public keys may be shown in full.")
+
+
 def task_options(options, agent_ids=None):
-    """Validated per-task options: {"skip": [...], "models": {agent: model}}."""
+    """Validated per-task options: {"mode": ..., "skip": [...], "models": {agent: model}}."""
     options = options or {}
+    mode = str(options.get("mode") or "auto").strip().lower()
+    if mode not in MODES:
+        raise FlowError(f"mode must be one of {', '.join(MODES)}")
     skip = [x for x in dict.fromkeys(options.get("skip") or []) if x]
     bad = [x for x in skip if x not in SKIPPABLE]
     if bad:
@@ -108,7 +129,7 @@ def task_options(options, agent_ids=None):
         if len(model) > 120:
             raise FlowError("model name too long")
         models[agent] = model
-    return {"skip": skip, "models": models}
+    return {"mode": mode, "skip": skip, "models": models}
 
 
 def apply_models(cfg, models):
@@ -272,9 +293,9 @@ class Run:
         if not resume or options is not None:
             self.state["task_options"] = task_options(options, set(team.by_id))
         self.options = self.state.get("task_options") or {"skip": [], "models": {}}
+        self.mode = self.options.get("mode") or "auto"
+        self.fast_lane = bool(project.get("fast_lane", True))
         self.skip = set(self.options["skip"])
-        if "prep" in self.skip or "devops" in self.skip:
-            self.parallel_prep = False
         self.bus = MessageBus(self.emit, self.dir, self.lock)
         if resume:
             mp = os.path.join(self.dir, "messages.jsonl")
@@ -406,10 +427,14 @@ class Run:
     def finish_stage(self, key, result="done"):
         with self.lock:
             self.state["stages"][key] = result
-            if result == "done" and (key != "report" or self.state["deployed"]
+            if result == "done" and (key != "report" or self.state["deployed"] or self.quick_route
                                      or ("devops" in getattr(self, "skip", ()) and self.state["verdict"] == "PASS")):
                 self.state["progress"] = max(self.state["progress"], STAGE_PROGRESS[key])
         self.emit("stage", {"stage": key, "result": result})
+
+    @property
+    def quick_route(self):
+        return (self.state.get("route") or {}).get("route") in ("answer", "direct")
 
     def agent(self, agent_id, status, task=None):
         with self.lock:
@@ -422,12 +447,12 @@ class Run:
 
     # -- one agent step, always through the GBrain cycle (read -> work -> write) ---------------
 
-    def work(self, agent_id, prompt, task, kind, fact=None, skills_for=None):
+    def work(self, agent_id, prompt, task, kind, fact=None, skills_for=None, light=False, memory=True):
         reason = over_budget(self.state["usage"], self.budget["tokens_per_task"], self.budget["cost_per_task"])
         if reason:
             raise BudgetExceeded(f"task budget reached: {reason} (raise project.budget, then Resume)")
         agent = self.team.by_id[agent_id]
-        skills = skillpacks.for_step(agent.skill_packs, skills_for or kind)
+        skills = [] if light else skillpacks.for_step(agent.skill_packs, skills_for or kind)
 
         def on_skills(entry):
             with self.lock:
@@ -482,7 +507,8 @@ class Run:
                              page_slug=f"babd/runs/{self.id}/{n:02d}-{agent_id}-{kind}",
                              entity=f"babd/goals/{slugify(self.goal)}",
                              provenance=f"babd run {self.id} · {agent.name} · {kind}",
-                             fact=fact or default_fact, on_memory=on_memory, skills=skills, on_skills=on_skills)
+                             fact=fact or default_fact, on_memory=on_memory, skills=skills, on_skills=on_skills,
+                             light=light, memory=memory)
             result = "done"
             return out
         except BaseException:
@@ -497,7 +523,7 @@ class Run:
 
     # -- one exchange: Team Lead -> agent -> Team Lead -----------------------------------------
 
-    def delegate(self, agent_id, kind, task, prompt, reply_kind):
+    def delegate(self, agent_id, kind, task, prompt, reply_kind, **work_kw):
         """Lead sends `task` to an agent, the agent works on `prompt`, and reports back to the lead."""
         self.check_cancel()
         self.bus.send("lead", agent_id, kind, task)
@@ -507,7 +533,7 @@ class Run:
             fact = None
             if reply_kind == "test_report":
                 fact = (lambda o: f"QA verdict {parse_verdict(o)} for '{one_line(self.goal, 80)}': {one_line(o, 200)}")
-            out = self.work(agent_id, prompt, task, reply_kind, fact=fact)
+            out = self.work(agent_id, prompt, task, reply_kind, fact=fact, **work_kw)
         except Exception:
             self.agent(agent_id, "blocked")
             raise
@@ -567,8 +593,17 @@ class Run:
         if not self.bus.messages:
             self.bus.send("ceo", "lead", "goal", goal)
 
-        # PLAN
+        # TRIAGE: who does this task needs?
         self.stage("plan")
+        route = self.route()
+        if route["route"] == "answer":
+            return self._answer(route)
+        if route["route"] == "direct":
+            return self._direct(route)
+        if "prep" in self.skip or "devops" in self.skip:
+            self.parallel_prep = False
+
+        # PLAN
         self.agent("lead", "working", "Plan work and assign agents")
         specialists = [r for r in ROLES[1:] if r not in self.skip]
         team_desc = "\n".join(f"- {r}: {names[r]} - main task {team.by_id[r].main_task}; skills: "
@@ -740,6 +775,131 @@ class Run:
         self.agent("lead", "done")
         self.finish_stage("report")
 
+    # -- triage and the fast lane -----------------------------------------------------------------
+
+    def can_run(self, agent_id):
+        h = self.team.by_id[agent_id].harness
+        return bool(h.has_tools and h.permissions != "plan")
+
+    def route(self):
+        """How this task is handled: {"route": answer|direct|team, "agent", "agents", "task", "reason", "source"}.
+        The Team Lead decides with one short call (no skills, no memory) unless the task's mode or the
+        project says otherwise. Kept in state["route"] and as a checkpoint."""
+        if self.mode == "full" or (self.mode == "auto" and not self.fast_lane):
+            r = {"route": "team", "reason": "full team flow (task mode)" if self.mode == "full" else
+                 "full team flow (project.fast_lane is off)", "source": "settings"}
+        else:
+            self.agent("lead", "working", "Decide who is needed")
+            try:
+                text = self.step("route", lambda: self.work("lead", self.triage_prompt(), "Decide who is needed",
+                                                             "triage", light=True, memory=False))
+                r = self.parse_route(extract_json(text) or {})
+            except (FlowCancelled, BudgetExceeded):
+                raise
+            except Exception as e:  # triage is a shortcut: when it fails, the full flow runs
+                r = {"route": "team", "reason": f"triage failed ({type(e).__name__}): full team flow", "source": "fallback"}
+        if r["route"] == "team":
+            agents = r.get("agents") or []
+            for role in ("architect", "devops"):
+                if agents and role not in agents:
+                    self.skip.add(role)
+            if self.mode == "quick":
+                self.skip |= {"architect", "devops"}
+            r["agents"] = [x for x in ROLES[1:] if x not in self.skip]
+        with self.lock:
+            self.state["route"] = r
+        self.emit("route", r)
+        names = {a.id: a.name for a in self.team.agents}
+        who = (names["lead"] if r["route"] == "answer" else names[r["agent"]] if r["route"] == "direct"
+               else ", ".join(names[x] for x in r["agents"]))
+        self.write("01-route.md", f"Route: {r['route']} ({who})\nWhy: {r.get('reason') or '-'}\n")
+        return r
+
+    def triage_prompt(self):
+        team = self.team
+        lines = []
+        for r in ROLES[1:]:
+            a = team.by_id[r]
+            lines.append(f"- {r}: {a.name} - {a.main_task}; "
+                         + ("runs commands and changes files on this machine" if self.can_run(r)
+                            else "cannot run commands (plans and writes text only)"))
+        team_routes = ("" if self.mode == "quick" else
+                       '- "team": real software work that needs building AND testing (a feature, an app, a bug fix '
+                       'across files). List only the specialists it needs in "agents": developer and qa always; '
+                       'architect only for a new system or a large change; devops only when something must be '
+                       'deployed or set up on servers.\n')
+        return (f"{self.goal_block}\n\nYou are the Team Lead. Decide who is needed for this request. Do NOT do the "
+                "work now and do not plan it in detail. Pick the fastest route that does the job properly:\n"
+                '- "answer": you can answer the CEO yourself from what you know (a question, an explanation, advice); '
+                'put the full answer in "answer".\n'
+                '- "direct": ONE specialist can do it in one go: a command or a few, an operational job (an SSH key, '
+                'installing a package, checking a server, a service restart, a git action), a config change, a small '
+                'script or a one-file fix. Name the agent in "agent" and its task in "task".\n'
+                + team_routes +
+                f"\nYour team:\n" + "\n".join(lines) + "\n\nAnswer with only a JSON object:\n"
+                '{"route": "answer|direct' + ("" if self.mode == "quick" else "|team") + '", "agent": "<for direct>", '
+                '"agents": ["<for team>"], "task": "<for direct: the exact task>", "reason": "<one short sentence>", '
+                '"answer": "<for answer>"}')
+
+    def parse_route(self, data):
+        route = str(data.get("route") or "").strip().lower()
+        reason = one_line(str(data.get("reason") or ""), 200)
+        r = {"route": route, "reason": reason, "source": "team lead"}
+        if route == "answer" and str(data.get("answer") or "").strip():
+            r["answer"] = str(data["answer"]).strip()
+            return r
+        agent = str(data.get("agent") or "").strip().lower()
+        if route == "direct" or self.mode == "quick":
+            if agent not in ROLES[1:] or agent in self.skip:
+                agent = next((x for x in ("devops", "developer") if x not in self.skip and self.can_run(x)), "developer")
+            return {**r, "route": "direct", "agent": agent, "task": str(data.get("task") or "").strip() or self.goal}
+        agents = data.get("agents") if isinstance(data.get("agents"), list) else []
+        return {**r, "route": "team", "agents": [str(x).strip().lower() for x in agents if str(x).strip()],
+                "reason": reason or "full team flow"}
+
+    def _skip_stages(self, *keys):
+        for k in keys:
+            self.finish_stage(k, "skipped")
+
+    def _quick_report(self, text, who, result):
+        """The CEO report of a fast-lane task, from the work itself (no extra call)."""
+        self.stage("report")
+        rep = {"current_goal": one_line(self.goal, 40), "active_task": "Quick task", "recent_result": result,
+               "next_action": "Review the result", "summary": text, "blocker_list": [],
+               "route": self.state["route"]["route"], "agent": self.team.by_id[who].name}
+        rep.update(self._facts(None, False))
+        self.state["report"] = rep
+        self.write("99-ceo-report.json", json.dumps(rep, indent=2, ensure_ascii=False))
+        self.bus.send("lead", "ceo", "report", text, report=rep, route=self.state["route"]["route"], agent=who)
+        self.agent("lead", "done")
+        self.finish_stage("report")
+
+    def _answer(self, route):
+        self.agent("lead", "working", "Answer the CEO")
+        self.write("01-answer.md", route["answer"])
+        self.finish_stage("plan")
+        self._skip_stages("design", "code", "test", "approval", "deploy")
+        self._quick_report(route["answer"], "lead", "Answered")
+
+    def _direct(self, route):
+        agent_id, task = route["agent"], route["task"]
+        self.agent("lead", "waiting", f"Waits for {self.team.by_id[agent_id].name}")
+        self.finish_stage("plan")
+        self._skip_stages("design")
+        self.stage("code")
+        how = ("Do it now with your tools, check that it worked, then answer briefly: what you did (the commands), "
+               "the result, and anything the CEO must still do." if self.can_run(agent_id) else
+               "You cannot run commands here: give the exact commands or steps for the CEO, briefly.")
+        out = self.step("direct", lambda: self.delegate(
+            agent_id, "assign", task,
+            f"{self.goal_block}\n\nThe Team Lead gave this task straight to you as a quick job: no design, test or "
+            f"deploy rounds, so get it right yourself.\n\nYour task:\n{task}\n\n{how}\n{SECRETS_RULE}",
+            "result", light=True))
+        self.write("03-direct.md", out)
+        self.finish_stage("code")
+        self._skip_stages("test", "approval", "deploy")
+        self._quick_report(out, agent_id, f"Done by {self.team.by_id[agent_id].name}"[:40])
+
     # -- evidence: a PASS must rest on tests that really ran ------------------------------------
 
     def run_project_tests(self, round_no):
@@ -849,7 +1009,7 @@ class Run:
     def _facts(self, verdict, deployed):
         """Dashboard numbers from what actually happened, not from the model's opinion."""
         pending = self.state["approval"] and self.state["approval"]["result"] != "approved" and verdict == "PASS"
-        finished = deployed or (verdict == "PASS" and "devops" in getattr(self, "skip", ()))
+        finished = deployed or self.quick_route or (verdict == "PASS" and "devops" in getattr(self, "skip", ()))
         if finished and not self.state["blockers"]:
             status = "DONE"
         elif self.state["blockers"]:

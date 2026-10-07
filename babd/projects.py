@@ -153,6 +153,10 @@ def finish(project, ws, message, merge):
     wt, path = ws["dir"], project["path"]
     try:
         git(["add", "-A"], wt)
+        secrets_left = [f for f in git(["diff", "--cached", "--name-only", "-z"], wt).split("\0") if f and is_secret(wt, f)]
+        if secrets_left:  # private keys, .env files: never committed (and the worktree keeps them)
+            git(["reset", "-q", "--", *secrets_left], wt)
+            out["secrets_left_out"] = secrets_left
         changed = [line for line in git(["status", "--porcelain"], wt).splitlines() if line.strip()]
         out["files"] = len(changed)
         if changed:
@@ -183,13 +187,33 @@ def finish(project, ws, message, merge):
             out["note"] = f"kept on branch {ws['branch']} for review"
     except (ProjectError, OSError, subprocess.TimeoutExpired) as e:
         out["note"] = f"git: {e}"
+    if out.get("secrets_left_out"):
+        out["note"] = (out["note"] + "; " if out["note"] else "") + (
+            f"not committed (secrets): {', '.join(out['secrets_left_out'][:5])} - kept in {wt}")
     try:  # the branch keeps the work; the worktree folder is not needed any more
-        if out["merged"] or out["commit"] is None:
+        if (out["merged"] or out["commit"] is None) and not out.get("secrets_left_out"):
             git(["worktree", "remove", "--force", wt], path, check=False)
             shutil.rmtree(wt, ignore_errors=True)
     except OSError:
         pass
     return out
+
+
+SECRET_NAMES = re.compile(r"(^|/)(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(_sk)?|.*\.(pem|key|p12|pfx|keystore|jks))$", re.I)
+SECRET_TEXT = re.compile(rb"-----BEGIN [A-Z ]*PRIVATE" rb" KEY-----")
+
+
+def is_secret(root, rel):
+    """A file that must never be committed: a private key or an env file (by name or content)."""
+    if rel.endswith((".pub", ".env.example", ".env.sample")):
+        return False
+    if SECRET_NAMES.search(rel):
+        return True
+    try:
+        with open(os.path.join(root, rel), "rb") as f:
+            return bool(SECRET_TEXT.search(f.read(65536)))
+    except OSError:
+        return False
 
 
 def run_tests(command, cwd, timeout=900):

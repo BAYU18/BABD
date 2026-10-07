@@ -16,6 +16,7 @@
     "require_evidence": true,
     "max_parallel_tasks": 3,
     "parallel_prep": true,
+    "fast_lane": true,
     "use_projects": true,
     "default_project": "default",
     "auto_resume": true,

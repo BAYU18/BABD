@@ -32,7 +32,7 @@ EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
                "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage",
-               "evidence", "task_options")
+               "evidence", "task_options", "route")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
@@ -273,6 +273,8 @@ class Dashboard:
                 p["max_parallel_tasks"] = max(1, min(10, int(body["max_parallel_tasks"])))
             if "parallel_prep" in body:
                 p["parallel_prep"] = bool(body["parallel_prep"])
+            if "fast_lane" in body:
+                p["fast_lane"] = bool(body["fast_lane"])
             self.save(cfg)
             self._pump()
             return p
@@ -434,7 +436,7 @@ class Dashboard:
         return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
                                   "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
-                                  "usage", "evidence", "tests", "task_options", "messages")}
+                                  "usage", "evidence", "tests", "task_options", "route", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -817,7 +819,8 @@ class Dashboard:
                 "usage_today": self.usage_today(), "budget": flow.budget_of(cfg["project"]),
                 "budget_block": self.budget_block(),
                 "limits": {"max_parallel_tasks": self.max_parallel_tasks(),
-                           "parallel_prep": bool(cfg["project"].get("parallel_prep", True))},
+                           "parallel_prep": bool(cfg["project"].get("parallel_prep", True)),
+                           "fast_lane": bool(cfg["project"].get("fast_lane", True))},
                 "stages": [{"key": k, "label": l, "owner": o} for k, l, o, _ in flow.STAGES]}
 
 

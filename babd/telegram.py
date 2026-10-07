@@ -219,7 +219,9 @@ class CeoBot(Bot):
                                        "it becomes a task for the team.\n\n/status - what the team is doing\n"
                                        "/tasks - recent tasks\n/project <id> - where new tasks go\n"
                                        "/cancel <task id> - stop or unqueue a task\n/resume <task id> - continue a failed or interrupted task\n"
-                                       "/templates - task templates to fill in\n/quick <goal> - a small change: no Architect, no deploy")
+                                       "/templates - task templates to fill in\n/quick <goal> - fast lane: the Team Lead answers or one agent does it\n"
+                                       "/full <goal> - always the whole team flow\n\n"
+                                       "Plain messages: the Team Lead decides who is needed.")
         if cmd == "/status":
             return self.api.send(chat, self.status_text())
         if cmd == "/tasks":
@@ -235,10 +237,11 @@ class CeoBot(Bot):
             self.chat_project[str(chat)] = arg
             self.persist()
             return self.api.send(chat, f"New tasks from this chat go to project {arg}.")
-        if cmd == "/quick":
+        if cmd in ("/quick", "/full"):
+            mode = cmd[1:]
             if not arg:
-                return self.api.send(chat, "Usage: /quick <small change> (no Architect, no deploy)")
-            return self.api.send(chat, self.safe(lambda: self.start_task(chat, arg, options={"skip": ["architect", "devops"]})))
+                return self.api.send(chat, f"Usage: {cmd} <goal>")
+            return self.api.send(chat, self.safe(lambda: self.start_task(chat, arg, options={"mode": mode})))
         if cmd in ("/templates", "/template"):
             from . import templates
             ts = templates.list_templates()
@@ -338,8 +341,9 @@ class CeoBot(Bot):
             s, d = data.get("summary") or {}, data.get("data") or {}
             status, rep = d.get("status"), d.get("report") or {}
             if status == "done" and rep.get("status") != "BLOCKED" and "Reports" in self.notify:
-                self.broadcast(f"✅ Task done: {s.get('goal')}\n{rep.get('summary') or ''}\n"
-                               f"QA {rep.get('qa_verdict', '-')} · deployed {'yes' if rep.get('deployed') else 'no'}")
+                foot = (f"⚡ fast lane: {rep.get('agent')}" if rep.get("route") in ("direct", "answer") else
+                        f"QA {rep.get('qa_verdict', '-')} · deployed {'yes' if rep.get('deployed') else 'no'}")
+                self.broadcast(f"✅ Task done: {s.get('goal')}\n{rep.get('summary') or ''}\n{foot}")
             elif "Blockers" in self.notify and (status in ("failed", "cancelled") or rep.get("status") == "BLOCKED"):
                 why = d.get("error") or "; ".join(rep.get("blocker_list") or []) or status
                 self.broadcast(f"⚠️ Task {status if status != 'done' else 'blocked'}: {s.get('goal')}\n{why}\ntask {s.get('id')}")

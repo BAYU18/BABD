@@ -45,9 +45,11 @@ class OptionsTest(unittest.TestCase):
             return flow.Run(Team(self.cfg, log=lambda m: None), "Fix the typo", approver=approver, options=options).execute()
 
     def test_validation(self):
-        self.assertEqual(flow.task_options(None), {"skip": [], "models": {}})
-        self.assertEqual(flow.task_options({"skip": ["devops", "devops"], "models": {"qa": " m ", "dev": ""}}),
-                         {"skip": ["devops"], "models": {"qa": "m"}})
+        self.assertEqual(flow.task_options(None), {"mode": "auto", "skip": [], "models": {}})
+        self.assertEqual(flow.task_options({"mode": "Quick", "skip": ["devops", "devops"], "models": {"qa": " m ", "dev": ""}}),
+                         {"mode": "quick", "skip": ["devops"], "models": {"qa": "m"}})
+        with self.assertRaisesRegex(flow.FlowError, "mode must be"):
+            flow.task_options({"mode": "turbo"})
         with self.assertRaisesRegex(flow.FlowError, "cannot skip qa"):
             flow.task_options({"skip": ["qa"]})
         with self.assertRaisesRegex(flow.FlowError, "no agent"):
@@ -113,7 +115,7 @@ class OptionsApiTest(unittest.TestCase):
         self.assertEqual(seen["qa"], "tiny-qa")
         self.assertNotIn("architect", seen)
         _, r = self.call("GET", f"/api/runs/{run['id']}")
-        self.assertEqual(r["task_options"], {"skip": ["architect", "devops"], "models": {"qa": "tiny-qa"}})
+        self.assertEqual(r["task_options"], {"mode": "auto", "skip": ["architect", "devops"], "models": {"qa": "tiny-qa"}})
         self.assertEqual(self.call("POST", "/api/runs", {"goal": "x", "options": {"skip": ["qa"]}})[0], 400)
         self.assertEqual(self.call("POST", "/api/runs", {"goal": "x", "options": {"models": {"ghost": "m"}}})[0], 400)
 
