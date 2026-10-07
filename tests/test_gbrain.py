@@ -21,7 +21,7 @@ from babd import flow  # noqa: E402
 from babd.config import load_config  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
-from babd.gbrain import GBrain, keywords  # noqa: E402
+from babd.gbrain import BrainError, GBrain, keywords  # noqa: E402
 from babd.team import Agent, Team  # noqa: E402
 
 FAKE_GBRAIN = r'''#!/usr/bin/env python3
@@ -224,6 +224,25 @@ class GBrainTest(unittest.TestCase):
     def test_keywords(self):
         self.assertEqual(keywords("Build a login page with email + password", "Test the login"),
                          ["login", "page", "email", "password", "test"])
+
+
+class PutPageTest(unittest.TestCase):
+    def test_revision_conflict_retries_with_the_revision(self):
+        calls = []
+
+        def call(*args, stdin=None):
+            calls.append(args)
+            if args[0] == "put" and "--expected-revision" not in args:
+                raise BrainError("revision_conflict: page changed")
+            return {"revision": "r7"} if args[0] == "get" else {"ok": True}
+        brain = GBrain({"gbrain": {"enabled": False}})
+        with mock.patch.object(brain, "call", call):
+            self.assertEqual(brain.put_page("a/b", "T", "body"), {"ok": True})
+        self.assertEqual(calls, [("put", "a/b"), ("get", "a/b", "--json"), ("put", "a/b", "--expected-revision", "r7")])
+        calls.clear()
+        with mock.patch.object(brain, "call", lambda *a, stdin=None: calls.append(a) or {}):  # no conflict: one call
+            brain.put_page("c", "T", "b")
+        self.assertEqual(calls, [("put", "c")])
 
 
 if __name__ == "__main__":

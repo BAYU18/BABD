@@ -357,15 +357,16 @@ class GBrain:
     def put_page(self, slug, title, body, tags=()):
         tag_list = ", ".join(json.dumps(t) for t in tags)
         md = f"---\ntitle: {json.dumps(title)}\ntype: note\ntags: [{tag_list}]\n---\n\n{body.strip()}\n"
-        # Handle revision_conflict: page may already exist (e.g., resume run)
         try:
-            existing = self.call("get", slug, "--json")
-            revision = existing.get("revision") or existing.get("knowledge_revision") or ""
-            if revision:
-                return self.call("put", slug, "--expected-revision", revision, stdin=md)
-        except BrainError:
-            pass  # page does not exist yet: create it
-        return self.call("put", slug, stdin=md)
+            return self.call("put", slug, stdin=md)
+        except BrainError as e:  # revision_conflict: the page exists already (e.g. a resumed run)
+            if "revision" not in str(e).lower():
+                raise
+            existing = self.call("get", slug, "--json") or {}
+            revision = existing.get("revision") or existing.get("knowledge_revision") if isinstance(existing, dict) else None
+            if not revision:
+                raise
+            return self.call("put", slug, "--expected-revision", str(revision), stdin=md)
 
     def search(self, query, limit=10):
         return self.call("search", query, "--json")[:limit] if query.strip() else []
