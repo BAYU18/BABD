@@ -13,24 +13,23 @@
       "deploy"
     ],
     "max_fix_rounds": 2,
-    "require_evidence": false,
+    "require_evidence": true,
     "max_parallel_tasks": 3,
     "parallel_prep": true,
     "use_projects": true,
     "default_project": "default",
     "auto_resume": true,
     "retry": {
-      "attempts": 3,
-      "base_delay": 5,
-      "max_delay": 60
+      "max_attempts": 3,
+      "backoff_seconds": 2
     },
     "budget": {
-      "tokens_per_task": 0,
-      "cost_per_task": 0,
-      "tokens_per_day": 0,
-      "cost_per_day": 0
+      "enabled": true,
+      "daily_limit_usd": 5.0,
+      "task_limit_usd": 1.0,
+      "warn_at_percent": 80
     },
-    "skills_mode": "full",
+    "skills_mode": "enforce",
     "gbrain": {
       "enabled": true,
       "strict": true,
