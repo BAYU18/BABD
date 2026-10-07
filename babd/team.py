@@ -1,13 +1,7 @@
 """AI development team: agents built from agents.json, orchestrated by the Team Lead."""
-import datetime
-import json
-import os
-import re
-
-from .config import ROOT, load_skill_text
+from .config import load_skill_text
+from .flow import Run, extract_json  # noqa: F401  (extract_json re-exported for callers)
 from .harness import create_harness
-
-RUNS_DIR = os.path.join(ROOT, "runs")
 
 
 class Agent:
@@ -53,17 +47,6 @@ class Agent:
         return reply
 
 
-def extract_json(text):
-    """Parse the first JSON object in a model reply (tolerates ```json fences and surrounding prose)."""
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
-
-
 class Team:
     def __init__(self, cfg, log=print):
         self.cfg = cfg
@@ -73,7 +56,7 @@ class Team:
         self.log = log
 
     def check(self):
-        """Ping every agent's LLM. Returns {agent_id: (ok, reply_or_error)}."""
+        """Ping every agent through its harness. Returns {agent_id: (ok, reply_or_error)}."""
         results = {}
         for a in self.agents:
             try:
@@ -83,65 +66,9 @@ class Team:
                 results[a.id] = (False, str(e))
         return results
 
-    def run(self, goal):
-        """Plan -> each specialist works in order -> CEO report. Saves everything under runs/."""
-        run_dir = os.path.join(RUNS_DIR, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
-        os.makedirs(run_dir, exist_ok=True)
-
-        def save(name, content):
-            with open(os.path.join(run_dir, name), "w") as f:
-                f.write(content if isinstance(content, str) else json.dumps(content, indent=2, ensure_ascii=False))
-
-        team_desc = "\n".join(
-            f"- {a.id}: {a.name} - main task {a.main_task}; skills: {', '.join(a.cfg.get('skills', []))}"
-            for a in self.specialists)
-        ids = ", ".join(f'"{a.id}"' for a in self.specialists)
-        slots = ", ".join(f'"{a.id}": "<task>"' for a in self.specialists)
-
-        # 1. Team Lead plans and assigns
-        self.log(f"[{self.lead.name}] planning ...")
-        plan_text = self.lead.ask(
-            f"CEO goal:\n{goal}\n\nYour team:\n{team_desc}\n\n"
-            "Plan the work and assign one concrete task to every agent. They work in the order listed, "
-            "each seeing the previous agents' output.\n"
-            "Answer with only a JSON object:\n"
-            '{"plan_summary": "<2-4 sentences>", "assignments": {' + slots + '}}\n'
-            f"The assignments object must have exactly these keys: {ids}.")
-        plan = extract_json(plan_text) or {}
-        assignments = plan.get("assignments")
-        if not isinstance(assignments, dict):
-            assignments = {}
-        save("01-plan.md", plan_text)
-
-        # 2. Specialists work in order, each seeing the plan and earlier outputs
-        outputs = {}
-        for i, a in enumerate(self.specialists, start=2):
-            task = str(assignments.get(a.id) or "") or f"Do your part ({a.main_task}) for the goal, following this plan:\n{plan_text}"
-            self.log(f"[{a.name}] {task[:90]}{'...' if len(task) > 90 else ''}")
-            previous = "\n\n".join(f"### Output from {self.by_id[k].name}\n{v}" for k, v in outputs.items())
-            msg = (f"CEO goal:\n{goal}\n\nTeam Lead plan:\n{plan.get('plan_summary', plan_text)}\n\n"
-                   f"Your assignment:\n{task}")
-            if previous:
-                msg += f"\n\nWork already done by the team:\n\n{previous}"
-            outputs[a.id] = a.ask(msg)
-            save(f"{i:02d}-{a.id}.md", outputs[a.id])
-
-        # 3. Team Lead reports to the CEO
-        self.log(f"[{self.lead.name}] writing the CEO report ...")
-        all_out = "\n\n".join(f"### {self.by_id[k].name}\n{v}" for k, v in outputs.items())
-        report_text = self.lead.ask(
-            f"CEO goal:\n{goal}\n\nTeam output:\n\n{all_out}\n\n"
-            "Write the CEO report. The CEO wants high-level status only, no code. "
-            "Answer with only a JSON object:\n"
-            '{"status": "ACTIVE|BLOCKED|DONE", "progress": <0-100>, "current_goal": "<max 4 words>", '
-            '"active_task": "<max 3 words>", "approval_needed": <int>, "blockers": <int>, '
-            '"recent_result": "<max 4 words>", "next_action": "<max 4 words>", '
-            '"summary": "<short paragraph for the CEO>", "approvals": ["<what the CEO must approve>"], '
-            '"blocker_list": ["<blocker>"]}')
-        report = extract_json(report_text) or {"summary": report_text}
-        save("99-ceo-report.json", report)
-        save("99-ceo-report.md", report.get("summary", report_text))
-        return {"dir": run_dir, "plan": plan, "plan_text": plan_text, "outputs": outputs, "report": report}
+    def run(self, goal, approver=None, on_event=None, run_id=None):
+        """Run the team flow (see babd/flow.py) on a goal. Returns the final run state."""
+        return Run(self, goal, approver=approver, on_event=on_event, run_id=run_id).execute()
 
 
 DASHBOARD_FIELDS = ["status", "progress", "current_goal", "active_task", "approval_needed", "blockers",
@@ -165,4 +92,22 @@ def apply_report_to_dashboard(cfg, report):
         except (TypeError, ValueError):
             project[k] = 0
     project["status"] = str(project.get("status", "ACTIVE")).upper()
+    return cfg
+
+
+def apply_run_to_config(cfg, state):
+    """After a run: CEO report -> project fields, run stages -> workflow strip, agent states -> cards."""
+    if state.get("report"):
+        apply_report_to_dashboard(cfg, state["report"])
+    stage_of_step = {"PLAN": "plan", "DESIGN": "design", "CODE": "code", "TEST": "test",
+                     "DEPLOY": "deploy", "MONITOR": "deploy"}
+    for step in cfg.get("workflow", []):
+        st = state["stages"].get(stage_of_step.get(step["step"], ""), "todo")
+        step["state"] = {"done": "done", "active": "active", "failed": "active"}.get(st, "todo")
+    for a in cfg["agents"]:
+        s = state["agents"].get(a["id"], {}).get("status", "idle")
+        a["status"] = {"done": "idle", "working": "working"}.get(s, s)
+        if s == "done":
+            for sub in a["sub_tasks"]:
+                sub["state"] = "done"
     return cfg

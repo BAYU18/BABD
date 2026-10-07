@@ -1,51 +1,117 @@
 # AI Software Development Workspace
 
-An AI software company: one human CEO supervises a team of 5 AI agents. Each agent calls a real LLM
-(Claude or any OpenAI-compatible endpoint) configured in `agents.json`, and the same file drives the
+An AI software company: one human CEO supervises a team of 5 AI agents. Each agent runs on its own
+harness (direct API, Hermes Agent, Claude Code, …) with its own LLM (Claude or any OpenAI-compatible
+endpoint), the agents work through a fixed CEO → Team Lead → specialists flow, and a web dashboard
+lets the CEO configure, command and watch them. `agents.json` drives all of it, including the
 workspace illustration.
 
 ![AI Software Development Workspace](workspace.png)
+
+## Install
+
+```bash
+git clone https://github.com/bayu18/babd.git && cd babd
+./install.sh
+```
+
+`install.sh` (Linux / macOS; on Windows use WSL) needs only Python 3.10+. It:
+
+1. creates `.venv` and installs BABD with its Python dependencies (`anthropic`, `openai`);
+2. creates `.env` (file mode 600) for API keys;
+3. installs and configures the harness of every agent in `agents.json`: Hermes Agent into its own
+   virtualenv, Claude Code with npm (BABD downloads Node.js itself, checksum-verified, when npm is
+   missing), and a per-agent config for each.
+
+Re-running it is safe. Everything BABD installs stays inside the project (`.venv/`, `.babd/`).
+
+## Dashboard
+
+```bash
+.venv/bin/babd dashboard
+```
+
+Opens the CEO command center in your browser (`http://127.0.0.1:8800/?token=…`).
+
+![BABD dashboard](docs/dashboard.png)
+
+- **Give the team a goal** and watch the run live: the stage stepper, every message between the
+  agents, and the CEO report at the end.
+- **Approve or reject the deploy** when QA has passed (or tick "approve automatically").
+- **Configure each agent**: role and tasks, LLM (provider, API style, base URL, model, effort,
+  API key), harness and its options, Telegram, skills. Saving writes `agents.json`, redraws the
+  workspace image, and **Save & set up** installs and configures the harness right away.
+  API keys typed here go to `.env` under the agent's key variable, never to `agents.json`, and
+  are never sent back to the browser.
+- **Chat with one agent** directly through its harness.
+- **Check agents** (send each a short test message), **Set up all**, team settings (project name,
+  CEO approval before deploy, QA fix rounds), run history, and an activity log with install output.
+
+The panel listens on 127.0.0.1 only. Every API call needs the token from the start-up URL, and the
+Host header must be the panel's own address, so other web pages can't drive it.
+
+## How the agents talk to each other
+
+```
+CEO ──goal──▶ Team Lead ──plan──┐
+                                ├─▶ Architect ──design──▶ Team Lead
+                                ├─▶ Developer ──code────▶ Team Lead
+                                ├─▶ QA ──test report + VERDICT──▶ Team Lead
+                                │      FAIL: Team Lead ─▶ Developer (fix) ─▶ Team Lead ─▶ QA (re-test)
+                                │            … up to max_fix_rounds, then the run is BLOCKED
+Team Lead ──approval request──▶ CEO ──approve / reject──▶ Team Lead       (require_approval: deploy)
+                                └─▶ DevOps ──deploy + monitoring──▶ Team Lead   (only after PASS + approval)
+Team Lead ──report──▶ CEO
+```
+
+- The Team Lead is the hub: specialists only talk to the Team Lead, and only the Team Lead talks to
+  the CEO. Any other route is refused (`babd/flow.py`, `MessageBus`).
+- Each agent gets the work it builds on: the Developer gets the design, QA gets design + code,
+  DevOps gets code + QA report + the CEO's approval note.
+- QA must end with `VERDICT: PASS` or `VERDICT: FAIL`; a missing verdict counts as FAIL.
+- The report's status, progress, approvals and blockers are computed from what happened (QA verdict,
+  approval, deploy), not taken from the model.
+- Every message is saved in `runs/<id>/messages.jsonl`, with `state.json` and one file per step.
 
 ## Files
 
 | File | Description |
 | --- | --- |
+| `install.sh` | One-command install (see above) |
 | `workspace.svg` | The illustration as a scalable vector (1920×1566) |
 | `workspace.png` | The same image rendered as a PNG |
-| `agents.json` | **Configuration** for each agent (LLM, Telegram bot, skills, tasks, status) and for the CEO dashboard |
+| `agents.json` | **Configuration** for each agent (LLM, harness, Telegram bot, skills, tasks, status) and for the CEO dashboard and flow |
 | `generate_workspace.py` | Script that reads `agents.json` and writes `workspace.svg` |
-| `babd/` | The team runtime: LLM clients, harnesses (`babd/harness/`), agents, Team Lead orchestration and the command line |
+| `babd/` | The runtime: LLM clients, harnesses (`harness/`), team flow (`flow.py`), dashboard (`dashboard/`) and the command line |
 | `skills/` | Optional instruction files for skills (see `skills/README.md`) |
-| `tests/` | Tests: real HTTP calls through both SDKs to a mock LLM server, and fake `hermes` / `claude` CLIs that record what each harness sends |
+| `tests/` | Tests: the flow with scripted agents, the dashboard API over HTTP, real HTTP calls through both SDKs to a mock LLM server, and fake `hermes` / `claude` CLIs |
 
-## Running the team
+## Command line
 
 ```bash
-pip install -r requirements.txt
-cp .env.example .env              # then fill in ANTHROPIC_API_KEY (and others you use)
+source .venv/bin/activate        # or prefix the commands with .venv/bin/
 
-python -m babd check                              # ping every agent through its harness + LLM
-python -m babd harnesses                          # list harness types
-python -m babd use qa hermes_local               # pick a harness: installs + configures it
-python -m babd setup                              # install + configure every agent's harness
-python -m babd ask developer "Write a function that validates email addresses"
-python -m babd chat architect                     # interactive multi-turn chat
-python -m babd run "Build a login page with email + password" --update-dashboard
+babd dashboard                                # web panel
+babd check                                    # ping every agent through its harness + LLM
+babd harnesses                                # list harness types
+babd use qa hermes_local                      # pick a harness: installs + configures it
+babd setup                                    # install + configure every agent's harness
+babd ask developer "Write a function that validates email addresses"
+babd chat architect                           # interactive multi-turn chat
+babd run "Build a login page with email + password" --update-dashboard [--approve]
 ```
 
-`run` does what the illustration shows:
-
-1. **Team Lead** plans the work and assigns one task to each specialist.
-2. **Architect → Developer → QA / Tester → DevOps** each do their task in order. Each one sees the
-   plan and everything the previous agents produced.
-3. **Team Lead** writes a CEO report: status, progress, active task, approvals, blockers, next action.
-
-Everything is saved under `runs/<timestamp>/` (`01-plan.md`, one file per agent, `99-ceo-report.json`).
-With `--update-dashboard`, the report is written into `project` in `agents.json` and `workspace.svg`
-is regenerated, so the CEO Dashboard shows the real result.
+`run` follows the flow above and prints each message as it is sent. The CEO approval is asked in
+the terminal (or given up front with `--approve`). With `--update-dashboard`, the result is written
+into `agents.json` (project status, workflow strip, agent states) and `workspace.svg` is redrawn.
 
 Each agent uses its own harness and its own LLM. Its system prompt is built from its main task,
 sub-tasks and skills.
+
+| `project` setting | Meaning |
+| --- | --- |
+| `require_approval` | `["deploy"]` (default): the CEO must approve before DevOps deploys. `[]`: no approval step |
+| `max_fix_rounds` | How many times a failed QA report goes back to the Developer (default 2) |
 
 ## Harnesses
 
@@ -107,10 +173,10 @@ Examples (the shipped `agents.json` uses `direct`, `hermes_local` and `claude_lo
 Selecting a harness is enough: BABD installs what it needs and writes its configuration.
 
 ```bash
-python -m babd use architect hermes_local --set max_turns=50 --set 'toolsets=["web","file"]'
-python -m babd use developer claude_local
-python -m babd use devops hermes_gateway
-python -m babd setup            # (re)install + configure all agents, e.g. after editing agents.json
+babd use architect hermes_local --set max_turns=50 --set 'toolsets=["web","file"]'
+babd use developer claude_local
+babd use devops hermes_gateway
+babd setup            # (re)install + configure all agents, e.g. after editing agents.json
 ```
 
 `use` writes the harness into `agents.json` (starting from that harness's defaults, plus any `--set`),

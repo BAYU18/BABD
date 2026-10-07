@@ -29,7 +29,8 @@ def _sdk(name):
     mod = globals().get(name)
     if mod is None:
         req = SDK_REQUIREMENTS[name]
-        print(f"[setup] installing {req} ...", file=sys.stderr, flush=True)
+        from .log import log
+        log(f"installing {req} ...")
         proc = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", req], capture_output=True, text=True)
         if proc.returncode != 0:
             tail = " | ".join(proc.stderr.strip().splitlines()[-2:])

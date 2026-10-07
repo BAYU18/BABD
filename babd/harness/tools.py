@@ -5,13 +5,19 @@ installs into the project (.babd/tools/<name>) instead of globally:
   * pip packages get their own virtualenv: .babd/tools/<name>/bin/<command>
   * npm packages get their own prefix:     .babd/tools/<name>/node_modules/.bin/<command>
 """
+import hashlib
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
+import urllib.request
 from dataclasses import dataclass
 
 from ..config import ROOT
+from ..log import log as _log
 from .base import HarnessError
 
 TOOLS_DIR = os.path.join(ROOT, ".babd", "tools")
@@ -46,8 +52,75 @@ HERMES = InstallSpec("hermes", "pip", "hermes-agent", "hermes", extras=("aiohttp
 CLAUDE_CODE = InstallSpec("claude-code", "npm", "@anthropic-ai/claude-code", "claude")
 
 
+NODE_DIST = "https://nodejs.org/dist/latest-v22.x"
+
+
 def log(msg):
-    print(f"[setup] {msg}", file=sys.stderr, flush=True)
+    _log(msg, "setup")
+
+
+def node_dir():
+    return os.path.join(TOOLS_DIR, "node")
+
+
+def extra_path():
+    """PATH entries for BABD-installed runtimes (Node.js), so npm-installed CLIs find `node`."""
+    d = os.path.join(node_dir(), "bin")
+    return [d] if os.path.isdir(d) else []
+
+
+def _node_platform():
+    system = {"Linux": "linux", "Darwin": "darwin"}.get(platform.system())
+    arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower())
+    if not system or not arch:
+        raise HarnessError(f"automatic Node.js install is not supported on {platform.system()} "
+                           f"{platform.machine()}; install Node.js 18+ from https://nodejs.org")
+    return f"{system}-{arch}"
+
+
+def install_node():
+    """Download the latest Node.js 22 into .babd/tools/node (checksum-verified). Returns npm path."""
+    plat = _node_platform()
+    with urllib.request.urlopen(f"{NODE_DIST}/SHASUMS256.txt", timeout=60) as r:
+        sums = r.read().decode()
+    line = next((ln for ln in sums.splitlines() if ln.endswith(f"-{plat}.tar.gz")), None)
+    if not line:
+        raise HarnessError(f"no Node.js build for {plat} at {NODE_DIST}")
+    digest, name = line.split()
+    log(f"downloading Node.js {name} into {os.path.relpath(node_dir(), ROOT)} ...")
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = os.path.join(tmp, name)
+        urllib.request.urlretrieve(f"{NODE_DIST}/{name}", archive)
+        h = hashlib.sha256()
+        with open(archive, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        if h.hexdigest() != digest:
+            raise HarnessError(f"Node.js download checksum mismatch for {name}")
+        with tarfile.open(archive) as tar:
+            try:
+                tar.extractall(tmp, filter="data")
+            except TypeError:  # Python without extraction filters: check paths ourselves
+                root = os.path.realpath(tmp)
+                for member in tar.getmembers():
+                    target = os.path.realpath(os.path.join(tmp, member.name))
+                    if not target.startswith(root + os.sep) or member.isdev():
+                        raise HarnessError(f"unsafe path in the Node.js archive: {member.name}")
+                tar.extractall(tmp)
+        shutil.rmtree(node_dir(), ignore_errors=True)
+        os.makedirs(TOOLS_DIR, exist_ok=True)
+        shutil.move(os.path.join(tmp, name[: -len(".tar.gz")]), node_dir())
+    npm = os.path.join(node_dir(), "bin", "npm")
+    log(f"installed Node.js -> {os.path.relpath(npm, ROOT)}")
+    return npm
+
+
+def ensure_npm():
+    """npm from PATH, else BABD's own Node.js (installing it the first time)."""
+    managed = os.path.join(node_dir(), "bin", "npm")
+    if os.path.exists(managed):
+        return managed
+    return shutil.which("npm") or install_node()
 
 
 def tool_dir(spec):
@@ -72,8 +145,10 @@ def installed_requirement(spec):
 
 
 def _run(argv, what):
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(extra_path() + [env.get("PATH", "")])
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_SEC)
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_SEC, env=env)
     except FileNotFoundError as e:
         raise HarnessError(f"{what}: {argv[0]!r} not found") from e
     except subprocess.TimeoutExpired as e:
@@ -96,9 +171,7 @@ def install(spec, version=None):
         py = os.path.join(d, "Scripts" if os.name == "nt" else "bin", "python")
         _run([py, "-m", "pip", "install", "--quiet", "--upgrade", *reqs], what)
     elif spec.kind == "npm":
-        npm = shutil.which("npm")
-        if not npm:
-            raise HarnessError(f"{what}: npm not found. Install Node.js (https://nodejs.org) first")
+        npm = ensure_npm()
         os.makedirs(d, exist_ok=True)
         _run([npm, "install", "--prefix", d, "--no-audit", "--no-fund", "--loglevel=error", *reqs], what)
     else:

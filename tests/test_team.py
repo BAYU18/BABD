@@ -14,7 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from babd import team as team_mod  # noqa: E402
+from babd import flow  # noqa: E402
 from babd.config import load_config  # noqa: E402
 from babd.llm import LLMClient, LLMError  # noqa: E402
 from babd.team import Team, apply_report_to_dashboard  # noqa: E402
@@ -33,6 +33,8 @@ def reply_for(system, prompt):
         return json.dumps(REPORT)
     if "Reply with exactly: OK" in prompt:
         return "OK"
+    if "VERDICT: PASS or VERDICT: FAIL" in prompt:
+        return "all tests pass\nVERDICT: PASS"
     return f"done by [{system.splitlines()[0][:40]}]"
 
 
@@ -161,18 +163,19 @@ class TeamTest(unittest.TestCase):
         self.assertIn("## Skill: Python", prompt)  # skills/python.md is loaded
 
     def test_full_run(self):
-        with mock.patch.object(team_mod, "RUNS_DIR", self.tmp):
-            result = Team(self.cfg, log=lambda m: None).run("Build a login page")
-        self.assertEqual(result["plan"], PLAN)
-        self.assertEqual(set(result["outputs"]), {"architect", "developer", "qa", "devops"})
-        self.assertEqual(result["report"]["next_action"], "Approve Deploy")
-        # 1 plan + 4 specialists + 1 report; each specialist got its assignment and earlier work
+        with mock.patch.object(flow, "RUNS_DIR", self.tmp):
+            state = Team(self.cfg, log=lambda m: None).run("Build a login page", approver=lambda r: (True, ""))
+        self.assertEqual(state["status"], "done")
+        replies = {m["from"]: m["content"] for m in state["messages"] if m["to"] == "lead"}
+        self.assertEqual(set(replies) - {"ceo"}, {"architect", "developer", "qa", "devops"})
+        self.assertEqual(state["report"]["next_action"], "Approve Deploy")
+        # plan, 4 specialists, report: real HTTP calls through both SDKs
         self.assertEqual(len(MockLLM.requests), 6)
         dev_prompt = MockLLM.requests[2]["body"]["messages"][-1]["content"]
         self.assertIn("Write auth code", dev_prompt)
-        self.assertIn("Output from Architect", dev_prompt)
+        self.assertIn("Design from Architect", dev_prompt)
         self.assertEqual(MockLLM.requests[4]["path"], "/v1/chat/completions")  # DevOps: custom endpoint
-        files = sorted(os.listdir(result["dir"]))
+        files = sorted(os.listdir(state["dir"]))
         self.assertEqual(files[0], "01-plan.md")
         self.assertIn("99-ceo-report.json", files)
 

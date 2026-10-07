@@ -26,6 +26,44 @@ def create_harness(agent_cfg):
     return cls(agent_cfg)
 
 
+# Option fields per harness for the dashboard's config form: (key, type, help).
+HARNESS_OPTIONS = {
+    "direct": [],
+    "hermes_local": [
+        ("toolsets", "list", "Hermes toolsets, e.g. terminal, file, web"),
+        ("skills", "list", "Hermes-native skills to preload"),
+        ("max_turns", "number", "Max tool-calling iterations"),
+        ("timeout_sec", "number", "Stop a run after this many seconds"),
+        ("yolo", "bool", "Skip dangerous-command approvals (only inside a sandbox)"),
+        ("version", "text", "Pin the hermes-agent version to install"),
+        ("auto_install", "bool", "Install Hermes automatically when missing"),
+        ("command", "text", "Use this hermes program instead"),
+    ],
+    "hermes_gateway": [
+        ("api_base_url", "text", "Existing Hermes server URL. Empty = start a private local gateway"),
+        ("api_key_env", "text", "Env var with that server's API key"),
+        ("send_model", "bool", "Send this agent's model with each run"),
+        ("port", "number", "Port for the auto-started gateway (empty = any free port)"),
+        ("timeout_sec", "number", "Stop a run after this many seconds"),
+        ("version", "text", "Pin the hermes-agent version to install"),
+    ],
+    "claude_local": [
+        ("max_turns", "number", "Max agent turns"),
+        ("timeout_sec", "number", "Stop a run after this many seconds"),
+        ("dangerously_skip_permissions", "bool", "Skip permission checks (only inside a sandbox)"),
+        ("isolated_config", "bool", "Private Claude Code config dir (default: on when the agent has its own key)"),
+        ("version", "text", "Pin the Claude Code version to install"),
+        ("command", "text", "Use this claude program instead"),
+    ],
+    "process": [
+        ("command", "text", "Program to run (prompt on stdin, reply on stdout)"),
+        ("args", "list", "Arguments; {model} and {base_url} are filled in"),
+        ("install", "text", "Command run once to install the program"),
+        ("timeout_sec", "number", "Stop a run after this many seconds"),
+    ],
+}
+
+
 def select_harness(agent_cfg, kind, overrides=None):
     """Point an agent at harness `kind`: keeps its options when the type is unchanged, otherwise
     starts from that harness's defaults. Applies `overrides`. Edits agent_cfg in place."""
@@ -39,4 +77,4 @@ def select_harness(agent_cfg, kind, overrides=None):
     return new
 
 
-__all__ = ["HARNESSES", "Harness", "HarnessError", "create_harness", "register_harness", "select_harness"]
+__all__ = ["HARNESS_OPTIONS", "HARNESSES", "Harness", "HarnessError", "create_harness", "register_harness", "select_harness"]

@@ -3,3 +3,5 @@ __pycache__/
 runs/
 .babd/
 workspace/
+.venv/
+*.egg-info/

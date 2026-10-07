@@ -70,7 +70,9 @@ class Harness:
         return cwd
 
     def run_process(self, argv, env_overrides, stdin_text=None):
+        from .tools import extra_path  # tools imports this module
         env = apply_env(os.environ, self.cfg.get("env") or {}, env_overrides)
+        env["PATH"] = os.pathsep.join(extra_path() + [env.get("PATH", "")])
         try:
             proc = subprocess.run(argv, input=stdin_text, capture_output=True, text=True, env=env,
                                   cwd=self.cwd, timeout=self.timeout)

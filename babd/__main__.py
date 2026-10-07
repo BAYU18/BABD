@@ -5,9 +5,10 @@
   python -m babd use <agent> <harness> [--set key=value ...]
                                                select a harness: installs and configures it
   python -m babd setup [agent ...]             install + configure every agent's harness
+  python -m babd dashboard [--port 8800]       web panel: configure, command and watch the agents
   python -m babd ask <agent> "message"         one message to one agent
   python -m babd chat <agent>                  interactive chat with one agent
-  python -m babd run "goal" [--update-dashboard]
+  python -m babd run "goal" [--approve] [--update-dashboard]
                                                full team run: plan -> work -> CEO report
 """
 import argparse
@@ -17,7 +18,7 @@ import sys
 from .config import ROOT, load_config, load_dotenv, save_config
 from .harness import HARNESSES, create_harness, select_harness
 from .llm import LLMError
-from .team import Team, apply_report_to_dashboard
+from .team import Team, apply_run_to_config
 
 
 def main(argv=None):
@@ -34,6 +35,10 @@ def main(argv=None):
     u.add_argument("--no-setup", action="store_true", help="only change agents.json")
     st = sub.add_parser("setup", help="install and configure the harness of every (or the named) agent")
     st.add_argument("agents", nargs="*")
+    db = sub.add_parser("dashboard", help="open the web panel to configure, command and watch the agents")
+    db.add_argument("--host", default="127.0.0.1")
+    db.add_argument("--port", type=int, default=8800)
+    db.add_argument("--no-browser", action="store_true")
     a = sub.add_parser("ask", help="send one message to one agent")
     a.add_argument("agent")
     a.add_argument("message")
@@ -41,6 +46,7 @@ def main(argv=None):
     c.add_argument("agent")
     r = sub.add_parser("run", help="full team run on a goal")
     r.add_argument("goal")
+    r.add_argument("--approve", action="store_true", help="approve the deploy without asking (CEO approval gate)")
     r.add_argument("--update-dashboard", action="store_true",
                    help="write the CEO report into agents.json and regenerate workspace.svg")
     args = p.parse_args(argv)
@@ -48,6 +54,11 @@ def main(argv=None):
     if args.cmd == "harnesses":
         for kind, cls in HARNESSES.items():
             print(f"{kind:<15} {cls.label:<16} {(cls.__doc__ or '').strip().splitlines()[0]}")
+        return 0
+
+    if args.cmd == "dashboard":
+        from .dashboard.server import serve
+        serve(args.host, args.port, open_browser=not args.no_browser)
         return 0
 
     cfg = load_config()
@@ -122,27 +133,42 @@ def main(argv=None):
             return 1
 
     if args.cmd == "run":
-        try:
-            result = team.run(args.goal)
-        except LLMError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
-        rep = result["report"]
-        print("\n=== CEO REPORT ===")
-        for k in ("status", "progress", "current_goal", "active_task", "approval_needed", "blockers",
-                  "recent_result", "next_action"):
-            if k in rep:
-                print(f"{k.replace('_', ' ').upper():<16} {rep[k]}")
-        if rep.get("summary"):
-            print(f"\n{rep['summary']}")
-        print(f"\nFull output saved in {result['dir']}")
+        def show(kind, data):
+            if kind == "message":
+                body = " ".join(str(data["content"]).split())
+                print(f"  {data['from']:>9} -> {data['to']:<9} {data['kind']:<16} {body[:90]}", file=sys.stderr)
+            elif kind == "stage" and "result" not in data:
+                print(f"== {data['stage'].upper()}", file=sys.stderr)
+
+        def approver(request):
+            if args.approve:
+                return True, "auto-approved (--approve)"
+            if not sys.stdin.isatty():
+                return False, "no approval given (non-interactive; use --approve or the dashboard)"
+            answer = input(f"\nCEO approval needed: {request['question']} [y/N] ").strip().lower()
+            return answer in ("y", "yes"), "" if answer in ("y", "yes") else "rejected in the terminal"
+
+        state = team.run(args.goal, approver=approver, on_event=show)
+        if state["status"] != "done":
+            print(f"\nrun {state['status']}: {state['error']}", file=sys.stderr)
+        rep = state.get("report") or {}
+        if rep:
+            print("\n=== CEO REPORT ===")
+            for k in ("status", "progress", "qa_verdict", "fix_rounds", "deployed", "approval_needed", "blockers",
+                      "recent_result", "next_action"):
+                if k in rep:
+                    print(f"{k.replace('_', ' ').upper():<16} {rep[k]}")
+            for b in rep.get("blocker_list") or []:
+                print(f"  blocker: {b}")
+            if rep.get("summary"):
+                print(f"\n{rep['summary']}")
+        print(f"\nFull output saved in {state['dir']}")
         if args.update_dashboard:
-            save_config(apply_report_to_dashboard(cfg, rep))
+            save_config(apply_run_to_config(cfg, state))
             sys.path.insert(0, ROOT)
             import generate_workspace
             generate_workspace.main()
-        return 0
-
+        return 0 if state["status"] == "done" else 1
 
 if __name__ == "__main__":
     sys.exit(main())

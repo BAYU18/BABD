@@ -17,7 +17,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from babd import team as team_mod  # noqa: E402
+from babd import flow  # noqa: E402
 from babd.config import load_config  # noqa: E402
 from babd.harness import HarnessError, create_harness  # noqa: E402
 from babd.harness import hermes as hermes_mod  # noqa: E402
@@ -64,6 +64,8 @@ if '"assignments"' in q:
     body = '{"plan_summary": "p", "assignments": {}}'
 else:
     body = "hermes did: " + q.splitlines()[0][:40]
+    if "VERDICT: PASS or VERDICT: FAIL" in q:
+        body += "\nVERDICT: PASS"
 print("[tool] terminal ls\n┊ 💬 " + body + "\n\nsession_id: 20261007_abc")
 '''
 
@@ -407,19 +409,20 @@ class HarnessTest(unittest.TestCase):
         """Lead (direct, mocked SDK call) + Hermes + Claude Code agents in one team run."""
         replies = iter([
             '{"plan_summary": "p", "assignments": {"architect": "A", "developer": "D", "qa": "Q", "devops": "O"}}',
-            '{"status": "ACTIVE", "progress": 50, "next_action": "Review"}',
+            '{"next_action": "Review", "summary": "ok"}',
         ])
         with mock.patch("babd.harness.others.Direct.complete", side_effect=lambda *a, **k: next(replies)), \
-                mock.patch.object(team_mod, "RUNS_DIR", os.path.join(self.tmp, "runs")):
-            result = Team(self.cfg, log=lambda m: None).run("Build login")
-        self.assertTrue(result["outputs"]["architect"].startswith("hermes did:"))
-        self.assertTrue(result["outputs"]["developer"].startswith("claude did:"))
-        self.assertEqual(result["report"]["next_action"], "Review")
+                mock.patch.object(flow, "RUNS_DIR", os.path.join(self.tmp, "runs")):
+            state = Team(self.cfg, log=lambda m: None).run("Build login", approver=lambda r: (True, ""))
+        self.assertEqual(state["status"], "done", state["error"])
+        out = {m["from"]: m["content"] for m in state["messages"] if m["to"] == "lead" and m["from"] != "ceo"}
+        self.assertTrue(out["architect"].startswith("hermes did:"))
+        self.assertTrue(out["developer"].startswith("claude did:"))
+        self.assertEqual(state["report"]["next_action"], "Review")
         kinds = ["claude" if "stdin" in c else "hermes" for c in self.calls()]
         self.assertEqual(kinds, ["hermes", "claude", "hermes", "hermes"])
-        # Developer (Claude Code) got the Architect's output in its prompt
-        self.assertIn("Output from Architect", self.calls()[1]["stdin"])
-
+        # Developer (Claude Code) got the Architect's design in its prompt
+        self.assertIn("Design from Architect", self.calls()[1]["stdin"])
 
 if __name__ == "__main__":
     unittest.main()

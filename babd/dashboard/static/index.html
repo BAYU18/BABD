@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BABD Command Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><span></span><span></span></div>
+      <div>
+        <div class="eyebrow">CEO Command Center</div>
+        <div class="project-name" id="projectName">Loading…</div>
+      </div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="top-actions">
+      <button class="btn ghost" id="btnCheck" title="Send a short test message to every agent">Check agents</button>
+      <button class="btn ghost" id="btnSetup" title="Install and configure every agent's harness">Set up all</button>
+      <button class="btn ghost icon" id="btnImage" title="Workspace image" aria-label="Workspace image">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 16l5-5 4 4 3-3 6 6"/></svg>
+      </button>
+      <button class="btn ghost icon" id="btnSettings" title="Team settings" aria-label="Team settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="col-main">
+      <div class="card command">
+        <div class="card-head">
+          <h2>Give the team a goal</h2>
+          <span class="muted small">CEO → Team Lead → Architect → Developer → QA → (approval) → DevOps → report</span>
+        </div>
+        <textarea id="goal" rows="3" placeholder="e.g. Build a login page with email + password and rate limiting"></textarea>
+        <div class="command-row">
+          <label class="check"><input type="checkbox" id="autoApprove"> Approve the deploy automatically</label>
+          <label class="check"><input type="checkbox" id="updateImage" checked> Update dashboard & image after the run</label>
+          <div class="spacer"></div>
+          <button class="btn danger hidden" id="btnCancel">Stop run</button>
+          <button class="btn primary" id="btnRun">Run team</button>
+        </div>
+      </div>
+
+      <div class="section-title">
+        <h2>Agents</h2>
+        <span class="muted small">Configure each agent's role, LLM, harness, Telegram and skills, or talk to it directly.</span>
+      </div>
+      <div id="agents" class="agents"></div>
+
+      <div class="card activity">
+        <div class="card-head">
+          <h2>Activity</h2>
+          <button class="btn ghost small" id="btnClearLog">Clear</button>
+        </div>
+        <ol id="activity" class="activity-list"></ol>
+      </div>
+    </section>
+
+    <aside class="col-side">
+      <div class="card run">
+        <div class="card-head">
+          <h2>Live run</h2>
+          <select id="runHistory" aria-label="Run history"><option value="">Current run</option></select>
+        </div>
+        <div id="runBody"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- agent config drawer -->
+  <div class="scrim hidden" id="scrim"></div>
+  <aside class="drawer hidden" id="drawer" aria-labelledby="drawerTitle" role="dialog">
+    <div class="drawer-head">
+      <div>
+        <div class="eyebrow" id="drawerEyebrow">Agent config</div>
+        <h2 id="drawerTitle">Agent</h2>
+      </div>
+      <button class="btn ghost icon" id="drawerClose" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <nav class="tabs" id="tabs"></nav>
+    <form class="drawer-body" id="drawerBody" autocomplete="off"></form>
+    <div class="drawer-foot" id="drawerFoot"></div>
+  </aside>
+
+  <!-- modal (settings / image) -->
+  <div class="modal hidden" id="modal" role="dialog">
+    <div class="modal-card">
+      <div class="drawer-head">
+        <h2 id="modalTitle"></h2>
+        <button class="btn ghost icon" id="modalClose" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

@@ -9,6 +9,10 @@
     "blockers": 1,
     "recent_result": "API Completed",
     "next_action": "Run Integration Tests",
+    "require_approval": [
+      "deploy"
+    ],
+    "max_fix_rounds": 2,
     "ceo_telegram": {
       "enabled": true,
       "bot_username": "@babd_ceo_bot",
