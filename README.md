@@ -305,6 +305,28 @@ build, test plan, deploy preparation, test, deploy, report), and it is saved as
 `runs/<run>/00-task.md` for agents with file tools. In the dashboard the task shows its documents,
 and *View document* opens what the team received.
 
+## Telegram
+
+The dashboard runs real Telegram bots (long polling: no public address or webhook needed). Create
+bots with [@BotFather](https://t.me/BotFather) and paste their tokens in the dashboard; tokens go to
+`.env`, never to `agents.json` or the browser.
+
+**CEO bot** (Team settings → Telegram):
+
+- send a goal as a message → a new task; send a `.md` / `.txt` file → a task from that document (the
+  caption, if any, is the goal); send links to `.md` files → one task per link
+- approvals arrive with **Approve deploy / Reject** buttons
+- notifications (`notify`): `Approvals`, `Blockers` (failed, stopped or blocked tasks), `Reports`
+  (finished tasks), `Daily Report` (once a day at `daily_report_hour`, default 18:00)
+- `/status`, `/tasks`, `/project <id>` (where this chat's tasks go), `/cancel <task id>`
+
+**Agent bots** (Configure → Telegram, per agent): chat with that agent, like the dashboard's Chat
+(`/reset` starts a new conversation).
+
+Only users in **Allowed users** (numeric ids or @usernames) are served, for every bot and every button.
+Anyone else gets a reply with their Telegram id, so you can add it. The bots run while
+`babd dashboard` runs; the dashboard shows whether each bot is connected.
+
 ## Many tasks at once, and agents in parallel
 
 BABD runs several tasks (goals) at the same time, and the agents work in parallel:

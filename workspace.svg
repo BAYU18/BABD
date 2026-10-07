@@ -597,8 +597,10 @@
 <text x="1446.5" y="1533.5" font-size="12" fill="#2aabee" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Approvals</text>
 <rect x="1495.0" y="1516.0" width="78.0" height="26" rx="13" fill="#2aabee" opacity="0.14" />
 <text x="1534.0" y="1533.5" font-size="12" fill="#2aabee" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Blockers</text>
-<rect x="1579.0" y="1516.0" width="106.0" height="26" rx="13" fill="#2aabee" opacity="0.14" />
-<text x="1632.0" y="1533.5" font-size="12" fill="#2aabee" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Daily Report</text>
+<rect x="1579.0" y="1516.0" width="71.0" height="26" rx="13" fill="#2aabee" opacity="0.14" />
+<text x="1614.5" y="1533.5" font-size="12" fill="#2aabee" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Reports</text>
+<rect x="1656.0" y="1516.0" width="106.0" height="26" rx="13" fill="#2aabee" opacity="0.14" />
+<text x="1709.0" y="1533.5" font-size="12" fill="#2aabee" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Daily Report</text>
 <rect x="40" y="1612" width="1840" height="160" rx="18" fill="#15223a" stroke="#26385a" stroke-width="1" opacity="1" />
 <text x="64" y="1648" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">DEVELOPMENT WORKFLOW</text>
 <rect x="64.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />

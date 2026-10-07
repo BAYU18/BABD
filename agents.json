@@ -40,8 +40,10 @@
       "notify": [
         "Approvals",
         "Blockers",
+        "Reports",
         "Daily Report"
-      ]
+      ],
+      "allowed_users": []
     }
   },
   "projects": [],

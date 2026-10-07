@@ -40,6 +40,11 @@ def resolve_api_key(llm):
     return None
 
 
+def resolve_env(name):
+    """The value of an environment variable named in the config (None when unset or unnamed)."""
+    return (os.environ.get(name) or None) if name else None
+
+
 def skill_slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 

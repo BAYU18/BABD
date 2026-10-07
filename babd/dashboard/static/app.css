@@ -531,3 +531,4 @@ button.chip { font-family: inherit; cursor: pointer; }
 .proj-list { display: grid; gap: 8px; }
 .proj-row { display: grid; gap: 6px; border: 1px solid var(--stroke); border-radius: 10px; padding: 8px 10px; background: var(--bg-2); }
 .proj-row .row2 { gap: 6px; }
+.tg-notify { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }

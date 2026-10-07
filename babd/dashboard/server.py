@@ -19,8 +19,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from .. import flow
-from ..config import ROOT, load_config, resolve_api_key, save_config, set_env_var
-from .. import permissions, projects, skillpacks, taskdocs
+from ..config import ROOT, load_config, resolve_api_key, resolve_env, save_config, set_env_var
+from .. import permissions, projects, skillpacks, taskdocs, telegram
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
 from ..log import add_listener, log
@@ -104,6 +104,8 @@ class Dashboard:
         self.queue = []            # tasks waiting for a free task slot (project.max_parallel_tasks)
         self.failed_starts = []    # queued tasks that could not start (e.g. a config error)
         self.last_run = None       # the run started last (the dashboard's "current run")
+        self.telegram = telegram.Manager(self)
+        self.telegram_on = False   # serve() turns the bots on; tests and scripts don't
         add_listener(lambda source, msg: self.hub.publish("log", {"source": source, "msg": msg, "at": time.time()}))
 
     # -- config ------------------------------------------------------------------------------
@@ -124,6 +126,8 @@ class Dashboard:
             except Exception as e:  # the image is a nice-to-have; a config save must still succeed
                 log(f"could not redraw workspace.svg: {e}", "dashboard")
         self.hub.publish("config", {"at": time.time()})
+        if self.telegram_on:
+            threading.Thread(target=self.telegram.reconcile, daemon=True).start()
 
     def agent_cfg(self, cfg, agent_id):
         for a in cfg["agents"]:
@@ -141,6 +145,7 @@ class Dashboard:
                             "enabled": sp.enabled(cfg["project"]), "enforce": sp.enforce(cfg["project"])}
                            for sp in skillpacks.packs()],
             "general_skills": skillpacks.GENERAL_RECOMMENDED,
+            "telegram": self.telegram_state(cfg),
             "projects": projects.projects(cfg),
             "permissions": {"profiles": permissions.PROFILES, "sandboxes": list(permissions.SANDBOXES),
                             "defaults": permissions.DEFAULT_PROFILE},
@@ -191,6 +196,10 @@ class Dashboard:
                             a["llm"].pop(k, None)
                         else:
                             a["llm"][k] = v
+            if body.get("telegram_token"):  # bot tokens go to .env, like API keys
+                tg = a.setdefault("telegram", {})
+                tg.setdefault("token_env", f"TELEGRAM_{agent_id.upper()}_BOT_TOKEN")
+                set_env_var(tg["token_env"], str(body["telegram_token"]).strip())
             if body.get("api_key") is not None:
                 # Keys go to .env under the agent's api_key_env name, never into agents.json.
                 env_name = a["llm"].get("api_key_env") or f"{agent_id.upper()}_LLM_API_KEY"
@@ -395,6 +404,37 @@ class Dashboard:
         if len(docs) > 20:
             raise ApiError(400, "at most 20 documents at once")
         return docs
+
+    def telegram_state(self, cfg):
+        ceo = cfg["project"].get("ceo_telegram") or {}
+        return {"running": self.telegram_on, "bots": self.telegram.status(),
+                "ceo": {k: ceo.get(k) for k in ("enabled", "bot_username", "token_env", "allowed_users", "notify",
+                                               "daily_report_hour")} | {"token_set": bool(resolve_env(ceo.get("token_env")))},
+                "agents": {a["id"]: bool(resolve_env((a.get("telegram") or {}).get("token_env"))) for a in cfg["agents"]},
+                "notify_options": list(telegram.NOTIFY)}
+
+    def update_telegram(self, body):
+        with self.cfg_lock:
+            cfg = self.load()
+            ceo = cfg["project"].setdefault("ceo_telegram", {})
+            if "enabled" in body:
+                ceo["enabled"] = bool(body["enabled"])
+            if "bot_username" in body:
+                ceo["bot_username"] = str(body["bot_username"])[:64]
+            if "allowed_users" in body:
+                users = body["allowed_users"]
+                if isinstance(users, str):
+                    users = users.replace(",", " ").split()
+                ceo["allowed_users"] = [str(u).strip() for u in users if str(u).strip()][:50]
+            if "notify" in body:
+                ceo["notify"] = [n for n in body["notify"] if n in telegram.NOTIFY]
+            if "daily_report_hour" in body:
+                ceo["daily_report_hour"] = max(0, min(23, int(body["daily_report_hour"])))
+            if body.get("token"):
+                ceo.setdefault("token_env", "TELEGRAM_CEO_BOT_TOKEN")
+                set_env_var(ceo["token_env"], str(body["token"]).strip())
+            self.save(cfg)
+            return self.telegram_state(cfg)
 
     def update_projects(self, body):
         """Replace the project list (and the default project)."""
@@ -739,6 +779,8 @@ def make_handler(dash, token, allowed_hosts):
                 docs = d.read_documents(b.get("documents"), b.get("links"))
                 return d.start_tasks(goals, bool(b.get("auto_approve")), b.get("update_dashboard", True), docs,
                                      b.get("project"))
+            if method == "PUT" and parts == ["telegram"]:
+                return d.update_telegram(self.body())
             if method == "PUT" and parts == ["projects"]:
                 return d.update_projects(self.body())
             if parts[:1] == ["runs"]:
@@ -790,6 +832,8 @@ def make_handler(dash, token, allowed_hosts):
 def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=None):
     token = token or secrets.token_urlsafe(24)
     dash = Dashboard(cfg_path)
+    dash.telegram_on = True
+    dash.telegram.reconcile()  # Telegram bots whose token is set start now
     local = host in ("127.0.0.1", "localhost", "::1")
     allowed = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"} if local else None
     server = ThreadingHTTPServer((host, port), make_handler(dash, token, allowed))

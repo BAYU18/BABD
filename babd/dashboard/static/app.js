@@ -147,6 +147,14 @@ function renderRunButtons() {
 }
 
 // ---- top bar -----------------------------------------------------------------------------
+function tgStatus(key) {
+  const tg = S.telegram || {};
+  const bot = tg.bots?.[key];
+  if (!tg.running) return `<div class="note">Bots run while the dashboard runs (<code>babd dashboard</code>).</div>`;
+  if (!bot) return `<div class="note">Bot not running: turn it on and set its token.</div>`;
+  return `<div class="note ${bot.ok ? "" : "warn"}">${bot.ok ? "🟢" : "🔴"} ${esc(bot.detail || "")}</div>`;
+}
+
 function projectRow(pr, isNew = false) {
   const merge = [["on_approval", "Merge after QA passes and you approve the deploy"], ["on_pass", "Merge when QA passes"], ["never", "Never merge: keep a branch to review"]];
   return `<div class="proj-row" data-id="${esc(isNew ? "" : pr.id || "")}">
@@ -684,7 +692,9 @@ function renderConfig() {
       <label class="check"><input type="checkbox" name="tg_enabled" ${t.enabled ? "checked" : ""}> Telegram gateway enabled</label>
       ${field("Bot username", text("tg_bot_username", t.bot_username, "@my_agent_bot"))}
       ${field("Token variable", text("tg_token_env", t.token_env, "TELEGRAM_DEV_BOT_TOKEN"), "Environment variable holding the BotFather token.")}
-      <div class="note warn">Shown on the dashboard and workspace image. The Telegram bot itself is not connected yet.</div>`;
+      ${field("Bot token", `<input type="password" name="tg_token" placeholder="${S.telegram?.agents?.[f.id] ? "•••••••• set — type to replace" : "paste the token from @BotFather"}" autocomplete="new-password">`, "Saved to .env under the variable above, never to agents.json.")}
+      ${tgStatus(f.id)}
+      <div class="note">Talk to this agent from Telegram: send the bot a message, it answers like the dashboard's Chat. Only the users allowed in Team settings → Telegram can use it.</div>`;
   } else if (drawer.tab === "skills") {
     const st = recStatus(f);
     const allOn = st.have === st.total;
@@ -794,6 +804,7 @@ function readForm() {
   } else if (tab === "telegram") {
     form.telegram = { ...(form.telegram || {}), enabled: !!$('[name="tg_enabled"]').checked,
       bot_username: get("tg_bot_username"), token_env: get("tg_token_env") };
+    form.telegram_token = get("tg_token") || form.telegram_token;
   }
 }
 
@@ -808,9 +819,10 @@ async function saveConfig(setup) {
     llm: Object.fromEntries(["provider", "api", "base_url", "model", "effort", "api_key_env", "max_tokens"].map((k) => [k, f.llm[k] ?? ""])),
   };
   if (f.api_key) body.api_key = f.api_key;
+  if (f.telegram_token) body.telegram_token = f.telegram_token;
   try {
     await api("PUT", `agents/${drawer.agentId}`, body);
-    form.api_key = "";
+    form.api_key = ""; form.telegram_token = "";
     toast(`${f.short_name || f.name} saved`, "ok");
     if (setup) trackJob(await api("POST", `agents/${drawer.agentId}/setup`));
     await refresh();
@@ -890,6 +902,17 @@ $("#btnSettings").addEventListener("click", () => {
     ${PACKS().map((k) => `<div class="field"><label>${esc(k.title)} (${esc(k.source)})</label>
       <label class="check"><input type="checkbox" id="pk_en_${k.key}" ${(p[k.key]?.enabled ?? true) ? "checked" : ""}> Agents use their ${esc(k.title)} on every step they apply to</label>
       <label class="check"><input type="checkbox" id="pk_enf_${k.key}" ${(p[k.key]?.enforce ?? true) ? "checked" : ""}> Ask an agent to redo a step once when its answer skips one of these skills</label></div>`).join("")}
+    <div class="field"><label>Telegram: CEO bot</label>
+      <div class="help">Send the bot a goal, a .md file or a link: it becomes a task. Approvals arrive with Approve / Reject buttons. Create a bot with @BotFather and paste its token.</div>
+      <label class="check"><input type="checkbox" id="tg_enabled" ${S.telegram?.ceo?.enabled ? "checked" : ""}> CEO bot on</label>
+      <div class="row2"><input type="text" id="tg_username" value="${esc(S.telegram?.ceo?.bot_username || "")}" placeholder="@my_ceo_bot">
+        <input type="password" id="tg_token" placeholder="${S.telegram?.ceo?.token_set ? "•••••••• token set — type to replace" : "bot token from @BotFather"}" autocomplete="new-password"></div>
+      <input type="text" id="tg_users" value="${esc((S.telegram?.ceo?.allowed_users || []).join(", "))}" placeholder="Allowed Telegram users: numeric ids or @usernames, comma separated">
+      <div class="help">Only these users can use the CEO bot and the agent bots. Anyone else who writes to a bot is told their id, so you can add it here.</div>
+      <div class="tg-notify">${(S.telegram?.notify_options || []).map((n) => `<label class="check"><input type="checkbox" name="tg_notify" value="${esc(n)}" ${(S.telegram?.ceo?.notify || S.telegram?.notify_options || []).includes(n) ? "checked" : ""}> ${esc(n)}</label>`).join("")}
+        <label class="project-pick">Daily report at <input type="number" id="tg_hour" min="0" max="23" value="${esc(S.telegram?.ceo?.daily_report_hour ?? 18)}" style="width:64px">:00</label></div>
+      ${tgStatus("ceo")}
+      <div class="row"><button type="button" class="btn small primary" id="tgSave">Save Telegram</button></div></div>
     <div class="field"><label>Projects (where the agents work)</label>
       <div class="help">Each task works in its own git branch of the chosen project, outside the BABD installation. When the task ends BABD commits the work and merges it (by the merge rule) into the project's branch.</div>
       <div class="proj-list" id="projList">${(S.projects || []).map((pr) => projectRow(pr)).join("")}</div>
@@ -898,6 +921,14 @@ $("#btnSettings").addEventListener("click", () => {
         <button type="button" class="btn small primary" id="projSave">Save projects</button></div></div>
     <div class="note">Flow: ${S.flow.stages.map((s) => esc(s.label)).join(" → ")}. Specialists only talk to the Team Lead; only the Team Lead reports to the CEO.</div>
     <div style="display:flex;justify-content:flex-end"><button class="btn primary" id="p_save">Save</button></div>`, true);
+  $("#tgSave").onclick = async () => {
+    try {
+      await api("PUT", "telegram", { enabled: $("#tg_enabled").checked, bot_username: $("#tg_username").value.trim(),
+        token: $("#tg_token").value.trim() || undefined, allowed_users: $("#tg_users").value,
+        notify: [...document.querySelectorAll('[name="tg_notify"]:checked')].map((c) => c.value), daily_report_hour: Number($("#tg_hour").value) });
+      toast("Telegram saved", "ok"); await refresh(); setTimeout(async () => { await refresh(); }, 2500);
+    } catch (err) { toast(err.message, "bad"); }
+  };
   $("#projAdd").onclick = () => $("#projList").insertAdjacentHTML("beforeend", projectRow({ merge: "on_approval" }, true));
   $("#projList").onclick = (e) => { const rm = e.target.closest("[data-proj-rm]"); if (rm) rm.closest(".proj-row").remove(); };
   $("#projSave").onclick = async () => {
