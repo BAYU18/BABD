@@ -1,5 +1,7 @@
 # AI Software Development Workspace
 
+[![tests](https://github.com/bayu18/babd/actions/workflows/tests.yml/badge.svg)](https://github.com/bayu18/babd/actions/workflows/tests.yml)
+
 An AI software company: one human CEO supervises a team of 5 AI agents. Each agent runs on its own
 harness (direct API, Hermes Agent, Claude Code, …) with its own LLM (Claude or any OpenAI-compatible
 endpoint), the agents work through a fixed CEO → Team Lead → specialists flow, and a web dashboard
@@ -680,6 +682,18 @@ and **AGENT STATUS** are calculated from this file automatically.
 > Prefer `api_key_env` over `api_key`. If you do write a real key with `api_key`,
 > do not commit `agents.json` to a public repository. The LLM status dot is green
 > only when `base_url`, `model` and a key are all set; a missing key shows `KEY not set` in red.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests
+```
+
+GitHub Actions (`.github/workflows/tests.yml`) runs them on every push and pull request, on Python
+3.10 to 3.13, plus the example project's tests, a check that the workspace image still draws, and a
+syntax check of the dashboard's JavaScript. The tests use a fixed configuration
+(`tests/fixtures/agents.json`), fake `hermes` / `claude` / Telegram / LLM servers, and never call a
+real model.
 
 ## Regenerate
 
