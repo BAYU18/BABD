@@ -676,7 +676,11 @@ function renderConfig() {
       ${field("API key variable", text("api_key_env", llm.api_key_env, "ANTHROPIC_API_KEY"), "Name of the environment variable that holds the key.")}
       ${field("API key", `<input type="password" name="api_key" placeholder="${llm.api_key_set ? "•••••••• set — type to replace" : "paste the key"}" autocomplete="new-password">`,
         "Saved to .env (file mode 600) under the variable above. Never written to agents.json or sent back to this page.")}
-      ${llm.api_key_inline ? `<div class="note warn">agents.json contains an inline api_key for this agent. Saving a key here moves it to .env.</div>` : ""}`;
+      ${llm.api_key_inline ? `<div class="note warn">agents.json contains an inline api_key for this agent. Saving a key here moves it to .env.</div>` : ""}
+      <div class="field"><label>Fallback model (optional)</label>
+        <div class="help">When this model keeps failing (after the retries), the step is tried on this one. Empty fields use the agent's own settings.</div></div>
+      <div class="row2">${text("fb_model", llm.fallback?.model, "e.g. a cheaper or local model")}${text("fb_base_url", llm.fallback?.base_url, "Base URL (optional)")}</div>
+      <div class="row2">${select("fb_api", llm.fallback?.api || "", [["", "Same API style"], ["anthropic", "Anthropic (Claude)"], ["openai", "OpenAI-compatible"]])}${text("fb_key_env", llm.fallback?.api_key_env, "Key variable (optional)")}</div>`;
   } else if (drawer.tab === "harness") {
     const meta = S.harnesses[h.type] || { options: [], doc: "" };
     html = `
@@ -788,6 +792,9 @@ function readForm() {
     for (const k of ["provider", "api", "base_url", "model", "effort", "api_key_env"]) form.llm[k] = get(k);
     form.llm.max_tokens = get("max_tokens") ? Number(get("max_tokens")) : "";
     form.api_key = get("api_key") || form.api_key;
+    const fb = Object.fromEntries([["model", "fb_model"], ["base_url", "fb_base_url"], ["api", "fb_api"], ["api_key_env", "fb_key_env"]]
+      .map(([k, n]) => [k, (get(n) || "").trim()]).filter(([, v]) => v));
+    form.llm.fallback = fb.model ? fb : "";
   } else if (tab === "harness") {
     const type = get("harness_type");
     const h = { type };
@@ -823,7 +830,7 @@ async function saveConfig(setup) {
     skills: f.skills, telegram: f.telegram, harness: f.harness, ...(f.parallel ? { parallel: f.parallel } : {}),
     ...(f.permissions ? { permissions: f.permissions, sandbox: f.sandbox || "none" } : {}),
     ...Object.fromEntries(PACKS().filter((p) => f[p.key]).map((p) => [p.key, f[p.key]])),
-    llm: Object.fromEntries(["provider", "api", "base_url", "model", "effort", "api_key_env", "max_tokens"].map((k) => [k, f.llm[k] ?? ""])),
+    llm: Object.fromEntries(["provider", "api", "base_url", "model", "effort", "api_key_env", "max_tokens", "fallback"].map((k) => [k, f.llm[k] ?? ""])),
   };
   if (f.api_key) body.api_key = f.api_key;
   if (f.telegram_token) body.telegram_token = f.telegram_token;
@@ -895,6 +902,7 @@ $("#btnSettings").addEventListener("click", () => {
   openModal("Team settings", `
     ${field("Project name", text("p_name", p.name))}
     <label class="check"><input type="checkbox" id="p_approval" ${(p.require_approval || []).includes("deploy") ? "checked" : ""}> CEO must approve before DevOps deploys</label>
+    ${field("Retries", `<input type="number" id="p_retries" min="1" max="10" value="${esc(p.retry?.attempts ?? 3)}">`, "Tries per step when the LLM has a temporary error (time-out, rate limit, 5xx, lost connection), waiting longer each time; then the agent's fallback model.")}
     ${field("QA fix rounds", `<input type="number" id="p_rounds" min="0" max="5" value="${esc(p.max_fix_rounds ?? 2)}">`, "How many times a failed QA report goes back to the Developer before the run is blocked.")}
     <div class="field"><label>Parallel work</label>
       ${field("Tasks at the same time", `<input type="number" id="p_tasks" min="1" max="10" value="${esc(p.max_parallel_tasks ?? 3)}">`, "More tasks wait in the queue. A task waiting for your approval does not count.")}
@@ -954,6 +962,7 @@ $("#btnSettings").addEventListener("click", () => {
     try {
       await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
         max_parallel_tasks: Number($("#p_tasks").value), parallel_prep: $("#p_prep").checked,
+        retry: { attempts: Number($("#p_retries").value) },
         gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked },
         ...Object.fromEntries(PACKS().map((k) => [k.key, { enabled: $(`#pk_en_${k.key}`).checked, enforce: $(`#pk_enf_${k.key}`).checked }])) });
       toast("Settings saved", "ok"); closeModal(); refresh();
@@ -1133,7 +1142,7 @@ function renderTasks() {
     const stepRows = (t.steps || []).map((st) => {
       const waited = st.started_at ? (ms(st.started_at) - ms(st.queued_at)) / 1000 : null;
       return `<tr><td><span class="dot" style="background:${colorOf(st.agent)}"></span>${esc(nameOf(st.agent))}</td><td>${esc(KIND_LABELS[st.kind] || st.kind)}</td>
-        <td>${pill(st.status, STATUS_COLORS[st.status] || (st.status === "failed" ? "var(--bad)" : "var(--dim)"), st.status === "working")}</td>
+        <td>${pill(st.status, STATUS_COLORS[st.status] || (st.status === "failed" ? "var(--bad)" : "var(--dim)"), st.status === "working")}${st.retries ? ` <span class="muted" title="${esc(st.last_error || "")}">↻ ${st.retries}</span>` : ""}${st.fallback ? ` <span class="muted" title="${esc(st.last_error || "")}">fallback ${esc(st.fallback)}</span>` : ""}</td>
         <td>${waited != null && waited >= 1 ? fmtDur(waited) : "—"}</td><td>${st.seconds != null ? fmtDur(st.seconds) : st.status === "working" ? `<span data-since="${esc(st.started_at)}"></span>` : "—"}</td></tr>`;
     }).join("");
     return `<article class="task" data-task="${esc(t.id)}">
@@ -1357,6 +1366,7 @@ function connect() {
     if (d.event === "memory") flashMemory(d.data.agent, d.data.op);
     if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok");
     if (d.event === "memory") logLine("gbrain", `${nameOf(d.data.agent)} ${d.data.op === "read" ? `read ${d.data.facts} fact(s), ${d.data.pages} page(s)` : `wrote ${d.data.page}`}`);
+    if (d.event === "retry") logLine("retry", `${nameOf(d.data.agent)} ${d.data.kind}: ${d.data.fallback ? `trying fallback model ${d.data.fallback}` : `retry ${d.data.attempt}/${d.data.of} in ${d.data.wait}s`} (${d.data.error})`, "bad");
     if (d.event === "finished") { toast(`Task ${d.data.status}: ${d.summary.goal.slice(0, 50)}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
     renderTop(); renderAgents(); renderRun(); renderRunButtons(); renderNav();
   });

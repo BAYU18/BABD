@@ -4,7 +4,7 @@ import datetime
 from .config import load_skill_text
 from .flow import Run, extract_json  # noqa: F401  (extract_json re-exported for callers)
 from .gbrain import BrainError, GBrain, format_memory, one_line
-from . import skillpacks
+from . import resilience, skillpacks
 from .harness import create_harness
 
 
@@ -21,6 +21,9 @@ class Agent:
         self.skill_packs = skillpacks.agent_skills(cfg, project)  # {pack: skills}, only enabled packs
         self.superpowers = self.skill_packs.get("superpowers", [])
         self.history = []
+        self.retry = resilience.settings(project)
+        self.listener = resilience.Listener()  # set by the run around each step (retry events, cancel)
+        self._fallback = None
 
     @property
     def main_task(self):
@@ -49,8 +52,37 @@ class Agent:
         return "\n".join(lines)
 
     def ask(self, message, **kwargs):
-        """One request straight to the harness: no memory (used for pings and by work())."""
-        return self.harness.complete(self.system_prompt(), [{"role": "user", "content": message}], **kwargs)
+        """One request to the harness, no memory (used for pings and by work()); retried on temporary
+        errors, then tried on the fallback model when the agent has one."""
+        return self.complete(self.system_prompt(), [{"role": "user", "content": message}], **kwargs)
+
+    def complete(self, system, messages, **kwargs):
+        on_retry, cancelled = self.listener.on_retry, self.listener.cancelled
+        try:
+            return resilience.call(lambda: self.harness.complete(system, messages, **kwargs), self.retry,
+                                   on_retry, cancelled)
+        except Exception as e:
+            fb = self.fallback_harness()
+            if fb is None or (cancelled is not None and cancelled.is_set()):
+                raise
+            if on_retry:
+                on_retry({"fallback": fb.llm.get("model"), "error": str(e)[:300]})
+            return resilience.call(lambda: fb.complete(system, messages, **kwargs), self.retry, on_retry, cancelled)
+
+    def fallback_harness(self):
+        """The agent's harness on its fallback model (llm.fallback), or None."""
+        fb = self.cfg.get("llm", {}).get("fallback")
+        if not fb or not fb.get("model"):
+            return None
+        if self._fallback is None:
+            llm = {k: v for k, v in self.cfg["llm"].items() if k != "fallback"}
+            if fb.get("api_key_env") and "api_key" in llm:
+                llm.pop("api_key")
+            self._fallback = create_harness({**self.cfg, "llm": {**llm, **fb}}, self.project or None)
+            self._fallback.extra_env = self.harness.extra_env
+            self._fallback.skill_packs = self.harness.skill_packs
+        self._fallback.cfg = {**self._fallback.cfg, "cwd": self.harness.cfg.get("cwd")}  # this run's worktree
+        return self._fallback
 
     def work(self, prompt, *, query, page_slug, page_title, entity, provenance, task="", fact=None, on_memory=None,
              skills=(), on_skills=None, **kwargs):
@@ -121,14 +153,14 @@ class Agent:
             turns = list(self.history)
             if memory is not None:
                 turns[-1] = {"role": "user", "content": f"{format_memory(memory)}\n\n---\n\n{message}"}
-            reply = self.harness.complete(self.system_prompt(), turns)
+            reply = self.complete(self.system_prompt(), turns)
             fact = f"CEO asked {self.name}: {one_line(message, 140)} -> {one_line(reply, 200)}"
             written = self._brain_step("write", lambda: self.brain.remember(
                 fact, f"babd/agents/{self.id}", f"babd chat with {self.name}, {now()}"))
             if written is not None and on_memory:
                 on_memory({"agent": self.id, "op": "write", "entity": f"babd/agents/{self.id}", "fact": fact, "at": now()})
         else:
-            reply = self.harness.complete(self.system_prompt(), self.history)
+            reply = self.complete(self.system_prompt(), self.history)
         self.history.append({"role": "assistant", "content": reply})
         return reply
 

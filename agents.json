@@ -18,6 +18,11 @@
     "use_projects": true,
     "default_project": "default",
     "auto_resume": true,
+    "retry": {
+      "attempts": 3,
+      "base_delay": 5,
+      "max_delay": 60
+    },
     "gbrain": {
       "enabled": true,
       "strict": true,

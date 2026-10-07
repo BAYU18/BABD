@@ -361,6 +361,16 @@ class Run:
             if self.state["agents"][agent_id]["status"] == "queued":
                 self.state["agents"][agent_id].update(status="working", task=task)
         self.emit("step", dict(step))
+
+        def on_retry(info):  # temporary LLM errors: retried, then the agent's fallback model
+            with self.lock:
+                if info.get("fallback"):
+                    step["fallback"] = info["fallback"]
+                else:
+                    step["retries"] = step.get("retries", 0) + 1
+                step["last_error"] = info.get("error")
+            self.emit("retry", {"agent": agent_id, "kind": kind, **info})
+        agent.listener.on_retry, agent.listener.cancelled = on_retry, self.cancelled
         try:
             out = agent.work(prompt, query=(self.goal, task), task=task, page_title=f"{agent.name} · {kind} · {goal_short}",
                              page_slug=f"babd/runs/{self.id}/{n:02d}-{agent_id}-{kind}",
@@ -373,6 +383,7 @@ class Run:
             result = "failed"
             raise
         finally:
+            agent.listener.on_retry = agent.listener.cancelled = None
             self.slots.release(agent_id)
             with self.lock:
                 step.update(status=result, finished_at=now(), seconds=round(time.monotonic() - started, 1))

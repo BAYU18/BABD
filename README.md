@@ -317,6 +317,24 @@ and *View document* opens what the team received.
   still running are marked *interrupted* and, with `project.auto_resume` (default on), queued again
   to continue. A run still alive in another BABD process (e.g. `babd run`) is left alone.
 
+## Retries and fallback models
+
+A temporary LLM error (time-out, rate limit, 5xx, lost connection, an empty answer) no longer fails
+the task: the step is tried again up to `project.retry.attempts` times (default 3), waiting 5 s, 10 s,
+20 s … (at most `max_delay`). Errors another try cannot fix (wrong key, unknown model, a refusal) are
+not retried.
+
+When the agent's own model still fails, the step goes to its **fallback model** (Configure → LLM →
+Fallback model, or `llm.fallback` in `agents.json`; fields left out are the agent's own):
+
+```json
+"llm": {"provider": "Custom", "api": "openai", "base_url": "http://my-llm:20128/v1", "model": "ag-hermes",
+        "api_key_env": "KEY1", "fallback": {"model": "qwen2.5-coder:7b", "base_url": "http://localhost:11434/v1"}}
+```
+
+Each step records its retries and whether the fallback answered (task board → a task's steps, and
+the activity log).
+
 ## Telegram
 
 The dashboard runs real Telegram bots (long polling: no public address or webhook needed). Create

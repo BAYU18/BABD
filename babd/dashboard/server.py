@@ -31,7 +31,8 @@ EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
                "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace")
-LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback")
+LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
+FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
 
 class ApiError(Exception):
@@ -189,6 +190,13 @@ class Dashboard:
                     if body[k] not in allowed:
                         raise ApiError(400, f"{k} must be one of {', '.join(allowed)}")
                     a[k] = body[k]
+            fb = (body.get("llm") or {}).get("fallback")
+            if fb not in (None, ""):
+                if not isinstance(fb, dict) or not str(fb.get("model") or "").strip():
+                    raise ApiError(400, "llm.fallback needs at least a model")
+                if fb.get("api") not in (None, "", "anthropic", "openai"):
+                    raise ApiError(400, "llm.fallback.api must be anthropic or openai")
+                body["llm"]["fallback"] = {k: str(fb[k]).strip() for k in FALLBACK_FIELDS if str(fb.get(k) or "").strip()}
             if "llm" in body:
                 for k in LLM_FIELDS:
                     if k in body["llm"]:
@@ -245,6 +253,11 @@ class Dashboard:
                         g[k] = bool(body["gbrain"][k])
             if "max_fix_rounds" in body:
                 p["max_fix_rounds"] = max(0, min(5, int(body["max_fix_rounds"])))
+            if isinstance(body.get("retry"), dict):
+                r = p.setdefault("retry", {})
+                for k, lo, hi in (("attempts", 1, 10), ("base_delay", 0, 300), ("max_delay", 0, 3600)):
+                    if k in body["retry"]:
+                        r[k] = max(lo, min(hi, float(body["retry"][k]) if k != "attempts" else int(body["retry"][k])))
             if "max_parallel_tasks" in body:
                 p["max_parallel_tasks"] = max(1, min(10, int(body["max_parallel_tasks"])))
             if "parallel_prep" in body:
