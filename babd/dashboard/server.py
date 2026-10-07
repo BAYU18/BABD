@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, save_config, set_env_var
-from .. import projects, skillpacks, taskdocs
+from .. import permissions, projects, skillpacks, taskdocs
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
 from ..log import add_listener, log
@@ -82,6 +82,10 @@ def public_agent(a):
     for sp in skillpacks.packs():  # the lists in effect (the role's recommended ones when none is set)
         a[sp.key] = sp.assigned(a)
     a["skill_status"] = skillpacks.recommendation_status(a)
+    try:
+        a["permissions"], a["sandbox"] = permissions.profile_of(a), permissions.sandbox_of(a)
+    except permissions.PermissionsError:
+        pass
     return a
 
 
@@ -138,6 +142,8 @@ class Dashboard:
                            for sp in skillpacks.packs()],
             "general_skills": skillpacks.GENERAL_RECOMMENDED,
             "projects": projects.projects(cfg),
+            "permissions": {"profiles": permissions.PROFILES, "sandboxes": list(permissions.SANDBOXES),
+                            "defaults": permissions.DEFAULT_PROFILE},
             "default_project": cfg["project"].get("default_project") or projects.DEFAULT_ID,
             "workflow": cfg.get("workflow", []),
             "agents": [public_agent(a) for a in cfg["agents"]],
@@ -172,6 +178,11 @@ class Dashboard:
                     a[k] = body[k]
             if "parallel" in body:
                 a["parallel"] = max(1, min(8, int(body["parallel"])))
+            for k, allowed in (("permissions", permissions.PROFILES), ("sandbox", permissions.SANDBOXES)):
+                if k in body:
+                    if body[k] not in allowed:
+                        raise ApiError(400, f"{k} must be one of {', '.join(allowed)}")
+                    a[k] = body[k]
             if "llm" in body:
                 for k in LLM_FIELDS:
                     if k in body["llm"]:

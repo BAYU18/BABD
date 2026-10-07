@@ -32,6 +32,9 @@ class Harness:
         self.agent_id = agent_cfg["id"]
         self.llm = agent_cfg["llm"]
         self.cfg = harness_config(agent_cfg)
+        from .. import permissions
+        self.permissions = permissions.profile_of(agent_cfg)   # plan / ask / workspace / full
+        self.sandbox = permissions.sandbox_of(agent_cfg)       # none / docker
 
     def complete(self, system, messages, max_tokens=None, effort=None):
         raise NotImplementedError

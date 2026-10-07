@@ -242,6 +242,7 @@ function agentCard(a) {
         <span class="chip" title="${esc(a.harness_summary)}">Harness <b>${esc(harnessLabel)}</b></span>
         <span class="chip" title="${esc(llm.base_url || "")}">LLM <b>${esc(llm.model)}</b></span>
         <span class="chip ${llm.api_key_set ? "ok" : "bad"}">${llm.api_key_set ? "key set" : "no key"}</span>
+        ${a.permissions ? `<span class="chip" title="${esc(S.permissions?.profiles[a.permissions] || "")}">🔒 <b>${esc(a.permissions)}</b>${a.sandbox === "docker" ? " · docker" : ""}</span>` : ""}
         ${recChip(a)}
         ${packsChip(a)}
         ${a.telegram?.enabled ? `<span class="chip">Telegram <b>${esc(a.telegram.bot_username)}</b></span>` : ""}
@@ -672,6 +673,9 @@ function renderConfig() {
         if (type === "number") return field(key, `<input type="number" name="h_${key}" value="${esc(v ?? "")}">`, help);
         return field(key, text(`h_${key}`, v), help);
       }).join("")}
+      <div class="row2">${field("Permissions", select("permissions", f.permissions, Object.entries(S.permissions.profiles).map(([k]) => [k, k + (S.permissions.defaults[f.id] === k ? " (recommended)" : "")])),
+          esc(S.permissions.profiles[f.permissions] || ""))}
+        ${field("Sandbox", select("sandbox", f.sandbox || "none", [["none", "None"], ["docker", "Docker (needs Docker)"]]), "Docker: a Hermes agent's commands run in a container that only sees the task's worktree.")}</div>
       <div class="note">Installed and configured automatically: <b>Save & set up</b> installs the program if needed and writes this agent's config, using the LLM from the LLM tab.</div>
       <div class="note">${esc(agentById(drawer.agentId).harness_summary)}</div>`;
   } else if (drawer.tab === "telegram") {
@@ -783,6 +787,8 @@ function readForm() {
       else h[key] = el.value.trim();
     }
     form.harness = h;
+    form.permissions = get("permissions") || form.permissions;
+    form.sandbox = get("sandbox") || form.sandbox;
   } else if (tab === "skills") {
     for (const p of PACKS()) form[p.key] = p.catalog.map((c) => c.name).filter((n) => $(`[name="pk_${p.key}_${CSS.escape(n)}"]`)?.checked);
   } else if (tab === "telegram") {
@@ -797,6 +803,7 @@ async function saveConfig(setup) {
   const body = {
     name: f.name, short_name: f.short_name, main_task: f.main_task, sub_tasks: f.sub_tasks, status: f.status,
     skills: f.skills, telegram: f.telegram, harness: f.harness, ...(f.parallel ? { parallel: f.parallel } : {}),
+    ...(f.permissions ? { permissions: f.permissions, sandbox: f.sandbox || "none" } : {}),
     ...Object.fromEntries(PACKS().filter((p) => f[p.key]).map((p) => [p.key, f[p.key]])),
     llm: Object.fromEntries(["provider", "api", "base_url", "model", "effort", "api_key_env", "max_tokens"].map((k) => [k, f.llm[k] ?? ""])),
   };

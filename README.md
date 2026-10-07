@@ -259,6 +259,28 @@ one per task in the goal form or task board, or on the command line with `--proj
 There is always a `default` project (`workspace/projects/default`). `project.use_projects: false`
 turns all this off (agents then work in `workspace/`).
 
+## Permissions: what each agent may do with its tools
+
+Each agent has a permission profile (`permissions` in `agents.json`, or Configure → Harness):
+
+| Profile | What the agent may do | Default for |
+| --- | --- | --- |
+| `plan` | No terminal: read and write files, search the web | Team Lead, Architect |
+| `ask` | The tool's default: ordinary commands run, commands it finds dangerous need approval, which nobody gives during a run | |
+| `workspace` | Run commands in its task's worktree without asking; dangerous commands and anything touching the BABD installation are blocked | Developer, QA, DevOps |
+| `full` | Run anything without asking. Use only with the Docker sandbox | |
+
+For Hermes this becomes `approvals.mode` plus `approvals.deny` rules in the agent's private
+`config.yaml` (blocked: `sudo`, `rm -rf /` and `~`, force pushes, `curl … | sh`, disk and shutdown
+commands, and `cd`/`git -C`/paths into BABD's code, `agents.json`, `.env`, `.git` and `.babd`), and the
+`plan` profile drops the terminal toolset. For Claude Code it becomes `--permission-mode acceptEdits`
+with allowed / disallowed tools. Checked with the real Hermes CLI: in a worktree `echo … > ok.txt` runs;
+`cd <BABD> && ls agents.json` and `sudo ls` come back `BLOCKED`.
+
+The deny rules are a guardrail, not a sandbox. For real isolation set `sandbox: "docker"`: a Hermes
+agent's commands then run in a Docker container that only sees the task's worktree (needs Docker).
+Agents no longer need git rights for their work: BABD commits and merges each task's branch itself.
+
 ## Task documents (.md files and links)
 
 Instead of typing the main task, give it as a Markdown (or text) file: a spec, a ticket, a PRD.

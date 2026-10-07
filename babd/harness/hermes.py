@@ -75,10 +75,10 @@ def _write_private(path, content):
         f.write(content)
 
 
-def write_hermes_home(home, llm):
-    """Write HERMES_HOME/config.yaml for this agent's LLM. Returns (env, provider_arg)."""
+def write_hermes_home(home, llm, extra_yaml=""):
+    """Write HERMES_HOME/config.yaml for this agent's LLM (plus permission settings). Returns (env, provider_arg)."""
     env, config_yaml, provider = hermes_routing(llm)
-    _write_private(os.path.join(home, "config.yaml"), config_yaml)
+    _write_private(os.path.join(home, "config.yaml"), config_yaml + extra_yaml)
     env["HERMES_HOME"] = home
     return env, provider
 
@@ -105,8 +105,15 @@ class HermesLocal(Harness):
     def configure(self):
         if not self.cfg.get("manage_config", True):
             return [f"using existing {self.home}"]
-        write_hermes_home(self.home, self.llm)
-        return [f"config {os.path.relpath(os.path.join(self.home, 'config.yaml'), ROOT)}"] + self._native_skills()
+        write_hermes_home(self.home, self.llm, self.permission_yaml())
+        return ([f"config {os.path.relpath(os.path.join(self.home, 'config.yaml'), ROOT)}",
+                 f"permissions {self.permissions}" + (f" · {self.sandbox} sandbox" if self.sandbox != "none" else "")]
+                + self._native_skills())
+
+    def permission_yaml(self):
+        from .. import permissions
+        permissions.check_sandbox(self.sandbox)
+        return permissions.hermes_config(self.permissions, self.sandbox)
 
     def _native_skills(self):
         """Skill-pack skills as native Hermes skills (HERMES_HOME/skills/<pack>/<name>)."""
@@ -132,8 +139,10 @@ class HermesLocal(Harness):
             argv += ["-m", self.llm["model"]]
         if provider:
             argv += ["--provider", provider]
-        if self.cfg.get("toolsets"):
-            argv += ["-t", ",".join(self.cfg["toolsets"])]
+        from .. import permissions
+        toolsets = permissions.hermes_toolsets(self.permissions, self.cfg.get("toolsets"))
+        if toolsets:
+            argv += ["-t", ",".join(toolsets)]
         if self.cfg.get("skills"):
             argv += ["-s", ",".join(self.cfg["skills"])]  # Hermes-native skills to preload
         if self.cfg.get("max_turns"):
@@ -143,7 +152,7 @@ class HermesLocal(Harness):
         if self.cfg.get("checkpoints"):
             argv.append("--checkpoints")
         argv += ["--source", "tool"]
-        if self.cfg.get("yolo"):
+        if self.cfg.get("yolo") and self.permissions == "full":
             # Skip Hermes' dangerous-command approvals. Without a TTY those prompts can only deny,
             # so tools that need approval fail unless this is on. Use it only in a sandbox.
             argv.append("--yolo")
@@ -260,7 +269,7 @@ class HermesGateway(Harness):
     def configure(self):
         if not self.managed:
             return [f"server {self.cfg['api_base_url']}"]
-        write_hermes_home(self.home, self.llm)
+        write_hermes_home(self.home, self.llm, HermesLocal.permission_yaml(self))
         self._managed_key()
         return [f"config {os.path.relpath(self.home, ROOT)} (gateway starts on first run)"] + \
             HermesLocal._native_skills(self)
@@ -271,7 +280,7 @@ class HermesGateway(Harness):
         if started and started[0].poll() is None:
             return started[1]
         hermes = self.command_path()
-        routing_env, _ = write_hermes_home(self.home, self.llm)
+        routing_env, _ = write_hermes_home(self.home, self.llm, HermesLocal.permission_yaml(self))
         port = int(self.cfg.get("port") or _free_port())
         env = apply_env(self.child_env(routing_env), {
             "API_SERVER_ENABLED": "true", "API_SERVER_KEY": self._managed_key(),

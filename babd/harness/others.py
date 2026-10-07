@@ -85,8 +85,9 @@ class ClaudeCode(Harness):
             argv += ["--effort", effort]
         if self.cfg.get("max_turns"):
             argv += ["--max-turns", str(self.cfg["max_turns"])]
-        if self.cfg.get("dangerously_skip_permissions"):
-            argv.append("--dangerously-skip-permissions")
+        from .. import permissions
+        profile = "full" if self.cfg.get("dangerously_skip_permissions") else self.permissions
+        argv += permissions.claude_args(profile)
         argv += list(self.cfg.get("extra_args") or [])
         prompt = messages[-1]["content"] if len(messages) == 1 else render_prompt("", messages).lstrip("-\n ")
         if long_system:

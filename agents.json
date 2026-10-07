@@ -88,6 +88,8 @@
         "timeout_sec": 1200,
         "yolo": false
       },
+      "permissions": "plan",
+      "sandbox": "none",
       "parallel": 2,
       "telegram": {
         "enabled": true,
@@ -166,6 +168,8 @@
         "timeout_sec": 900,
         "yolo": false
       },
+      "permissions": "plan",
+      "sandbox": "none",
       "parallel": 2,
       "telegram": {
         "enabled": true,
@@ -229,6 +233,8 @@
       "harness": {
         "type": "hermes_local"
       },
+      "permissions": "workspace",
+      "sandbox": "none",
       "parallel": 2,
       "telegram": {
         "enabled": true,
@@ -302,6 +308,8 @@
         "timeout_sec": 1200,
         "yolo": false
       },
+      "permissions": "workspace",
+      "sandbox": "none",
       "parallel": 2,
       "telegram": {
         "enabled": true,
@@ -362,6 +370,8 @@
         "timeout_sec": 1200,
         "yolo": false
       },
+      "permissions": "workspace",
+      "sandbox": "none",
       "parallel": 2,
       "telegram": {
         "enabled": false,
