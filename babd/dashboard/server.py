@@ -32,7 +32,7 @@ EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
                "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage",
-               "evidence", "task_options", "route")
+               "evidence", "task_options", "route", "paused")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
@@ -367,8 +367,9 @@ class Dashboard:
         auto = self.load()["project"].get("auto_resume", True)
         resumed = []
         for s in self.saved_states(200):
-            if s.get("status") not in ("running", "waiting_approval"):
+            if s.get("status") not in ("running", "waiting_approval", "paused"):
                 continue
+            was_paused = s.get("status") == "paused" or s.get("paused")
             pid = s.get("pid")
             if pid and pid != os.getpid() and _alive(pid):
                 continue  # still running in another BABD process (e.g. `babd run`)
@@ -378,7 +379,7 @@ class Dashboard:
                     json.dump(s, f, indent=2, ensure_ascii=False)
             except OSError:
                 continue
-            if auto and not any(q["id"] == s["id"] for q in self.queue):
+            if auto and not was_paused and not any(q["id"] == s["id"] for q in self.queue):
                 resumed.append(self.resume_entry(s))
         if resumed:
             log(f"resuming {len(resumed)} interrupted task(s)", "dashboard")
@@ -395,8 +396,13 @@ class Dashboard:
                 "options": s.get("task_options") or {}}
 
     def resume_run(self, run_id):
-        """Continue a failed, stopped or interrupted task from its last finished step."""
+        """Continue a paused task, or a failed, stopped or interrupted one from its last finished step."""
         run_id = os.path.basename(run_id)
+        with self.tasks_lock:
+            ctx = self.active.get(run_id)
+        if ctx and ctx["run"].paused.is_set():
+            self.pause_run(run_id, False)
+            return self.summary(ctx["run"])
         with self.tasks_lock:
             if run_id in self.active or any(q["id"] == run_id for q in self.queue):
                 raise ApiError(409, "this task is already running or queued")
@@ -436,7 +442,7 @@ class Dashboard:
         return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
                                   "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
-                                  "usage", "evidence", "tests", "task_options", "route", "messages")}
+                                  "usage", "evidence", "tests", "task_options", "route", "paused", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -750,9 +756,24 @@ class Dashboard:
         if not ctx:
             raise ApiError(404, "no such active or queued task")
         ctx["run"].cancelled.set()
+        ctx["run"].paused.clear()
         if ctx["approval"]:
             ctx["approval"][0].set()
-        return {"ok": True, "note": "the run stops after the current agent step"}
+        return {"ok": True, "note": "stopping: the agent's running program is stopped now"}
+
+    def pause_run(self, run_id, paused=True):
+        """Pause a running task (agents finish the step they are on, the next steps wait) or continue it."""
+        with self.tasks_lock:
+            ctx = self.active.get(os.path.basename(run_id))
+        if not ctx:
+            raise ApiError(404, "no such running task (only a running task can be paused)")
+        run = ctx["run"]
+        if run.cancelled.is_set():
+            raise ApiError(409, "this task is stopping")
+        run.pause(paused)
+        self.hub.publish("tasks", {"event": "paused" if paused else "unpaused", "task": {"id": run.id}})
+        return {"ok": True, "paused": bool(paused),
+                "note": ("paused: the steps already working finish, the next ones wait" if paused else "continuing")}
 
     # -- task board ------------------------------------------------------------------------------
 
@@ -1101,6 +1122,8 @@ def make_handler(dash, token, allowed_hosts, security=None):
                     return d.resolve_approval(parts[1], b.get("approved"), b.get("note", ""))
                 if method == "POST" and parts[2:] == ["cancel"]:
                     return d.cancel_run(parts[1])
+                if method == "POST" and parts[2:] == ["pause"]:
+                    return d.pause_run(parts[1], True)
                 if method == "POST" and parts[2:] == ["resume"]:
                     return d.resume_run(parts[1])
             raise ApiError(404, "unknown API call")
@@ -1157,6 +1180,10 @@ def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=N
     server.daemon_threads = True
     url = f"http://{'127.0.0.1' if local else host}:{server.server_port}/?token={token}"
     print(f"BABD dashboard: {url}\n(keep this URL private: the token gives full control of the agents)", flush=True)
+    from ..config import ENV_PATH, SECRETS_BACKUP, missing_keys
+    for var, ids in missing_keys(dash.load()).items():
+        print(f"warning: API key {var} (agents: {', '.join(ids)}) has no value: set it in Configure -> LLM, "
+              f"or in {ENV_PATH} (a copy of keys set from the dashboard is kept in {SECRETS_BACKUP})", flush=True)
     if public_url:
         print(f"public address: {public_url} ({'password login' if security.login_enabled else 'NO password set: run babd set-password'})",
               flush=True)

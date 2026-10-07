@@ -104,7 +104,8 @@ let drawer = null;        // {mode: "config"|"chat", agentId, tab}
 const agentById = (id) => S.agents.find((a) => a.id === id);
 const colorOf = (id) => (id === "ceo" ? "var(--ceo)" : agentById(id)?.color || "var(--muted)");
 const nameOf = (id) => (id === "ceo" ? "CEO" : agentById(id)?.short_name || id);
-const isLive = (r) => r && ["running", "waiting_approval"].includes(r.status);
+const LIVE = ["running", "waiting_approval", "paused"];
+const isLive = (r) => r && LIVE.includes(r.status);
 const runActive = () => Object.values(liveRuns).some(isLive);
 const liveList = () => Object.values(liveRuns).filter(isLive).sort((a, b) => (a.started_at || "").localeCompare(b.started_at || ""));
 
@@ -511,7 +512,7 @@ function renderRun() {
     return;
   }
   const stages = S.flow.stages.map((s) => `<div class="step ${esc(r.stages?.[s.key] || "todo")}" title="${esc(nameOf(s.owner))}"><i></i>${esc(s.label)}</div>`).join("");
-  const statusColor = { running: "var(--good)", waiting_approval: "var(--warn)", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" }[r.status];
+  const statusColor = { paused: "#c4b5fd", running: "var(--good)", waiting_approval: "var(--warn)", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" }[r.status];
   const approval = r.approval?.result === "pending" && !viewingHistory ? `
     <div class="approval">
       <div class="eyebrow" style="color:var(--warn)">CEO approval needed</div>
@@ -542,6 +543,8 @@ function renderRun() {
       <div class="run-meta">${pill(r.status.replace("_", " "), statusColor, r.status === "running")}
         <span class="muted small">${esc(r.id)} · ${r.progress ?? 0}%${r.qa_rounds ? ` · ${r.qa_rounds} QA fix round(s)` : ""}${usageText(r.usage) ? ` · ${esc(usageText(r.usage))}` : ""}</span></div>
       ${r.error ? `<div class="note warn" style="margin-top:8px">${esc(r.error)}</div>` : ""}
+      ${r.status === "running" && !r.paused ? `<button type="button" class="btn small ghost" style="margin-top:8px" data-pause-run="${esc(r.id)}" title="The steps already working finish; the next ones wait">⏸ Pause</button>` : ""}
+      ${isLive(r) && (r.paused || r.status === "paused") ? `<button type="button" class="btn small good" style="margin-top:8px" data-unpause-run="${esc(r.id)}">▶ Resume</button>` : ""}
       ${RESUMABLE.includes(r.status) ? `<button type="button" class="btn small" style="margin-top:8px" data-resume-run="${esc(r.id)}">Resume from the last finished step</button>` : ""}
       ${!isLive(r) && r.finished_at ? `<button type="button" class="btn small ghost" style="margin-top:8px" data-export-run="${esc(r.id)}">Export report (.md)</button>` : ""}
     </div>
@@ -562,6 +565,13 @@ $("#runBody").addEventListener("click", async (e) => {
   }
   const ex = e.target.closest("[data-export-run]");
   if (ex) { downloadReport(ex.dataset.exportRun); return; }
+  const pz = e.target.closest("[data-pause-run], [data-unpause-run]");
+  if (pz) {
+    const id = pz.dataset.pauseRun || pz.dataset.unpauseRun;
+    try { const r = await api("POST", `runs/${id}/${pz.dataset.pauseRun ? "pause" : "resume"}`); toast(r.note || "Continuing", "ok"); refreshSoon(); boardSoon(); }
+    catch (err) { toast(err.message, "bad"); }
+    return;
+  }
   const rs = e.target.closest("[data-resume-run]");
   if (rs) {
     try { const r = await api("POST", `runs/${rs.dataset.resumeRun}/resume`); toast(`Resuming: ${r.goal}`, "ok"); viewingHistory = false; pinnedRun = rs.dataset.resumeRun; refreshSoon(); }
@@ -605,7 +615,7 @@ $("#btnRun").addEventListener("click", async () => {
 
 $("#btnCancel").addEventListener("click", async () => {
   if (!viewRun) return;
-  try { await api("POST", `runs/${viewRun.id}/cancel`); toast("Stopping after the current step…"); }
+  try { const r = await api("POST", `runs/${viewRun.id}/cancel`); toast(r.note || "Stopping…"); }
   catch (err) { toast(err.message, "bad"); }
 });
 
@@ -1034,8 +1044,8 @@ let searchResults = null;  // tasks found by the search box (null: not searching
 const openTasks = new Set();
 const KIND_LABELS = { plan: "Plan", design: "Design", code: "Build", test_plan: "Test plan", deploy_prep: "Deploy prep",
   test_report: "Test", fix: "Fix", deploy_report: "Deploy", report: "Report" };
-const TASK_COLORS = { running: "var(--good)", waiting_approval: "var(--warn)", queued: "#7dd3fc", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" };
-const TASK_LABELS = { running: "running", waiting_approval: "waiting for you", queued: "queued", done: "done", failed: "failed", cancelled: "stopped", interrupted: "interrupted" };
+const TASK_COLORS = { paused: "#c4b5fd", running: "var(--good)", waiting_approval: "var(--warn)", queued: "#7dd3fc", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" };
+const TASK_LABELS = { paused: "paused", running: "running", waiting_approval: "waiting for you", queued: "queued", done: "done", failed: "failed", cancelled: "stopped", interrupted: "interrupted" };
 const RESUMABLE = ["failed", "cancelled", "interrupted"];
 const ms = (iso) => (iso ? new Date(iso).getTime() : NaN);
 const serverNow = () => Date.now() + boardOffset;
@@ -1163,7 +1173,7 @@ function renderGantt() {
   const end = serverNow();
   let span = boardSpan;
   if (!span) {  // auto: from the first step of the active tasks (or of the last day) to now, at least 1 minute
-    const live = new Set(B.tasks.filter((t) => ["running", "waiting_approval"].includes(t.status)).map((t) => t.id));
+    const live = new Set(B.tasks.filter((t) => LIVE.includes(t.status)).map((t) => t.id));
     const pool = all.filter((st) => live.has(st.run));
     const firsts = (pool.length ? pool : all).map((st) => ms(st.queued_at || st.started_at)).filter((t) => isFinite(t) && end - t < 86400e3);
     span = Math.max(60, Math.min(86400, ((end - Math.min(end - 60e3, ...firsts)) / 1000) * 1.08));
@@ -1220,16 +1230,16 @@ function stageTrack(t) {
 function renderTasks() {
   const order = { running: 0, waiting_approval: 0, queued: 1 };
   const shownTasks = (searchResults || B.tasks).filter((t) => taskFilter === "all"
-    || (taskFilter === "active" && ["running", "waiting_approval"].includes(t.status))
+    || (taskFilter === "active" && LIVE.includes(t.status))
     || (taskFilter === "queued" && t.status === "queued")
     || (taskFilter === "done" && t.status === "done")
     || (taskFilter === "problem" && RESUMABLE.includes(t.status)))
     .sort((a, b) => (order[a.status] ?? 2) - (order[b.status] ?? 2)
       || (a.status === "queued" ? (a.position || 0) - (b.position || 0) : (b.started_at || b.queued_at || "").localeCompare(a.started_at || a.queued_at || "")));
-  $("#btnMoreTasks").classList.toggle("hidden", !!searchResults || B.tasks.filter((t) => !["running", "waiting_approval", "queued"].includes(t.status)).length < historyLimit);
+  $("#btnMoreTasks").classList.toggle("hidden", !!searchResults || B.tasks.filter((t) => ![...LIVE, "queued"].includes(t.status)).length < historyLimit);
   if (!shownTasks.length) { $("#taskList").innerHTML = `<div class="empty">${searchResults ? "No task matches the search." : "No tasks here yet. Add some above."}</div>`; return; }
   $("#taskList").innerHTML = shownTasks.map((t) => {
-    const live = ["running", "waiting_approval"].includes(t.status);
+    const live = LIVE.includes(t.status);
     const startedMs = ms(t.started_at), endMs = t.finished_at ? ms(t.finished_at) : serverNow();
     const working = (t.steps || []).filter((st) => st.status === "working");
     const waiting = (t.steps || []).filter((st) => st.status === "queued");
@@ -1253,9 +1263,11 @@ function renderTasks() {
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
         <div class="task-actions">
           ${t.status !== "queued" ? `<button type="button" class="btn small" data-open="${esc(t.id)}">Open</button>` : ""}
-          ${t.status !== "queued" && !["running", "waiting_approval"].includes(t.status) ? `<button type="button" class="btn small ghost" data-export="${esc(t.id)}" title="Download the task as a Markdown report">Export</button>` : ""}
+          ${t.status !== "queued" && !LIVE.includes(t.status) ? `<button type="button" class="btn small ghost" data-export="${esc(t.id)}" title="Download the task as a Markdown report">Export</button>` : ""}
           ${t.waiting_ceo ? `<button type="button" class="btn small good" data-approve-task="${esc(t.id)}">Approve deploy</button><button type="button" class="btn small danger" data-reject-task="${esc(t.id)}">Reject</button>` : ""}
-          ${live || t.status === "queued" ? `<button type="button" class="btn small ghost" data-cancel="${esc(t.id)}">${t.status === "queued" ? "Remove" : "Stop"}</button>` : ""}
+          ${t.status === "running" || (live && t.paused === false && t.status !== "paused" && t.status !== "waiting_approval") ? `<button type="button" class="btn small ghost" data-pause="${esc(t.id)}" title="The steps already working finish; the next ones wait">⏸ Pause</button>` : ""}
+          ${t.status === "paused" || (live && t.paused) ? `<button type="button" class="btn small good" data-unpause="${esc(t.id)}">▶ Resume</button>` : ""}
+          ${live || t.status === "queued" ? `<button type="button" class="btn small ghost" data-cancel="${esc(t.id)}">${t.status === "queued" ? "Remove" : "⏹ Stop"}</button>` : ""}
           ${RESUMABLE.includes(t.status) ? `<button type="button" class="btn small" data-resume="${esc(t.id)}" title="Continue from the last finished step">Resume</button>` : ""}
         </div>
       </div>
@@ -1302,6 +1314,11 @@ $("#boardView").addEventListener("click", async (e) => {
     catch (err) { toast(err.message, "bad"); }
   } else if (t("[data-export]")) {
     downloadReport(t("[data-export]").dataset.export);
+  } else if (t("[data-pause]") || t("[data-unpause]")) {
+    const el = t("[data-pause]") || t("[data-unpause]");
+    const id = el.dataset.pause || el.dataset.unpause;
+    try { const r = await api("POST", `runs/${id}/${el.dataset.pause ? "pause" : "resume"}`); toast(r.note || (r.goal ? `Continuing: ${r.goal}` : "ok"), "ok"); boardSoon(); refreshSoon(); }
+    catch (err) { toast(err.message, "bad"); }
   } else if (t("[data-resume]")) {
     try { const r = await api("POST", `runs/${t("[data-resume]").dataset.resume}/resume`); toast(`Resuming: ${r.goal}`, "ok"); boardSoon(); refreshSoon(); }
     catch (err) { toast(err.message, "bad"); }

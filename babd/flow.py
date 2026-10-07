@@ -270,6 +270,7 @@ class Run:
         self.on_event = on_event or (lambda kind, data: None)
         self.slots = slots or AgentSlots(team.cfg)  # shared between runs by the dashboard
         self.cancelled = threading.Event()
+        self.paused = threading.Event()    # set = pause before the next step (a step already working finishes)
         self.lock = threading.RLock()      # steps of one run can run at the same time
         project = team.cfg.get("project", {})
         self.require_approval = project.get("require_approval", ["deploy"])
@@ -344,7 +345,7 @@ class Run:
         self.brief = open(brief_path).read().strip() if os.path.exists(brief_path) else ""
         st = self.state
         st.update(status="running", error=None, finished_at=None, report=None, blockers=[], stage=None, progress=0,
-                  verdict=None, deployed=False, resumes=st.get("resumes", 0) + 1)
+                  verdict=None, deployed=False, resumes=st.get("resumes", 0) + 1, paused=False)
         st.setdefault("checkpoints", [])
         st.setdefault("usage", {})
         st.setdefault("steps", [])
@@ -411,8 +412,35 @@ class Run:
             f.write(content)
 
     def check_cancel(self):
+        self.wait_if_paused()
         if self.cancelled.is_set():
             raise FlowCancelled("run cancelled by the CEO")
+
+    def pause(self, on=True):
+        """Pause (the steps already working finish, the next ones wait) or continue the task."""
+        if on:
+            self.paused.set()
+        else:
+            self.paused.clear()
+        with self.lock:
+            if not on and self.state["status"] == "paused":
+                self.state["status"] = "running"
+            self.state["paused"] = bool(on)
+        self.emit("paused" if on else "unpaused", {"paused": bool(on)})
+
+    def wait_if_paused(self):
+        if not self.paused.is_set() or self.cancelled.is_set():
+            return
+        with self.lock:
+            before = self.state["status"]
+            if before == "running":
+                self.state["status"] = "paused"
+        self.emit("paused", {"paused": True, "waiting": True})
+        while self.paused.is_set() and not self.cancelled.is_set():
+            self.cancelled.wait(0.2)
+        with self.lock:
+            if self.state["status"] == "paused":
+                self.state["status"] = before
 
     def stage(self, key):
         self.check_cancel()
@@ -448,6 +476,7 @@ class Run:
     # -- one agent step, always through the GBrain cycle (read -> work -> write) ---------------
 
     def work(self, agent_id, prompt, task, kind, fact=None, skills_for=None, light=False, memory=True):
+        self.check_cancel()  # also waits here while the task is paused
         reason = over_budget(self.state["usage"], self.budget["tokens_per_task"], self.budget["cost_per_task"])
         if reason:
             raise BudgetExceeded(f"task budget reached: {reason} (raise project.budget, then Resume)")
@@ -574,8 +603,12 @@ class Run:
             self.state["status"] = "cancelled"
             self.state["error"] = str(e)
         except Exception as e:  # any agent / harness failure ends the run with a clear error
-            self.state["status"] = "failed"
-            self.state["error"] = f"{type(e).__name__}: {e}"
+            if self.cancelled.is_set():  # the agent's program was stopped by the cancel
+                self.state["status"] = "cancelled"
+                self.state["error"] = "run cancelled by the CEO"
+            else:
+                self.state["status"] = "failed"
+                self.state["error"] = f"{type(e).__name__}: {e}"
         if self.workspace:
             self.finish_workspace()
         self.state["finished_at"] = now()

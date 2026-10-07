@@ -60,6 +60,7 @@ class DashboardTest(unittest.TestCase):
         with open(self.cfg_path, "w") as f:
             json.dump(cfg, f)
         for p in (mock.patch.object(config, "ENV_PATH", os.path.join(self.tmp, ".env")),
+                  mock.patch.object(config, "SECRETS_BACKUP", os.path.join(self.tmp, "backup", "secrets.env")),
                   mock.patch.object(flow, "RUNS_DIR", os.path.join(self.tmp, "runs")),
                   mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-env"})):
             p.start()

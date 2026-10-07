@@ -69,6 +69,7 @@ class Agent:
 
         def counted(harness):
             def call():
+                harness.cancel_event = cancelled  # Stop kills the agent's running program
                 text = harness.complete(system, messages, **kwargs)
                 self.count(harness, system, messages, text)
                 return text

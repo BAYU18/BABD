@@ -5,8 +5,10 @@ the agent's own `llm` block and projects it into whatever that harness needs (SD
 config file, environment variables), so each agent keeps its custom LLM whatever harness it uses.
 """
 import os
+import signal
 import subprocess
 import threading
+import time
 
 from ..config import ROOT
 from ..llm import LLMError
@@ -97,19 +99,57 @@ class Harness:
         return env
 
     def run_process(self, argv, env_overrides, stdin_text=None):
+        """Run the harness's program and return its stdout. When the task is stopped (cancel_event), the
+        program and everything it started are killed at once instead of running to the end."""
         env = self.child_env(env_overrides)
+        cancel = getattr(self, "cancel_event", None)
         try:
-            proc = subprocess.run(argv, input=stdin_text, capture_output=True, text=True, env=env,
-                                  cwd=self.cwd, timeout=self.timeout)
-        except subprocess.TimeoutExpired as e:
-            raise HarnessError(f"{self.label}: timed out after {self.timeout:.0f}s") from e
+            proc = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=self.cwd,
+                                    start_new_session=os.name == "posix")
+        except OSError as e:
+            raise HarnessError(f"{self.label}: cannot start {argv[0]}: {e}") from e
+        deadline = time.monotonic() + self.timeout
+        while True:
+            try:
+                out, err = proc.communicate(input=stdin_text, timeout=0.5)
+                break
+            except subprocess.TimeoutExpired:
+                if cancel is not None and cancel.is_set():
+                    _kill(proc)
+                    raise HarnessError(f"{self.label}: stopped (task cancelled)")
+                if time.monotonic() > deadline:
+                    _kill(proc)
+                    raise HarnessError(f"{self.label}: timed out after {self.timeout:.0f}s")
         if proc.returncode != 0:
             # CLIs print errors on stdout or stderr; the first and last meaningful lines carry the story.
-            lines = [ln.strip() for ln in (proc.stdout + "\n" + proc.stderr).splitlines()
+            lines = [ln.strip() for ln in ((out or "") + "\n" + (err or "")).splitlines()
                      if ln.strip() and not ln.strip().startswith("session_id:")]
             detail = " | ".join(dict.fromkeys(lines[:1] + lines[-1:])) or "no output"
             raise HarnessError(f"{self.label}: exit code {proc.returncode}: {detail[:500]}")
-        return proc.stdout
+        return out
+
+
+def _kill(proc):
+    """Kill a harness program and its children (its own process group)."""
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGTERM)
+        else:
+            proc.terminate()
+        proc.wait(timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            if os.name == "posix":
+                os.killpg(proc.pid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except OSError:
+            pass
+    try:
+        proc.communicate(timeout=5)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
 
 
 def apply_env(base, *layers):

@@ -218,7 +218,8 @@ class CeoBot(Bot):
             return self.api.send(chat, "BABD CEO bot.\n\nSend a goal as a message, or a .md file, or a link to one: "
                                        "it becomes a task for the team.\n\n/status - what the team is doing\n"
                                        "/tasks - recent tasks\n/project <id> - where new tasks go\n"
-                                       "/cancel <task id> - stop or unqueue a task\n/resume <task id> - continue a failed or interrupted task\n"
+                                       "/cancel <task id> - stop or unqueue a task\n/pause <task id> - pause a running task\n"
+                                       "/resume <task id> - continue a paused, failed or interrupted task\n"
                                        "/templates - task templates to fill in\n/quick <goal> - fast lane: the Team Lead answers or one agent does it\n"
                                        "/full <goal> - always the whole team flow\n\n"
                                        "Plain messages: the Team Lead decides who is needed.")
@@ -253,6 +254,10 @@ class CeoBot(Bot):
             if not arg:
                 return self.api.send(chat, "Usage: /resume <task id> (a failed, stopped or interrupted task)")
             return self.api.send(chat, self.safe(lambda: f"Resuming: {self.dash.resume_run(arg)['goal']}"))
+        if cmd == "/pause":
+            if not arg:
+                return self.api.send(chat, "Usage: /pause <task id> (continue it with /resume <task id>)")
+            return self.api.send(chat, self.safe(lambda: self.dash.pause_run(arg, True)["note"]))
         if cmd == "/cancel":
             if not arg:
                 return self.api.send(chat, "Usage: /cancel <task id> (see /tasks)")
