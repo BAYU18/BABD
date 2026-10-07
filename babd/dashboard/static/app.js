@@ -23,7 +23,7 @@ async function api(method, path, body) {
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "");
-const STATUS_COLORS = { working: "var(--good)", done: "var(--ceo)", waiting: "var(--warn)", blocked: "var(--bad)", idle: "var(--dim)" };
+const STATUS_COLORS = { working: "var(--good)", done: "var(--ceo)", waiting: "var(--warn)", blocked: "var(--bad)", idle: "var(--dim)", setup: "#c084fc" };
 const PROJECT_COLORS = { ACTIVE: "var(--good)", DONE: "var(--ceo)", BLOCKED: "var(--bad)" };
 
 function toast(msg, kind = "") {
@@ -38,12 +38,54 @@ function pill(label, color, pulse = false) {
   return `<span class="pill ${pulse ? "pulse" : ""}" style="--pc:${color}">${esc(label)}</span>`;
 }
 
-function robot(color) {
-  return `<svg class="avatar" viewBox="0 0 40 40" aria-hidden="true" style="stroke:none">
-    <rect x="19" y="2" width="2" height="6" fill="${color}"/><circle cx="20" cy="3" r="2.6" fill="${color}"/>
-    <rect x="7" y="8" width="26" height="20" rx="7" fill="#dfe7f3"/><rect x="11" y="13" width="18" height="10" rx="5" fill="#0b1424"/>
-    <circle cx="16" cy="18" r="2.2" fill="${color}"/><circle cx="24" cy="18" r="2.2" fill="${color}"/>
-    <path d="M9 40v-6a6 6 0 0 1 6-6h10a6 6 0 0 1 6 6v6z" fill="${color}"/></svg>`;
+// Animated workstation: robot + desk + monitor. The element is built once per agent and kept across
+// re-renders (see renderAgents), so its CSS animations never restart; only data-state changes.
+function station(a) {
+  const c = esc(a.color), id = esc(a.id);
+  const code = (dy) => [[0, 34, 1], [9, 54, 0], [18, 44, 0], [27, 24, 1], [36, 50, 0], [45, 30, 1]]
+    .map(([y, w, accent]) => `<rect x="131" y="${33 + y + dy}" width="${w}" height="4" rx="2" fill="${accent ? c : "#3a5078"}"/>`).join("");
+  return `<svg class="station" viewBox="0 0 220 120" role="img" aria-label="${esc(a.short_name || a.name)} workstation" data-state="idle">
+    <defs><clipPath id="scr-${id}"><rect x="124" y="28" width="80" height="48" rx="4"/></clipPath></defs>
+    <ellipse class="floor" cx="112" cy="112" rx="100" ry="6" fill="${c}"/>
+    <rect x="14" y="98" width="192" height="8" rx="4" fill="#2f4266"/>
+    <g class="monitor">
+      <rect class="frame" x="118" y="22" width="92" height="60" rx="7" fill="#2a3c5e"/>
+      <rect x="124" y="28" width="80" height="48" rx="4" fill="#0b1424"/>
+      <g clip-path="url(#scr-${id})">
+        <g class="scr scr-code"><g class="scroll">${code(0)}${code(54)}</g></g>
+        <g class="scr scr-idle"><circle class="saver" cx="140" cy="44" r="3" fill="${c}"/></g>
+        <g class="scr scr-wait"><path class="hourglass" d="M157 40h14l-7 12 7 12h-14l7-12z" fill="none" stroke="${c}" stroke-width="2.4" stroke-linejoin="round"/></g>
+        <g class="scr scr-block"><path d="M164 38l12 22h-24z" fill="none" stroke="#f87171" stroke-width="2.6" stroke-linejoin="round"/><rect x="163" y="45" width="2.4" height="8" rx="1" fill="#f87171"/><circle cx="164.2" cy="56" r="1.4" fill="#f87171"/></g>
+        <g class="scr scr-setup"><rect x="138" y="49" width="52" height="7" rx="3.5" fill="none" stroke="#3a5078" stroke-width="1.6"/><rect class="bar" x="140" y="51" width="48" height="3" rx="1.5" fill="${c}"/></g>
+      </g>
+      <rect x="158" y="82" width="12" height="10" fill="#2a3c5e"/>
+    </g>
+    <rect class="keys" x="98" y="91" width="42" height="7" rx="3" fill="#3a5078"/>
+    <g class="sparks"><rect x="104" y="84" width="3" height="3" fill="${c}"/><rect x="116" y="82" width="3" height="3" fill="${c}"/><rect x="128" y="85" width="3" height="3" fill="${c}"/></g>
+    <g class="bot">
+      <line x1="58" y1="9" x2="58" y2="20" stroke="${c}" stroke-width="3" stroke-linecap="round"/>
+      <circle class="bulb" cx="58" cy="7" r="5" fill="${c}"/>
+      <g class="head">
+        <rect x="32" y="20" width="52" height="40" rx="12" fill="#dfe7f3"/>
+        <rect x="39" y="29" width="38" height="20" rx="8" fill="#0b1424"/>
+        <g class="eyes"><circle cx="51" cy="39" r="4" fill="${c}"/><circle cx="65" cy="39" r="4" fill="${c}"/></g>
+        <rect x="27" y="33" width="6" height="14" rx="3" fill="#b9c5d8"/><rect x="83" y="33" width="6" height="14" rx="3" fill="#b9c5d8"/>
+      </g>
+      <path d="M34 98v-24a12 12 0 0 1 12-12h24a12 12 0 0 1 12 12v24z" fill="${c}"/>
+      <rect class="chest" x="50" y="72" width="16" height="8" rx="3" fill="#0b1424" opacity=".35"/>
+      <path class="arm arm-back" d="M74 84q14 3 28 5" stroke="${c}" stroke-width="7" stroke-linecap="round" fill="none" opacity=".75"/>
+      <path class="arm arm-front" d="M80 80q14 2 26 4" stroke="${c}" stroke-width="7" stroke-linecap="round" fill="none"/>
+    </g>
+    <g class="fx zzz" fill="#8597b4" font-family="Inter, sans-serif" font-weight="800">
+      <text x="88" y="28" font-size="9">z</text><text x="96" y="21" font-size="11">z</text><text x="105" y="14" font-size="13">z</text></g>
+    <g class="fx think"><circle cx="92" cy="14" r="9" fill="#22345a"/><circle cx="84" cy="24" r="2.5" fill="#22345a"/>
+      <circle class="d1" cx="88" cy="14" r="1.6" fill="#e8eef8"/><circle class="d2" cx="92" cy="14" r="1.6" fill="#e8eef8"/><circle class="d3" cx="96" cy="14" r="1.6" fill="#e8eef8"/></g>
+    <g class="fx alert"><circle cx="92" cy="14" r="9" fill="#f87171"/><rect x="90.8" y="8" width="2.4" height="8" rx="1" fill="#0b1424"/><circle cx="92" cy="19" r="1.4" fill="#0b1424"/></g>
+    <g class="fx mem"><circle cx="14" cy="16" r="10" fill="#c084fc"/>
+      <path d="M9 16a3 3 0 0 1 3-5a3 3 0 0 1 4 0a3 3 0 0 1 3 5a3 3 0 0 1-3 4a3 3 0 0 1-4 0a3 3 0 0 1-3-4z" fill="none" stroke="#1a1030" stroke-width="1.6"/>
+      <path class="mem-arrow" d="M14 29v8m-3-3l3 3l3-3" stroke="#c084fc" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text class="mem-label" x="14" y="49" font-size="8.5" font-weight="800" fill="#c084fc" text-anchor="middle" font-family="Inter, sans-serif">read</text></g>
+  </svg>`;
 }
 
 // ---- state -------------------------------------------------------------------------------
@@ -117,9 +159,19 @@ function agentLive(a) {
   return S.run && runActive() ? S.run.agents[a.id] : null;
 }
 
+// What the agent is really doing now: the live run first, then a running chat/setup job; outside a run
+// only "waiting" / "blocked" from the last run are kept (other saved statuses are just the template's).
+function agentState(a) {
+  const live = agentLive(a);
+  const job = Object.values(jobs).find((j) => j.agent === a.id && j.status === "running");
+  if (live) return live.status === "done" ? "done" : live.status;
+  if (job) return job.kind === "setup" ? "setup" : "working";
+  return ["waiting", "blocked"].includes(a.status) ? a.status : "idle";
+}
+
 function agentCard(a) {
   const live = agentLive(a);
-  const status = live ? live.status : a.status;
+  const status = agentState(a);
   const busy = Object.values(jobs).find((j) => j.agent === a.id && j.status === "running");
   const llm = a.llm, h = a.harness;
   const check = checks[a.id];
@@ -128,7 +180,8 @@ function agentCard(a) {
   return `
   <article class="agent ${a.id === "lead" ? "lead" : ""} ${status === "working" ? "working" : ""}" style="--c:${esc(a.color)}" data-agent="${esc(a.id)}">
     <div>
-      <div class="agent-top">${robot(a.color)}
+      <div class="station-slot" data-station="${esc(a.id)}"></div>
+      <div class="agent-top">
         <div><div class="agent-name">${esc(a.name)}</div>${pill(status, STATUS_COLORS[status] || "var(--dim)", status === "working")}</div>
       </div>
       <div class="agent-task" style="margin-top:10px">${esc(a.main_task.join(" "))}</div>
@@ -154,8 +207,35 @@ function agentCard(a) {
   </article>`;
 }
 
+const stations = {}; // agent id -> its <svg class="station">, reused across renders
 function renderAgents() {
-  $("#agents").innerHTML = S.agents.map(agentCard).join("");
+  const box = $("#agents");
+  for (const el of Object.values(stations)) el.remove(); // detach first, so innerHTML can't destroy them
+  box.innerHTML = S.agents.map(agentCard).join("");
+  for (const a of S.agents) {
+    const slot = box.querySelector(`[data-station="${CSS.escape(a.id)}"]`);
+    const key = `${a.id}|${a.color}`;
+    if (!stations[a.id] || stations[a.id].dataset.key !== key) {
+      const t = document.createElement("template");
+      t.innerHTML = station(a).trim();
+      stations[a.id] = t.content.firstChild;
+      stations[a.id].dataset.key = key;
+    }
+    stations[a.id].dataset.state = agentState(a);
+    slot.appendChild(stations[a.id]);
+  }
+}
+
+// a short "gbrain read / write" badge over the agent's head
+const memTimers = {};
+function flashMemory(agentId, op) {
+  const el = stations[agentId];
+  if (!el) return;
+  el.dataset.mem = op;
+  el.querySelector(".mem-label").textContent = op === "read" ? "read" : "write";
+  el.setAttribute("aria-label", `${nameOf(agentId)} ${op === "read" ? "reading" : "writing"} gbrain`);
+  clearTimeout(memTimers[agentId]);
+  memTimers[agentId] = setTimeout(() => delete el.dataset.mem, 2400);
 }
 
 $("#agents").addEventListener("click", async (e) => {
@@ -616,7 +696,7 @@ function connect() {
   const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
   es.addEventListener("log", (e) => { const d = JSON.parse(e.data); logLine(d.source, d.msg, /fail|error/i.test(d.msg) ? "bad" : ""); });
   es.addEventListener("job", (e) => onJob(JSON.parse(e.data)));
-  es.addEventListener("memory", (e) => { const m = JSON.parse(e.data); logLine("gbrain", `${nameOf(m.agent)} ${m.op === "read" ? "read" : "wrote"} gbrain`); });
+  es.addEventListener("memory", (e) => { const m = JSON.parse(e.data); flashMemory(m.agent, m.op); logLine("gbrain", `${nameOf(m.agent)} ${m.op === "read" ? "read" : "wrote"} gbrain`); });
   es.addEventListener("config", () => refreshSoon());
   es.addEventListener("approval", (e) => { toast(`Approval needed: ${JSON.parse(e.data).question}`); });
   es.addEventListener("run", (e) => {
@@ -624,6 +704,7 @@ function connect() {
     S.run = d.summary;
     if (!viewingHistory) viewRun = S.run;
     if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`);
+    if (d.event === "memory") flashMemory(d.data.agent, d.data.op);
     if (d.event === "memory") logLine("gbrain", `${nameOf(d.data.agent)} ${d.data.op === "read" ? `read ${d.data.facts} fact(s), ${d.data.pages} page(s)` : `wrote ${d.data.page}`}`);
     if (d.event === "finished") { toast(`Run ${d.data.status}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
     renderTop(); renderAgents(); renderRun();

@@ -246,3 +246,95 @@ textarea:focus, input:focus, select:focus { border-color: var(--ceo); }
   .stepper { grid-template-columns: repeat(4, 1fr); row-gap: 8px; }
   .brand { min-width: 0; }
 }
+
+/* ---- animated workstations ------------------------------------------------------------- */
+.station-slot { margin: -4px 0 6px; }
+.station { display: block; width: 100%; max-width: 240px; height: auto; overflow: visible; }
+.agent.lead .station-slot { margin-top: 0; }
+.station * { transform-box: view-box; }
+.station .floor { opacity: .10; }
+.station .fx, .station .scr, .station .sparks { opacity: 0; transition: opacity .35s; }
+.station .scr { display: none; }
+
+/* idle: slow breathing, blinking, looking around, z z z, screensaver */
+.station .bot { animation: breathe 3.6s ease-in-out infinite; }
+.station .eyes { transform-origin: 58px 39px; animation: blink 4.5s infinite, look 9s ease-in-out infinite; }
+.station .bulb { animation: glow 3.6s ease-in-out infinite; }
+.station[data-state="idle"] .scr-idle,
+.station[data-state="done"] .scr-idle { display: inline; opacity: 1; }
+.station .saver { animation: saver 7s linear infinite; }
+.station[data-state="idle"] .zzz { opacity: 1; }
+.station .zzz text { animation: zzz 3.6s ease-in infinite; }
+.station .zzz text:nth-child(2) { animation-delay: 1.2s; }
+.station .zzz text:nth-child(3) { animation-delay: 2.4s; }
+.station[data-state="idle"] .head { animation: nod 9s ease-in-out infinite; transform-origin: 58px 60px; }
+
+/* working: typing, code scrolling, sparks, fast antenna, screen glow */
+.station[data-state="working"] .bot { animation: bob .55s ease-in-out infinite; }
+.station[data-state="working"] .eyes { animation: blink 3s infinite; translate: 3px 0; }
+.station[data-state="working"] .bulb { animation: blinkfast .5s steps(2) infinite; }
+.station[data-state="working"] .arm-front { transform-origin: 80px 80px; animation: type .26s ease-in-out infinite alternate; }
+.station[data-state="working"] .arm-back { transform-origin: 74px 84px; animation: type .26s ease-in-out infinite alternate-reverse; }
+.station[data-state="working"] .scr-code { display: inline; opacity: 1; }
+.station .scroll { animation: scroll 2.6s linear infinite; }
+.station[data-state="working"] .sparks { opacity: 1; }
+.station .sparks rect { animation: spark 1.1s ease-out infinite; }
+.station .sparks rect:nth-child(2) { animation-delay: .35s; }
+.station .sparks rect:nth-child(3) { animation-delay: .7s; }
+.station[data-state="working"] .frame { animation: screenglow 1.4s ease-in-out infinite; }
+.station[data-state="working"] .floor { animation: floor 1.4s ease-in-out infinite; }
+
+/* waiting: head tilt, thinking bubble, hourglass */
+.station[data-state="waiting"] .head { transform-origin: 58px 60px; animation: tilt 2.8s ease-in-out infinite; }
+.station[data-state="waiting"] .think { opacity: 1; }
+.station .think circle[class^="d"] { animation: dots 1.2s infinite; }
+.station .think .d2 { animation-delay: .2s; } .station .think .d3 { animation-delay: .4s; }
+.station[data-state="waiting"] .scr-wait { display: inline; opacity: 1; }
+.station .hourglass { transform-origin: 164px 52px; animation: hourglass 2.4s ease-in-out infinite; }
+
+/* blocked: shake, red alert, red screen */
+.station[data-state="blocked"] .bot { animation: shake 2.6s ease-in-out infinite; }
+.station[data-state="blocked"] .bulb { fill: #f87171; animation: blinkfast .7s steps(2) infinite; }
+.station[data-state="blocked"] .eyes circle { fill: #f87171; }
+.station[data-state="blocked"] .alert { opacity: 1; animation: pop 1.3s ease-in-out infinite; transform-origin: 92px 14px; }
+.station[data-state="blocked"] .scr-block { display: inline; opacity: 1; animation: blinkfast 1s steps(2) infinite; }
+
+/* setting up: progress bar */
+.station[data-state="setup"] .scr-setup { display: inline; opacity: 1; }
+.station .bar { transform-origin: 140px 52px; animation: progress 1.6s ease-in-out infinite; }
+.station[data-state="setup"] .eyes { animation: blink 3s infinite; translate: 3px 0; }
+
+/* done: one happy hop, then calm */
+.station[data-state="done"] .bot { animation: hop .7s ease-out 1, breathe 3.6s ease-in-out .7s infinite; }
+
+/* gbrain read / write badge */
+.station[data-mem] .mem { opacity: 1; animation: pop .6s ease-out 1; transform-origin: 14px 16px; }
+.station[data-mem="write"] .mem-arrow { transform: rotate(180deg); transform-origin: 14px 33px; }
+.station[data-mem] .mem-arrow { animation: arrow .8s ease-in-out infinite; }
+
+@keyframes breathe { 50% { transform: translateY(-2px); } }
+@keyframes bob { 50% { transform: translateY(-1.5px); } }
+@keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
+@keyframes look { 0%, 30%, 100% { translate: 0 0; } 40%, 55% { translate: -3px 0; } 65%, 80% { translate: 3px 0; } }
+@keyframes nod { 0%, 70%, 100% { transform: rotate(0); } 80% { transform: rotate(-4deg); } 90% { transform: rotate(2deg); } }
+@keyframes glow { 50% { opacity: .45; } }
+@keyframes blinkfast { 50% { opacity: .25; } }
+@keyframes type { from { transform: rotate(-4deg); } to { transform: rotate(5deg); } }
+@keyframes scroll { to { transform: translateY(-54px); } }
+@keyframes spark { 0% { transform: translateY(0); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateY(-16px); opacity: 0; } }
+@keyframes screenglow { 50% { filter: drop-shadow(0 0 6px var(--c)); } }
+@keyframes floor { 50% { opacity: .22; } }
+@keyframes zzz { 0% { transform: translate(0, 4px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(6px, -10px); opacity: 0; } }
+@keyframes saver { 0% { transform: translate(0, 0); } 25% { transform: translate(44px, 18px); } 50% { transform: translate(20px, 26px); } 75% { transform: translate(52px, -6px); } 100% { transform: translate(0, 0); } }
+@keyframes tilt { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+@keyframes dots { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@keyframes hourglass { 0%, 40% { transform: rotate(0); } 60%, 100% { transform: rotate(180deg); } }
+@keyframes shake { 0%, 70%, 100% { transform: translateX(0); } 74%, 82%, 90% { transform: translateX(-2px); } 78%, 86%, 94% { transform: translateX(2px); } }
+@keyframes pop { 0% { transform: scale(.6); } 50% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@keyframes progress { 0% { transform: scaleX(.05); } 100% { transform: scaleX(1); } }
+@keyframes hop { 30% { transform: translateY(-9px); } 60% { transform: translateY(0); } 80% { transform: translateY(-3px); } }
+@keyframes arrow { 50% { translate: 0 2px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .station *, .station { animation: none !important; transition: none !important; }
+}

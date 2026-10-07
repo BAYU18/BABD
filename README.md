@@ -37,6 +37,13 @@ Opens the CEO command center in your browser (`http://127.0.0.1:8800/?token=…`
 
 ![BABD dashboard](docs/dashboard.png)
 
+- **Animated agents**: each card has its robot at its workstation, moving with what the agent is
+  really doing: idle (breathing, blinking, "z z z", a screensaver), working (typing, code scrolling on
+  the monitor, sparks), waiting (head tilt, "…" bubble, hourglass), blocked (shake, red alert),
+  setting up (progress bar), plus a GBrain badge with ↓ / ↑ when it reads or writes memory. Turned
+  off automatically when the system asks for reduced motion.
+
+  ![Agent animations: idle, working, waiting, blocked, setting up](docs/agent-states.gif)
 - **Give the team a goal** and watch the run live: the stage stepper, every message between the
   agents, and the CEO report at the end.
 - **Approve or reject the deploy** when QA has passed (or tick "approve automatically").
