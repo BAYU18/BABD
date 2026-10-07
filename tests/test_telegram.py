@@ -171,6 +171,14 @@ class TelegramTest(unittest.TestCase):
         self.wait(lambda: any("send a Markdown or text file" in t for t in self.fake.texts()))
         self.wait(self.idle, timeout=20)
 
+    def test_filled_template_message_becomes_a_task_document(self):
+        self.call("PUT", "/api/project", {"require_approval": False})
+        self.fake.message(CEO_TOKEN, "/templates")
+        self.wait(lambda: any(t.startswith("Templates") for t in self.fake.texts()))
+        self.fake.message(CEO_TOKEN, "# Bug: login button does nothing\n\n## What happens\nNothing.")
+        self.wait(lambda: any(t.startswith("Task started: Bug: login button does nothing") for t in self.fake.texts()))
+        self.wait(self.idle, timeout=20)
+
     def test_stranger_cannot_press_buttons(self):
         self.fake.push(CEO_TOKEN, callback_query={"id": "cb9", "from": {"id": 99}, "data": "approve:x"})
         self.wait(lambda: self.fake.calls("answerCallbackQuery"))

@@ -46,6 +46,7 @@
         <textarea id="goal" rows="3" placeholder="e.g. Build a login page with email + password and rate limiting — or drop a .md task file here"></textarea>
         <div class="attach" data-attach="command">
           <label class="btn small ghost attach-btn"><input type="file" class="sr-only" accept=".md,.markdown,.mdown,.txt,.text,.rst,text/markdown,text/plain" multiple data-file="command">📎 Attach .md file</label>
+          <button type="button" class="btn small ghost" data-template="command">📋 From template</button>
           <div class="link-input"><input type="url" placeholder="or paste a link to a .md file (GitHub, GitLab, raw URL)" data-link-input="command"><button type="button" class="btn small" data-add-link="command">Add link</button></div>
           <div class="attach-hint muted small">Attached documents go to every agent with this goal. With a document the goal text is optional.</div>
           <div class="attach-list" data-list="command"></div>
@@ -105,6 +106,7 @@
       <textarea id="taskGoals" rows="3" placeholder="One task per line, e.g.&#10;Build a login page with lockout&#10;Add CSV export to the reports page&#10;…or drop .md task files here, or paste links to them (one per line)"></textarea>
         <div class="attach" data-attach="board">
           <label class="btn small ghost attach-btn"><input type="file" class="sr-only" accept=".md,.markdown,.mdown,.txt,.text,.rst,text/markdown,text/plain" multiple data-file="board">📎 Attach .md file</label>
+          <button type="button" class="btn small ghost" data-template="board">📋 From template</button>
           <div class="link-input"><input type="url" placeholder="or paste a link to a .md file (GitHub, GitLab, raw URL)" data-link-input="board"><button type="button" class="btn small" data-add-link="board">Add link</button></div>
           <div class="attach-hint muted small">Each attached file or link becomes its own task, named after its first heading.</div>
           <div class="attach-list" data-list="board"></div>

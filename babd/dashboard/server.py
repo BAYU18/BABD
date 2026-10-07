@@ -1045,6 +1045,16 @@ def make_handler(dash, token, allowed_hosts, security=None):
             if method == "GET" and parts == ["board"]:
                 qs = parse_qs(urlparse(self.path).query)
                 return d.board(history=max(1, min(500, int((qs.get("history") or ["30"])[0]))))
+            if parts == ["templates"]:
+                from .. import templates
+                if method == "GET":
+                    return {"templates": templates.list_templates()}
+                if method == "POST":
+                    b = self.body()
+                    try:
+                        return templates.save(b.get("id"), b.get("title"), b.get("body"), b.get("description", ""))
+                    except templates.TemplateError as e:
+                        raise ApiError(400, str(e))
             if method == "GET" and parts == ["search"]:
                 qs = parse_qs(urlparse(self.path).query)
                 one = lambda k: (qs.get(k) or [""])[0]  # noqa: E731

@@ -1385,6 +1385,48 @@ for (const box of document.querySelectorAll("[data-attach]")) {
   });
 }
 
+// ---- task templates -----------------------------------------------------------------------
+let TEMPLATES = null;
+async function templateModal(which) {
+  try { TEMPLATES = (await api("GET", "templates")).templates; } catch (err) { toast(err.message, "bad"); return; }
+  if (!TEMPLATES.length) { toast("No templates in templates/tasks yet", "bad"); return; }
+  openModal("Task from a template", `
+    <div class="note">Pick a template, fill in the &lt;…&gt; parts, then use it: it becomes this task's document${which === "board" ? " (a task of its own)" : ""}.</div>
+    <div class="tpl-pick">${TEMPLATES.map((t, i) => `<button type="button" class="tpl ${i ? "" : "on"}" data-tpl="${esc(t.id)}"><b>${esc(t.title)}</b><span>${esc(t.description)}</span></button>`).join("")}</div>
+    <textarea id="tplBody" rows="16" spellcheck="true"></textarea>
+    <div class="row tpl-actions">
+      <input type="text" id="tplSaveId" placeholder="save as template id, e.g. my-feature">
+      <button type="button" class="btn small ghost" id="tplSave">Save as template</button>
+      <div class="spacer"></div>
+      <button type="button" class="btn primary" id="tplUse">Use this task</button>
+    </div>`);
+  const show = (id) => {
+    const t = TEMPLATES.find((x) => x.id === id);
+    $("#tplBody").value = t.body;
+    for (const b of document.querySelectorAll("[data-tpl]")) b.classList.toggle("on", b.dataset.tpl === id);
+  };
+  show(TEMPLATES[0].id);
+  $("#modalBody").querySelector(".tpl-pick").onclick = (e) => { const b = e.target.closest("[data-tpl]"); if (b) show(b.dataset.tpl); };
+  $("#tplUse").onclick = () => {
+    const text = $("#tplBody").value.trim();
+    if (!text) { toast("The task is empty", "bad"); return; }
+    const title = docTitle(text, "task");
+    const name = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "task"}.md`;
+    attachments[which].docs.push({ name, content: text, title });
+    renderAttach(which);
+    closeModal();
+    toast(which === "board" ? "Added: press Add to queue" : "Attached: press Run team", "ok");
+  };
+  $("#tplSave").onclick = async () => {
+    const id = $("#tplSaveId").value.trim();
+    try {
+      await api("POST", "templates", { id, title: docTitle($("#tplBody").value, id), body: $("#tplBody").value });
+      toast(`Template ${id} saved`, "ok");
+    } catch (err) { toast(err.message, "bad"); }
+  };
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-template]"); if (b) templateModal(b.dataset.template); });
+
 async function viewDocument(runId) {
   try {
     const r = await api("GET", `runs/${runId}/document`);

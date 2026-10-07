@@ -266,6 +266,16 @@ Team Lead ──report──▶ CEO
   approval, deploy), not taken from the model.
 - Every message is saved in `runs/<id>/messages.jsonl`, with `state.json` and one file per step.
 
+## Task templates
+
+`templates/tasks/` holds Markdown starting points so task documents are consistent: `feature`,
+`bugfix`, `refactor`, `research`, `api-endpoint`. Dashboard: **📋 From template** (goal form or task
+board) → pick one, fill in the `<…>` parts, **Use this task** (it is attached as the task's
+document); **Save as template** keeps your own version. Telegram: `/templates`, `/template <id>`, then
+send the filled-in text back (a message starting with a `#` heading becomes a task document). Command
+line: copy one and run `babd run my-task.md`. Add your own `.md` files there (front matter `title`,
+`description`).
+
 ## Projects: where the agents' work goes
 
 The agents never work inside the BABD installation. Every task belongs to a **project**, and runs in

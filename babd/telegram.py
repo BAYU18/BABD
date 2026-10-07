@@ -218,7 +218,8 @@ class CeoBot(Bot):
             return self.api.send(chat, "BABD CEO bot.\n\nSend a goal as a message, or a .md file, or a link to one: "
                                        "it becomes a task for the team.\n\n/status - what the team is doing\n"
                                        "/tasks - recent tasks\n/project <id> - where new tasks go\n"
-                                       "/cancel <task id> - stop or unqueue a task\n/resume <task id> - continue a failed or interrupted task")
+                                       "/cancel <task id> - stop or unqueue a task\n/resume <task id> - continue a failed or interrupted task\n"
+                                       "/templates - task templates to fill in")
         if cmd == "/status":
             return self.api.send(chat, self.status_text())
         if cmd == "/tasks":
@@ -234,6 +235,13 @@ class CeoBot(Bot):
             self.chat_project[str(chat)] = arg
             self.persist()
             return self.api.send(chat, f"New tasks from this chat go to project {arg}.")
+        if cmd in ("/templates", "/template"):
+            from . import templates
+            ts = templates.list_templates()
+            if not arg:
+                return self.api.send(chat, "Templates (send /template <id>, fill it in, send it back as a message or a .md file):\n"
+                                     + "\n".join(f"• {t['id']} - {t['title']}: {t['description']}" for t in ts))
+            return self.api.send(chat, self.safe(lambda: templates.get(arg)["body"]))
         if cmd == "/resume":
             if not arg:
                 return self.api.send(chat, "Usage: /resume <task id> (a failed, stopped or interrupted task)")
@@ -260,6 +268,8 @@ class CeoBot(Bot):
         from . import taskdocs
         words = text.split()
         links = [w for w in words if w.startswith(("http://", "https://"))]
+        if "\n" in text and text.lstrip().startswith("#"):  # a filled-in template / Markdown: a task document
+            return self.api.send(chat, self.safe(lambda: self.start_task(chat, "", [taskdocs.make("message.md", text, "telegram")])))
         if links and len(words) == len(links):  # only links: each is a task document
             for url in links:
                 self.api.send(chat, self.safe(lambda u=url: self.start_task(chat, "", [taskdocs.from_url(u)])))

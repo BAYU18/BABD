@@ -545,3 +545,11 @@ button.chip { font-family: inherit; cursor: pointer; }
 .login .field { display: grid; gap: 6px; }
 .task-search { flex: 1 1 260px; max-width: 420px; padding: 6px 10px; font-size: 13px; }
 .more-row { display: flex; justify-content: center; margin-top: 10px; }
+.tpl-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.tpl { display: grid; gap: 2px; text-align: left; font: inherit; color: var(--muted); background: var(--bg-2); border: 1px solid var(--stroke);
+  border-radius: 10px; padding: 8px 10px; cursor: pointer; font-size: 12px; }
+.tpl b { color: var(--text); font-size: 13px; }
+.tpl.on { border-color: var(--ceo); box-shadow: 0 0 0 1px var(--ceo); }
+#tplBody { font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
+.tpl-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tpl-actions input { flex: 0 1 240px; }
