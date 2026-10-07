@@ -71,8 +71,12 @@ class ClaudeCode(Harness):
         env = claude_code_routing(self.llm)
         if self.config_dir:
             env["CLAUDE_CONFIG_DIR"] = self.config_dir
-        argv = [self.command_path(), "--print", "--output-format", "json",
-                "--append-system-prompt", system]
+        argv = [self.command_path(), "--print", "--output-format", "json"]
+        # One argument over 128 KiB fails with "Argument list too long": a very long system prompt
+        # goes at the top of the prompt on stdin instead.
+        long_system = len(system.encode()) > 100_000
+        if system and not long_system:
+            argv += ["--append-system-prompt", system]
         if self.llm.get("model"):
             argv += ["--model", self.llm["model"]]
         effort = effort or self.llm.get("effort")
@@ -84,6 +88,8 @@ class ClaudeCode(Harness):
             argv.append("--dangerously-skip-permissions")
         argv += list(self.cfg.get("extra_args") or [])
         prompt = messages[-1]["content"] if len(messages) == 1 else render_prompt("", messages).lstrip("-\n ")
+        if long_system:
+            prompt = f"# Your instructions\n\n{system}\n\n---\n\n{prompt}"
         return argv, env, prompt
 
     def complete(self, system, messages, max_tokens=None, effort=None):

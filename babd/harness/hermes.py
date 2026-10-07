@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import socket
 import subprocess
@@ -18,6 +19,34 @@ from .routing import hermes_routing
 from .tools import HERMES
 
 SESSION_ID_RE = re.compile(r"^session_id:\s*(\S+)", re.M)
+
+# Linux refuses one command-line argument over 128 KiB ("Argument list too long"), and a step's prompt
+# (skills + team memory + the design and code it builds on) is often bigger. So the prompt goes in
+# through stdin: this launcher reads it and puts it into sys.argv inside the Hermes process itself.
+PROMPT_ARG = "@BABD_PROMPT@"
+MAX_ARG_BYTES = 100_000  # safely under the kernel's 131072-byte limit per argument
+LAUNCHER = r"""
+import os, runpy, sys
+prompt = sys.stdin.read()
+null = os.open(os.devnull, os.O_RDONLY)
+os.dup2(null, 0)
+sys.stdin = open(os.devnull)
+script = sys.argv[1]
+sys.argv = [script] + [prompt if a == "@BABD_PROMPT@" else a for a in sys.argv[2:]]
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+def python_of(script):
+    """The interpreter command of a Python script (from its #! line), or None for anything else."""
+    try:
+        with open(script, "rb") as f:
+            first = f.readline(512).decode("utf-8", "replace").strip()
+    except OSError:
+        return None
+    if not first.startswith("#!") or "python" not in first:
+        return None
+    return shlex.split(first[2:])
 
 
 def clean_hermes_output(stdout):
@@ -94,8 +123,7 @@ class HermesLocal(Harness):
         """(argv, env) for one run. Separate from complete() so it can be tested."""
         env, _, provider = hermes_routing(self.llm)
         env["HERMES_HOME"] = self.home
-        prompt = render_prompt(system, messages)
-        argv = [self.command_path(), "chat", "-q", prompt, "-Q"]
+        argv = [self.command_path(), "chat", "-q", PROMPT_ARG, "-Q"]
         if self.llm.get("model"):
             argv += ["-m", self.llm["model"]]
         if provider:
@@ -116,12 +144,27 @@ class HermesLocal(Harness):
             # so tools that need approval fail unless this is on. Use it only in a sandbox.
             argv.append("--yolo")
         argv += list(self.cfg.get("extra_args") or [])
-        return argv, env
+        return self.pass_prompt(argv, render_prompt(system, messages)) + (env,)
+
+    def pass_prompt(self, argv, prompt):
+        """(argv, stdin) that hand `prompt` to Hermes without putting it on the command line when it
+        is large: through the launcher for a Python `hermes` (the usual install), else in a file the
+        agent is told to read (that needs Hermes' file tool)."""
+        if len(prompt.encode()) <= MAX_ARG_BYTES:
+            return [prompt if a == PROMPT_ARG else a for a in argv], None
+        python = python_of(argv[0])
+        if python:
+            return python + ["-I", "-c", LAUNCHER] + argv, prompt
+        path = os.path.join(self.home, "prompts", f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}.md")
+        _write_private(path, prompt)
+        note = (f"Your full task is too long for the command line, so it is in the file {path}. Read the whole "
+                "file first with your file tool, then do exactly what it says and answer as it asks.")
+        return [note if a == PROMPT_ARG else a for a in argv], None
 
     def complete(self, system, messages, max_tokens=None, effort=None):
         self.configure()  # config.yaml always matches the agent's current llm block
-        argv, env = self.build(system, messages)
-        stdout = self.run_process(argv, env)
+        argv, stdin, env = self.build(system, messages)
+        stdout = self.run_process(argv, env, stdin_text=stdin)
         text = clean_hermes_output(stdout)
         if not text:
             raise HarnessError("Hermes Agent: empty response")

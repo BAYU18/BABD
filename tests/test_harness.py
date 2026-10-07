@@ -274,6 +274,37 @@ class HarnessTest(unittest.TestCase):
         self.assertIn("--yolo", argv)
         self.assertEqual(argv[argv.index("--source") + 1], "tool")
 
+    def test_hermes_huge_prompt_goes_through_stdin(self):
+        # Linux refuses one argument over 128 KiB ([Errno 7] Argument list too long)
+        big = "x" * 300_000 + " END"
+        reply = create_harness(self.agents["qa"]).complete("SYS", [{"role": "user", "content": big}])
+        self.assertEqual(reply, "hermes did: SYS")
+        argv = self.calls()[-1]["argv"]
+        self.assertEqual(argv[:2], ["chat", "-q"])
+        self.assertTrue(argv[2].endswith(" END") and len(argv[2]) > 300_000)  # Hermes still got all of it
+        self.assertNotIn("@BABD_PROMPT@", argv)
+
+    def test_hermes_huge_prompt_without_python_hermes_uses_a_file(self):
+        write_exe(self.bin, "hermes", "#!/bin/sh\nprintf '%s' \"$3\" > \"$FAKE_LOG.q\"\necho answered\n")
+        agent = self.agents["qa"]
+        reply = create_harness(agent).complete("SYS", [{"role": "user", "content": "y" * 200_000}])
+        self.assertEqual(reply, "answered")
+        with open(self.log + ".q") as f:
+            note = f.read()
+        self.assertIn("Read the whole file first", note)
+        path = note.split("is in the file ")[1].split(". Read")[0]
+        self.assertTrue(path.startswith(os.path.join(agent["harness"]["home"], "prompts")))
+        with open(path) as f:
+            self.assertIn("y" * 200_000, f.read())
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+    def test_claude_code_huge_system_prompt_goes_to_stdin(self):
+        dev = copy.deepcopy(self.agents["developer"])
+        dev["harness"]["config_dir"] = os.path.join(self.tmp, "claude-dev")
+        argv, _, prompt = create_harness(dev).build("S" * 150_000, [{"role": "user", "content": "task"}])
+        self.assertNotIn("--append-system-prompt", argv)
+        self.assertTrue(prompt.startswith("# Your instructions") and prompt.endswith("task"))
+
     def test_each_agent_gets_its_own_hermes_home(self):
         create_harness(self.agents["qa"]).complete("S", [{"role": "user", "content": "x"}])
         create_harness(self.agents["devops"]).complete("S", [{"role": "user", "content": "x"}])
