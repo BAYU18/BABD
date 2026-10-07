@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babd import flow, mattpocock as mp, skillpacks, superpowers  # noqa: E402
 from babd.config import load_config  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
 from babd.harness import create_harness  # noqa: E402
 from babd.team import Agent, Team  # noqa: E402
 
@@ -66,7 +68,7 @@ class MattPocockTest(unittest.TestCase):
         p = mock.patch.object(flow, "RUNS_DIR", os.path.join(self.tmp, "runs"))
         p.start()
         self.addCleanup(p.stop)
-        self.cfg = copy.deepcopy(load_config())
+        self.cfg = copy.deepcopy(load_config(FIXTURE))
         self.cfg["project"]["gbrain"] = {"enabled": False}
         self.cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         for a in self.cfg["agents"]:
@@ -107,7 +109,7 @@ class MattPocockTest(unittest.TestCase):
         self.assertFalse(set(mp.PACK.skill_names()) & set(superpowers.skill_names()))
 
     def test_agents_json_lists_the_recommended_skills(self):
-        for a in load_config()["agents"]:
+        for a in load_config(FIXTURE)["agents"]:
             self.assertEqual(a["mattpocock"], mp.RECOMMENDED[a["id"]])
             status = skillpacks.recommendation_status(a)
             self.assertEqual(status["have"], status["recommended"], a["id"])

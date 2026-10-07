@@ -21,6 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babd import config, flow  # noqa: E402
 from babd.config import ROOT, load_config  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
 from babd.dashboard.server import Dashboard, make_handler  # noqa: E402
 from babd.team import Agent  # noqa: E402
 
@@ -48,7 +50,7 @@ class DashboardTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.cfg_path = os.path.join(self.tmp, "agents.json")
-        cfg = copy.deepcopy(load_config())
+        cfg = copy.deepcopy(load_config(FIXTURE))
         cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
         cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py

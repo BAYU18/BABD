@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babd import flow  # noqa: E402
 from babd.config import load_config  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
 from babd.flow import FlowError, MessageBus, parse_verdict  # noqa: E402
 from babd.team import Team, apply_run_to_config  # noqa: E402
 
@@ -51,7 +53,7 @@ class FlowTest(unittest.TestCase):
         p = mock.patch.object(flow, "RUNS_DIR", self.tmp)
         p.start()
         self.addCleanup(p.stop)
-        self.cfg = copy.deepcopy(load_config())
+        self.cfg = copy.deepcopy(load_config(FIXTURE))
         self.cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
         self.cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         self.cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py

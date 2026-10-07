@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_dashboard as td  # noqa: E402
 from babd import flow  # noqa: E402
 from babd.config import load_config  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
 from babd.flow import AgentSlots, FlowCancelled, Run  # noqa: E402
 from babd.team import Agent, Team  # noqa: E402
 
@@ -76,7 +78,7 @@ class Recorder:
 
 
 def base_cfg():
-    cfg = copy.deepcopy(load_config())
+    cfg = copy.deepcopy(load_config(FIXTURE))
     cfg["project"]["gbrain"] = {"enabled": False}
     cfg["project"]["superpowers"] = {"enabled": False}
     cfg["project"]["mattpocock"] = {"enabled": False}

@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babd import flow  # noqa: E402
 from babd.config import load_config  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
 from babd.gbrain import GBrain, keywords  # noqa: E402
 from babd.team import Agent, Team  # noqa: E402
 
@@ -92,7 +94,7 @@ class GBrainTest(unittest.TestCase):
                   mock.patch.object(Agent, "ask", scripted(self.log))):
             p.start()
             self.addCleanup(p.stop)
-        self.cfg = copy.deepcopy(load_config())
+        self.cfg = copy.deepcopy(load_config(FIXTURE))
         for a in self.cfg["agents"]:
             a["harness"] = {"type": "direct"}
         self.cfg["project"]["gbrain"] = {"command": self.fake, "home": os.path.join(self.tmp, "brain")}

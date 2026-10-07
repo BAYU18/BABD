@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babd import flow  # noqa: E402
 from babd.config import load_config  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
 from babd.llm import LLMClient, LLMError  # noqa: E402
 from babd.team import Team, apply_report_to_dashboard  # noqa: E402
 
@@ -94,7 +96,7 @@ class TeamTest(unittest.TestCase):
         MockLLM.fail_auth = False
         self.tmp = tempfile.mkdtemp()
         os.environ["TEST_ANTHROPIC_KEY"] = "sk-ant-test"
-        cfg = copy.deepcopy(load_config())
+        cfg = copy.deepcopy(load_config(FIXTURE))
         cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
         cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py

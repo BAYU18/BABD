@@ -1,0 +1,428 @@
+{
+  "project": {
+    "name": "Software Project",
+    "status": "ACTIVE",
+    "progress": 72,
+    "current_goal": "Complete Authentication",
+    "active_task": "QA Testing",
+    "approval_needed": 2,
+    "blockers": 1,
+    "recent_result": "API Completed",
+    "next_action": "Run Integration Tests",
+    "require_approval": [
+      "deploy"
+    ],
+    "max_fix_rounds": 2,
+    "max_parallel_tasks": 3,
+    "parallel_prep": true,
+    "gbrain": {
+      "enabled": true,
+      "strict": true,
+      "allow_cloud": false,
+      "home": ".babd/gbrain",
+      "ref": "latest-stable",
+      "budget_tokens": 1200
+    },
+    "superpowers": {
+      "enabled": true,
+      "enforce": true
+    },
+    "mattpocock": {
+      "enabled": true,
+      "enforce": true
+    },
+    "ceo_telegram": {
+      "enabled": true,
+      "bot_username": "@babd_ceo_bot",
+      "token_env": "TELEGRAM_CEO_BOT_TOKEN",
+      "notify": [
+        "Approvals",
+        "Blockers",
+        "Daily Report"
+      ]
+    }
+  },
+  "agents": [
+    {
+      "id": "lead",
+      "name": "TEAM LEAD / ORCHESTRATOR",
+      "short_name": "Team Lead",
+      "color": "#9b8cff",
+      "status": "working",
+      "main_task": [
+        "MANAGE",
+        "PROJECT"
+      ],
+      "sub_tasks": [
+        {
+          "name": "Plan Work",
+          "state": "done"
+        },
+        {
+          "name": "Assign Agents",
+          "state": "done"
+        },
+        {
+          "name": "Coordinate Results",
+          "state": "active"
+        }
+      ],
+      "llm": {
+        "provider": "Anthropic",
+        "api": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-opus-5-5",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "effort": "high"
+      },
+      "harness": {
+        "type": "direct"
+      },
+      "parallel": 2,
+      "telegram": {
+        "enabled": true,
+        "bot_username": "@babd_lead_bot",
+        "token_env": "TELEGRAM_LEAD_BOT_TOKEN"
+      },
+      "skills": [
+        "GBrain",
+        "Planning",
+        "Task Routing",
+        "Reporting"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "brainstorming",
+        "writing-plans",
+        "subagent-driven-development",
+        "dispatching-parallel-agents",
+        "requesting-code-review",
+        "verification-before-completion",
+        "finishing-a-development-branch",
+        "diagnosing-superpowers",
+        "writing-skills"
+      ],
+      "mattpocock": [
+        "grilling",
+        "to-spec",
+        "to-tickets",
+        "implement-spec",
+        "triage",
+        "wayfinder",
+        "chief-of-staff",
+        "handoff",
+        "to-questionnaire",
+        "wait-what",
+        "retro",
+        "writing-for-agents",
+        "ask-matt"
+      ]
+    },
+    {
+      "id": "architect",
+      "name": "ARCHITECT",
+      "short_name": "Architect",
+      "color": "#38bdf8",
+      "status": "working",
+      "main_task": [
+        "DESIGN",
+        "SYSTEM"
+      ],
+      "sub_tasks": [
+        {
+          "name": "Analyze Requirements",
+          "state": "done"
+        },
+        {
+          "name": "Design Architecture",
+          "state": "done"
+        },
+        {
+          "name": "Research Solutions",
+          "state": "active"
+        }
+      ],
+      "llm": {
+        "provider": "Anthropic",
+        "api": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-opus-5-5",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "effort": "high"
+      },
+      "harness": {
+        "type": "hermes_local",
+        "toolsets": [
+          "web",
+          "file"
+        ],
+        "max_turns": 30,
+        "timeout_sec": 900,
+        "yolo": false
+      },
+      "parallel": 2,
+      "telegram": {
+        "enabled": true,
+        "bot_username": "@babd_architect_bot",
+        "token_env": "TELEGRAM_ARCHITECT_BOT_TOKEN"
+      },
+      "skills": [
+        "GBrain",
+        "System Design",
+        "Web Research",
+        "Diagrams"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "brainstorming",
+        "writing-plans",
+        "dispatching-parallel-agents"
+      ],
+      "mattpocock": [
+        "grilling",
+        "domain-modeling",
+        "codebase-design",
+        "improve-codebase-architecture",
+        "prototype",
+        "research",
+        "to-spec"
+      ]
+    },
+    {
+      "id": "developer",
+      "name": "DEVELOPER",
+      "short_name": "Developer",
+      "color": "#34d399",
+      "status": "working",
+      "main_task": [
+        "BUILD",
+        "SOFTWARE"
+      ],
+      "sub_tasks": [
+        {
+          "name": "Write Code",
+          "state": "done"
+        },
+        {
+          "name": "Refactor Code",
+          "state": "active"
+        },
+        {
+          "name": "Review Code",
+          "state": "todo"
+        }
+      ],
+      "llm": {
+        "provider": "Anthropic",
+        "api": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-sonnet-5-5",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "effort": "medium"
+      },
+      "harness": {
+        "type": "claude_local",
+        "max_turns": 40,
+        "timeout_sec": 1800,
+        "dangerously_skip_permissions": false
+      },
+      "parallel": 2,
+      "telegram": {
+        "enabled": true,
+        "bot_username": "@babd_dev_bot",
+        "token_env": "TELEGRAM_DEV_BOT_TOKEN"
+      },
+      "skills": [
+        "GBrain",
+        "Python",
+        "TypeScript",
+        "Git"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "test-driven-development",
+        "executing-plans",
+        "systematic-debugging",
+        "receiving-code-review",
+        "verification-before-completion",
+        "using-git-worktrees"
+      ],
+      "mattpocock": [
+        "implement",
+        "tdd",
+        "codebase-design",
+        "diagnosing-bugs",
+        "prototype",
+        "pr",
+        "research"
+      ]
+    },
+    {
+      "id": "qa",
+      "name": "QA / TESTER",
+      "short_name": "QA / Tester",
+      "color": "#fbbf24",
+      "status": "working",
+      "main_task": [
+        "VALIDATE",
+        "SOFTWARE"
+      ],
+      "sub_tasks": [
+        {
+          "name": "Create Tests",
+          "state": "done"
+        },
+        {
+          "name": "Find Bugs",
+          "state": "active"
+        },
+        {
+          "name": "Verify Fixes",
+          "state": "todo"
+        }
+      ],
+      "llm": {
+        "provider": "Anthropic",
+        "api": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-sonnet-5-5",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "effort": "medium"
+      },
+      "harness": {
+        "type": "hermes_local",
+        "toolsets": [
+          "terminal",
+          "file"
+        ],
+        "max_turns": 30,
+        "timeout_sec": 1200,
+        "yolo": false
+      },
+      "parallel": 2,
+      "telegram": {
+        "enabled": true,
+        "bot_username": "@babd_qa_bot",
+        "token_env": "TELEGRAM_QA_BOT_TOKEN"
+      },
+      "skills": [
+        "GBrain",
+        "Unit Tests",
+        "E2E Tests",
+        "Bug Triage"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "test-driven-development",
+        "systematic-debugging",
+        "requesting-code-review",
+        "verification-before-completion"
+      ],
+      "mattpocock": [
+        "tdd",
+        "code-review",
+        "diagnosing-bugs",
+        "triage"
+      ]
+    },
+    {
+      "id": "devops",
+      "name": "DEVOPS",
+      "short_name": "DevOps",
+      "color": "#f472b6",
+      "status": "waiting",
+      "main_task": [
+        "DEPLOY &",
+        "OPERATE"
+      ],
+      "sub_tasks": [
+        {
+          "name": "Build",
+          "state": "done"
+        },
+        {
+          "name": "Deploy",
+          "state": "todo"
+        },
+        {
+          "name": "Monitor",
+          "state": "todo"
+        }
+      ],
+      "llm": {
+        "provider": "Custom",
+        "api": "openai",
+        "base_url": "http://localhost:11434/v1",
+        "model": "qwen2.5-coder:7b",
+        "api_key_env": "LOCAL_LLM_API_KEY"
+      },
+      "harness": {
+        "type": "hermes_local",
+        "toolsets": [
+          "terminal",
+          "file"
+        ],
+        "max_turns": 30,
+        "timeout_sec": 1200,
+        "yolo": false
+      },
+      "parallel": 2,
+      "telegram": {
+        "enabled": false,
+        "bot_username": "@babd_devops_bot",
+        "token_env": "TELEGRAM_DEVOPS_BOT_TOKEN"
+      },
+      "skills": [
+        "GBrain",
+        "Docker",
+        "CI/CD",
+        "Monitoring"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "verification-before-completion",
+        "finishing-a-development-branch",
+        "using-git-worktrees",
+        "systematic-debugging"
+      ],
+      "mattpocock": [
+        "wizard",
+        "diagnosing-bugs",
+        "pr",
+        "setup-pre-commit"
+      ]
+    }
+  ],
+  "workflow": [
+    {
+      "step": "PLAN",
+      "owner": "lead",
+      "state": "done"
+    },
+    {
+      "step": "DESIGN",
+      "owner": "architect",
+      "state": "done"
+    },
+    {
+      "step": "CODE",
+      "owner": "developer",
+      "state": "done"
+    },
+    {
+      "step": "TEST",
+      "owner": "qa",
+      "state": "active"
+    },
+    {
+      "step": "DEPLOY",
+      "owner": "devops",
+      "state": "todo"
+    },
+    {
+      "step": "MONITOR",
+      "owner": "devops",
+      "state": "todo"
+    }
+  ]
+}

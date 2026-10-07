@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babd import flow  # noqa: E402
 from babd.config import load_config  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
 from babd.harness import HarnessError, create_harness  # noqa: E402
 from babd.harness import hermes as hermes_mod  # noqa: E402
 from babd.harness import tools  # noqa: E402
@@ -213,7 +215,7 @@ class HarnessTest(unittest.TestCase):
         tools_patch = mock.patch.object(tools, "TOOLS_DIR", os.path.join(self.tmp, "tools"))
         tools_patch.start()
         self.addCleanup(tools_patch.stop)
-        self.cfg = copy.deepcopy(load_config())
+        self.cfg = copy.deepcopy(load_config(FIXTURE))
         self.cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
         self.cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         self.cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py

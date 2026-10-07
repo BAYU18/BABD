@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babd import flow, superpowers as sp  # noqa: E402
 from babd.config import load_config  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "agents.json")  # not the live agents.json
 from babd.harness import create_harness  # noqa: E402
 from babd.team import Agent, Team  # noqa: E402
 
@@ -64,7 +66,7 @@ class SuperpowersTest(unittest.TestCase):
         p = mock.patch.object(flow, "RUNS_DIR", os.path.join(self.tmp, "runs"))
         p.start()
         self.addCleanup(p.stop)
-        self.cfg = copy.deepcopy(load_config())
+        self.cfg = copy.deepcopy(load_config(FIXTURE))
         self.cfg["project"]["gbrain"] = {"enabled": False}
         self.cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         self.cfg["project"]["mattpocock"] = {"enabled": False}  # covered in test_mattpocock.py
@@ -91,7 +93,7 @@ class SuperpowersTest(unittest.TestCase):
             self.assertRegex(f.read(), r"Commit: `[0-9a-f]{40}`")
 
     def test_every_skill_goes_to_at_least_one_agent(self):
-        agents = {a["id"]: a for a in load_config()["agents"]}
+        agents = {a["id"]: a for a in load_config(FIXTURE)["agents"]}
         given = set()
         for a in agents.values():
             self.assertTrue(set(a["superpowers"]) <= set(sp.skill_names()), a["id"])
