@@ -55,6 +55,33 @@ try {
   const external = requests.filter((u) => !(u.startsWith('file://') || u.startsWith('data:')));
   const expectedIds = ['road', 'scenery', 'cars', 'effects', 'hud', 'lighting'];
 
+  // ---- Task 2: road pixel check ----------------------------------------
+  // Note: the headless rasterizer composites the CSS-scaled canvas, so exact
+  // logical columns (0/199) do not read back the drawn colour even on the
+  // pristine baseline (col0 is uniformly 88-grey there too). We therefore
+  // classify the whole backing store by palette instead of sampling columns.
+  const road = await page.evaluate(async () => {
+    const G = window.__GAME__;
+    G.start(); G.pause();
+    for (let i = 0; i < 60; i++) G.step(1 / 60);
+    await new Promise((r) => requestAnimationFrame(r));
+    const cvs = document.getElementById('game');
+    const ctx = cvs.getContext('2d');
+    const img = ctx.getImageData(0, 0, cvs.width, cvs.height).data;
+    let asphaltGreen = 0, dashGrey = 0, nearWhite = 0;
+    for (let i = 0; i < img.length; i += 4) {
+      const r = img[i], g = img[i + 1], b = img[i + 2];
+      if (g > r && g > b && g > 10 && g < 60) asphaltGreen++;
+      if (Math.abs(r - 207) < 25 && Math.abs(g - 207) < 25 && Math.abs(b - 207) < 25) dashGrey++;
+      if (r > 200 && g > 200 && b > 200) nearWhite++;
+    }
+    return { asphaltGreen, dashGrey, nearWhite };
+  });
+
+  check('road: asphalt pixels present', road.asphaltGreen > 100000, `asphaltPixels=${road.asphaltGreen}`);
+  check('road: dash pixels present', road.dashGrey > 0, `dashPixels=${road.dashGrey}`);
+  check('road: bright pixels present', road.nearWhite > 0, `brightPixels=${road.nearWhite}`);
+
   check('renderState() present', result.hasRenderState);
   check('layerCount=6', result.layerCount === 6, `layers=${result.layerCount}`);
   check('layer ids', JSON.stringify(result.layerIds) === JSON.stringify(expectedIds),
@@ -64,6 +91,7 @@ try {
 
   const failed = checks.filter((c) => !c.ok);
   console.log(`\nrender-seam.browser: externalRequests=${external.length} errors=${consoleErrors.length} layers=${result.layerCount}`);
+  console.log(`road: dashPixels=${road.dashGrey} asphaltPixels=${road.asphaltGreen} brightPixels=${road.nearWhite}`);
   if (failed.length) { console.log(`FAILED: ${failed.length}`); process.exitCode = 1; }
   else console.log('PASS');
 } finally {

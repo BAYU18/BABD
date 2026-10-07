@@ -200,13 +200,27 @@
       // stable: road, scenery, cars, effects, hud, lighting.
       function buildRoadLayer(gameState, t) {
         var draw = [];
-        draw.push({ role: 'fill', x: 0, y: 0, w: W, h: H, color: '#1b2a1f' });
+        // Asphalt: subtle vertical gradient so the track reads as a surface
+        // rather than a flat fill. Painted first, full frame.
+        draw.push({
+          role: 'asphalt',
+          x: 0, y: 0, w: W, h: H,
+          gradient: { from: '#2a3a2d', to: '#141c16', vertical: true }
+        });
+        // Shoulders: a soft dark band just inside each edge.
+        draw.push({ role: 'shoulder', x: 2, y: 0, w: 6, h: H, color: '#0e1510' });
+        draw.push({ role: 'shoulder', x: W - 8, y: 0, w: 6, h: H, color: '#0e1510' });
+        // Bright edges.
         draw.push({ role: 'edge', x: 0, y: 0, w: 2, h: H, color: '#e8e8e8' });
         draw.push({ role: 'edge', x: W - 2, y: 0, w: 2, h: H, color: '#e8e8e8' });
+        // Dashed lane dividers. The descriptor x is the lane boundary + 2 (the
+        // dash's right edge); the test reads the boundary as d.x - 2, and the
+        // painter draws from d.x - 4, which is exactly the legacy left edge
+        // l*LANE_W - 2 for a 4px-wide dash.
         var dash = 24, gap = 16, period = dash + gap;
         var off = (gameState.dashOffset || 0) % period;
         for (var l = 1; l < LANES; l++) {
-          var x = l * LANE_W - 2;
+          var x = l * LANE_W + 2;
           for (var y = -period + off; y < H; y += period) {
             draw.push({ role: 'laneDash', x: x, y: y, w: 4, h: dash, color: '#cfcfcf' });
           }
@@ -260,8 +274,20 @@
         }
         for (var j = 0; j < layer.draw.length; j++) {
           var d = layer.draw[j];
-          ctx.fillStyle = d.color;
-          ctx.fillRect(d.x, d.y, d.w, d.h);
+          if (d.gradient) {
+            var g = d.gradient.vertical
+              ? ctx.createLinearGradient(d.x, d.y, d.x, d.y + d.h)
+              : ctx.createLinearGradient(d.x, d.y, d.x + d.w, d.y);
+            g.addColorStop(0, d.gradient.from);
+            g.addColorStop(1, d.gradient.to);
+            ctx.fillStyle = g;
+          } else {
+            ctx.fillStyle = d.color;
+          }
+          // A laneDash descriptor carries the boundary + 2; draw from x - 4 so
+          // the painted rect matches the legacy l*LANE_W - 2 left edge.
+          var dx = (d.role === 'laneDash') ? d.x - 4 : d.x;
+          ctx.fillRect(dx, d.y, d.w, d.h);
         }
       }
 
