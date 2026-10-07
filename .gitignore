@@ -5,3 +5,5 @@ runs/
 workspace/
 .venv/
 *.egg-info/
+.worktrees/
+worktrees/
