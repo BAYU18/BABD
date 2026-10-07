@@ -29,7 +29,9 @@ class Direct(Harness):
         return [f"{self.client.api} SDK ready"]  # LLMClient() already installed the SDK if missing
 
     def complete(self, system, messages, max_tokens=None, effort=None):
-        return self.client.complete(system, messages, max_tokens=max_tokens, effort=effort)
+        text = self.client.complete(system, messages, max_tokens=max_tokens, effort=effort)
+        self.record_usage(getattr(self.client.usage, "last", None))
+        return text
 
 
 class ClaudeCode(Harness):
@@ -107,6 +109,11 @@ class ClaudeCode(Harness):
         text = (result.get("result") or "").strip()
         if not text:
             raise HarnessError("Claude Code: empty result")
+        u = result.get("usage") or {}
+        if u:
+            self.record_usage({"input": sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
+                                                                     "cache_creation_input_tokens")),
+                               "output": u.get("output_tokens") or 0, "cost": result.get("total_cost_usd")})
         return text
 
 

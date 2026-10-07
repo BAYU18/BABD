@@ -6,6 +6,7 @@ config file, environment variables), so each agent keeps its custom LLM whatever
 """
 import os
 import subprocess
+import threading
 
 from ..config import ROOT
 from ..llm import LLMError
@@ -29,6 +30,7 @@ class Harness:
         self.extra_env = {}   # set by the team (e.g. GBRAIN_HOME + the gbrain command); PATH is prepended
         self.skill_packs = {}  # {pack: this agent's skills}, installed natively where the harness supports it
         self.agent_cfg = agent_cfg
+        self._usage = threading.local()
         self.agent_id = agent_cfg["id"]
         self.llm = agent_cfg["llm"]
         self.cfg = harness_config(agent_cfg)
@@ -38,6 +40,16 @@ class Harness:
 
     def complete(self, system, messages, max_tokens=None, effort=None):
         raise NotImplementedError
+
+    # Token counts of this thread's last complete(): {"input", "output", "cost"?}. Harnesses that know
+    # them (direct API, Claude Code) report them; the agent estimates the rest from the text.
+    def take_usage(self):
+        u = getattr(self._usage, "last", None)
+        self._usage.last = None
+        return u
+
+    def record_usage(self, usage):
+        self._usage.last = usage
 
     def describe(self):
         """Short text for the card / CLI, e.g. 'hermes chat - terminal,file'."""

@@ -335,6 +335,27 @@ Fallback model, or `llm.fallback` in `agents.json`; fields left out are the agen
 Each step records its retries and whether the fallback answered (task board → a task's steps, and
 the activity log).
 
+## Tokens, costs and budgets
+
+Every LLM call is counted: per step, agent, task and day (task board tiles and lanes, a task's steps,
+the run panel). The direct API and Claude Code report real token counts (Claude Code also its cost);
+for Hermes BABD estimates them at about 4 characters a token (shown with `~`). For costs, give each
+agent a price in USD per million tokens:
+
+```json
+"llm": {"model": "ag-hermes", "price": {"input": 0.5, "output": 1.5}}
+```
+
+Budgets (Team settings, `project.budget`; 0 = no limit):
+
+| Setting | When it is reached |
+| --- | --- |
+| `tokens_per_task`, `cost_per_task` | the task stops before its next step (raise the budget, then Resume) |
+| `tokens_per_day`, `cost_per_day` | queued tasks wait (checked every minute) until the next day or a higher budget |
+
+`project.skills_mode: "lean"` puts only the start of each skill in the prompts (its core rules, with
+the path of the full text): about 70% fewer skill tokens, at the cost of less detail for the agents.
+
 ## Telegram
 
 The dashboard runs real Telegram bots (long polling: no public address or webhook needed). Create

@@ -180,8 +180,20 @@ def system_section(skills_by_pack):
     return "\n".join(lines)
 
 
-def step_block(names):
-    """Prompt section for one step: each pack's adaptation notes and the full text of each skill."""
+LEAN_CHARS = 1500
+
+
+def lean_text(body, path):
+    """The start of a skill (its core rules come first), cut at a paragraph, plus where the rest is."""
+    if len(body) <= LEAN_CHARS:
+        return body
+    cut = body.rfind("\n\n", 0, LEAN_CHARS)
+    return body[:cut if cut > 400 else LEAN_CHARS].rstrip() + f"\n\n[... the rest of this skill is in {path}]"
+
+
+def step_block(names, lean=False):
+    """Prompt section for one step: each pack's adaptation notes and the text of each skill (in full, or
+    with `lean` (project.skills_mode "lean") only its start, to save tokens)."""
     if not names:
         return ""
     parts = [f"# Skills you must use for this step: {', '.join(names)}"]
@@ -191,8 +203,10 @@ def step_block(names):
             continue
         parts.append(p.adaptation())
         for n in mine:
-            parts.append(f"<skill name=\"{n}\" pack=\"{p.source}\" path=\"skills/{p.key}/{n}/SKILL.md\">\n"
-                         f"{p.load(n)[1]}\n</skill>")
+            path = f"skills/{p.key}/{n}/SKILL.md"
+            body = p.load(n)[1]
+            parts.append(f"<skill name=\"{n}\" pack=\"{p.source}\" path=\"{path}\">\n"
+                         f"{lean_text(body, path) if lean else body}\n</skill>")
     parts.append("**End your answer with a section** `Skills applied:` **with one line for each of: "
                  f"{', '.join(names)}** (`- <skill-name>: <what you did that this skill requires>`). "
                  "BABD checks this section.")

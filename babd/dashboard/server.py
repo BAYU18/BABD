@@ -30,7 +30,7 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram")
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
-               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace")
+               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
@@ -258,6 +258,13 @@ class Dashboard:
                 for k, lo, hi in (("attempts", 1, 10), ("base_delay", 0, 300), ("max_delay", 0, 3600)):
                     if k in body["retry"]:
                         r[k] = max(lo, min(hi, float(body["retry"][k]) if k != "attempts" else int(body["retry"][k])))
+            if isinstance(body.get("budget"), dict):
+                bd = p.setdefault("budget", {})
+                for k in ("tokens_per_task", "cost_per_task", "tokens_per_day", "cost_per_day"):
+                    if k in body["budget"]:
+                        bd[k] = max(0.0, float(body["budget"][k] or 0))
+            if body.get("skills_mode") in ("full", "lean"):
+                p["skills_mode"] = body["skills_mode"]
             if "max_parallel_tasks" in body:
                 p["max_parallel_tasks"] = max(1, min(10, int(body["max_parallel_tasks"])))
             if "parallel_prep" in body:
@@ -422,7 +429,7 @@ class Dashboard:
         return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
                                   "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
-                                  "messages")}
+                                  "usage", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -604,11 +611,53 @@ class Dashboard:
                     return i + 1
         return None
 
+    def usage_today(self):
+        """Tokens and cost of every task started today (from the runs' saved state)."""
+        today = time.strftime("%Y%m%d")
+        total = {"input": 0, "output": 0, "cost": 0.0, "tasks": 0}
+        if not os.path.isdir(flow.RUNS_DIR):
+            return total
+        for rid in sorted(os.listdir(flow.RUNS_DIR), reverse=True):
+            if not rid.startswith(today):
+                if rid[:8].isdigit() and rid[:8] < today:
+                    break
+                continue
+            try:
+                with open(os.path.join(flow.RUNS_DIR, rid, "state.json")) as f:
+                    u = json.load(f).get("usage") or {}
+            except (OSError, ValueError):
+                continue
+            total["tasks"] += 1
+            total["input"] += u.get("input", 0)
+            total["output"] += u.get("output", 0)
+            total["cost"] = round(total["cost"] + (u.get("cost") or 0), 6)
+            if u.get("estimated"):
+                total["estimated"] = True
+            if u.get("cost_unknown"):
+                total["cost_unknown"] = True
+        return total
+
+    def budget_block(self):
+        """Why no new task may start today (project.budget.*_per_day), or None."""
+        b = flow.budget_of(self.load()["project"])
+        if not (b["tokens_per_day"] or b["cost_per_day"]):
+            return None
+        reason = flow.over_budget(self.usage_today(), b["tokens_per_day"], b["cost_per_day"])
+        return f"daily budget reached: {reason}; queued tasks wait until tomorrow or a higher budget" if reason else None
+
     def _pump(self):
         """Start queued tasks while fewer than max_parallel_tasks are busy. A task waiting for the CEO's
         approval does not hold a slot: the agents are free for other tasks meanwhile."""
         limit = self.max_parallel_tasks()
         started = []
+        blocked = self.budget_block() if self.queue else None
+        if blocked:
+            if getattr(self, "_last_block", None) != blocked:
+                self._last_block = blocked
+                log(blocked, "budget")
+                self.hub.publish("tasks", {"event": "budget", "reason": blocked})
+            return
+        self._last_block = None
         with self.tasks_lock:
             while self.queue:
                 busy = sum(1 for c in self.active.values() if c["run"].state["status"] == "running")
@@ -724,14 +773,31 @@ class Dashboard:
                 "queued": [st for st in steps if st.get("status") == "queued"],
                 "done": len(done), "failed": sum(1 for st in steps if st.get("status") == "failed"),
                 "busy_seconds": round(sum(secs), 1), "avg_seconds": round(sum(secs) / len(secs), 1) if secs else None,
+                "usage": usage_sum(st.get("usage") for st in steps),
             })
         counts = {}
         for t in tasks:
             counts[t["status"]] = counts.get(t["status"], 0) + 1
         return {"now": flow.now(), "tasks": tasks, "agents": agents, "counts": counts,
+                "usage_today": self.usage_today(), "budget": flow.budget_of(cfg["project"]),
+                "budget_block": self.budget_block(),
                 "limits": {"max_parallel_tasks": self.max_parallel_tasks(),
                            "parallel_prep": bool(cfg["project"].get("parallel_prep", True))},
                 "stages": [{"key": k, "label": l, "owner": o} for k, l, o, _ in flow.STAGES]}
+
+
+def usage_sum(items):
+    total = {"input": 0, "output": 0, "cost": 0.0}
+    for u in items:
+        if not u:
+            continue
+        total["input"] += u.get("input", 0)
+        total["output"] += u.get("output", 0)
+        total["cost"] = round(total["cost"] + (u.get("cost") or 0), 6)
+        for k in ("estimated", "cost_unknown"):
+            if u.get(k):
+                total[k] = True
+    return total
 
 
 def _alive(pid):
@@ -937,6 +1003,15 @@ def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=N
     dash = Dashboard(cfg_path)
     dash.telegram_on = True
     dash.telegram.reconcile()  # Telegram bots whose token is set start now
+
+    def tick():  # a queue held back (e.g. by the daily budget) is checked again every minute
+        while True:
+            time.sleep(60)
+            try:
+                dash._pump()
+            except Exception as e:
+                log(f"queue check failed: {e}", "dashboard")
+    threading.Thread(target=tick, daemon=True, name="queue-tick").start()
     local = host in ("127.0.0.1", "localhost", "::1")
     allowed = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"} if local else None
     server = ThreadingHTTPServer((host, port), make_handler(dash, token, allowed))

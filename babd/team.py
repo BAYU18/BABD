@@ -58,16 +58,40 @@ class Agent:
 
     def complete(self, system, messages, **kwargs):
         on_retry, cancelled = self.listener.on_retry, self.listener.cancelled
+
+        def counted(harness):
+            def call():
+                text = harness.complete(system, messages, **kwargs)
+                self.count(harness, system, messages, text)
+                return text
+            return call
         try:
-            return resilience.call(lambda: self.harness.complete(system, messages, **kwargs), self.retry,
-                                   on_retry, cancelled)
+            return resilience.call(counted(self.harness), self.retry, on_retry, cancelled)
         except Exception as e:
             fb = self.fallback_harness()
             if fb is None or (cancelled is not None and cancelled.is_set()):
                 raise
             if on_retry:
                 on_retry({"fallback": fb.llm.get("model"), "error": str(e)[:300]})
-            return resilience.call(lambda: fb.complete(system, messages, **kwargs), self.retry, on_retry, cancelled)
+            return resilience.call(counted(fb), self.retry, on_retry, cancelled)
+
+    def count(self, harness, system, messages, reply):
+        """Token use of one call (from the harness, or estimated at ~4 characters a token) and its cost
+        (llm.price: USD per million input / output tokens, or what the harness reports)."""
+        u = harness.take_usage()
+        estimated = not u
+        if estimated:
+            sent = len(system) + sum(len(m["content"]) if isinstance(m.get("content"), str) else len(str(m.get("content")))
+                                     for m in messages)
+            u = {"input": sent // 4, "output": len(reply or "") // 4}
+        u = {"input": int(u.get("input") or 0), "output": int(u.get("output") or 0), "cost": u.get("cost"),
+             "estimated": estimated, "model": harness.llm.get("model")}
+        price = harness.llm.get("price") or self.cfg["llm"].get("price") or {}
+        if u["cost"] is None and price:
+            u["cost"] = (u["input"] * float(price.get("input", 0)) + u["output"] * float(price.get("output", 0))) / 1e6
+        if self.listener.on_usage:
+            self.listener.on_usage(u)
+        return u
 
     def fallback_harness(self):
         """The agent's harness on its fallback model (llm.fallback), or None."""
@@ -119,7 +143,8 @@ class Agent:
         skills = [s for s in skills if s in mine]
         if not skills:
             return self.ask(prompt, **kwargs)
-        full = f"{skillpacks.step_block(skills)}\n\n---\n\n{prompt}"
+        lean = self.project.get("skills_mode") == "lean"
+        full = f"{skillpacks.step_block(skills, lean)}\n\n---\n\n{prompt}"
         out = self.ask(full, **kwargs)
         miss, retried = skillpacks.missing(out, skills), False
         if skillpacks.enforced(self.project, miss):

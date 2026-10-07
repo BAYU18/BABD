@@ -23,6 +23,13 @@
       "base_delay": 5,
       "max_delay": 60
     },
+    "budget": {
+      "tokens_per_task": 0,
+      "cost_per_task": 0,
+      "tokens_per_day": 0,
+      "cost_per_day": 0
+    },
+    "skills_mode": "full",
     "gbrain": {
       "enabled": true,
       "strict": true,

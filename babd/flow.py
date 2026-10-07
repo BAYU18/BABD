@@ -55,6 +55,45 @@ class FlowCancelled(Exception):
     pass
 
 
+class BudgetExceeded(FlowError):
+    pass
+
+
+def add_usage(total, u):
+    """Add one call's usage {"input", "output", "cost", "estimated"} into a running total."""
+    total["input"] = total.get("input", 0) + u["input"]
+    total["output"] = total.get("output", 0) + u["output"]
+    total["calls"] = total.get("calls", 0) + 1
+    if u.get("cost") is not None:
+        total["cost"] = round(total.get("cost", 0.0) + float(u["cost"]), 6)
+    else:
+        total["cost_unknown"] = True
+    if u.get("estimated"):
+        total["estimated"] = True
+    return total
+
+
+def budget_of(project_cfg):
+    b = (project_cfg or {}).get("budget") or {}
+    out = {}
+    for k in ("tokens_per_task", "cost_per_task", "tokens_per_day", "cost_per_day"):
+        try:
+            out[k] = max(0.0, float(b.get(k) or 0))
+        except (TypeError, ValueError):
+            out[k] = 0.0
+    return out
+
+
+def over_budget(usage, tokens_limit, cost_limit):
+    """A reason string when `usage` is at or over a limit (0 = no limit), else None."""
+    tokens = usage.get("input", 0) + usage.get("output", 0)
+    if tokens_limit and tokens >= tokens_limit:
+        return f"{tokens:,} tokens used of a {int(tokens_limit):,} token budget"
+    if cost_limit and usage.get("cost", 0) >= cost_limit:
+        return f"${usage['cost']:.2f} spent of a ${cost_limit:.2f} budget"
+    return None
+
+
 def extract_json(text):
     """First JSON object in a model reply (tolerates ```json fences and surrounding prose)."""
     m = re.search(r"\{.*\}", text or "", re.S)
@@ -167,6 +206,7 @@ class Run:
         self.require_approval = project.get("require_approval", ["deploy"])
         self.max_fix_rounds = int(project.get("max_fix_rounds", 2))
         self.parallel_prep = bool(project.get("parallel_prep", True))
+        self.budget = budget_of(project)
         self.resumed = bool(resume)
         if resume:
             self._load(run_id)
@@ -210,6 +250,7 @@ class Run:
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
             "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [], "skills": [],
             "steps": [], "documents": [taskdocs.summary(d) for d in self.docs], "checkpoints": [], "resumes": 0,
+            "usage": {},
         }
         if self.docs:
             self.write("00-task.md", self.brief + "\n")
@@ -230,6 +271,7 @@ class Run:
         st.update(status="running", error=None, finished_at=None, report=None, blockers=[], stage=None, progress=0,
                   verdict=None, deployed=False, resumes=st.get("resumes", 0) + 1)
         st.setdefault("checkpoints", [])
+        st.setdefault("usage", {})
         st.setdefault("steps", [])
         st["stages"] = {k: "todo" for k, *_ in STAGES}
         for a in st["agents"].values():
@@ -326,6 +368,9 @@ class Run:
     # -- one agent step, always through the GBrain cycle (read -> work -> write) ---------------
 
     def work(self, agent_id, prompt, task, kind, fact=None, skills_for=None):
+        reason = over_budget(self.state["usage"], self.budget["tokens_per_task"], self.budget["cost_per_task"])
+        if reason:
+            raise BudgetExceeded(f"task budget reached: {reason} (raise project.budget, then Resume)")
         agent = self.team.by_id[agent_id]
         skills = skillpacks.for_step(agent.skill_packs, skills_for or kind)
 
@@ -370,7 +415,13 @@ class Run:
                     step["retries"] = step.get("retries", 0) + 1
                 step["last_error"] = info.get("error")
             self.emit("retry", {"agent": agent_id, "kind": kind, **info})
+        def on_usage(u):
+            with self.lock:
+                add_usage(step.setdefault("usage", {}), u)
+                add_usage(self.state["usage"], u)
+                add_usage(self.state["usage"].setdefault("by_agent", {}).setdefault(agent_id, {}), u)
         agent.listener.on_retry, agent.listener.cancelled = on_retry, self.cancelled
+        agent.listener.on_usage = on_usage
         try:
             out = agent.work(prompt, query=(self.goal, task), task=task, page_title=f"{agent.name} · {kind} · {goal_short}",
                              page_slug=f"babd/runs/{self.id}/{n:02d}-{agent_id}-{kind}",
@@ -383,7 +434,7 @@ class Run:
             result = "failed"
             raise
         finally:
-            agent.listener.on_retry = agent.listener.cancelled = None
+            agent.listener.on_retry = agent.listener.cancelled = agent.listener.on_usage = None
             self.slots.release(agent_id)
             with self.lock:
                 step.update(status=result, finished_at=now(), seconds=round(time.monotonic() - started, 1))

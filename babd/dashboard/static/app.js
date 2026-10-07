@@ -500,7 +500,7 @@ function renderRun() {
       <div class="run-goal">${esc(r.goal)}</div>
       ${docChips(r.documents, r.id)}${workspaceLine(r.workspace)}
       <div class="run-meta">${pill(r.status.replace("_", " "), statusColor, r.status === "running")}
-        <span class="muted small">${esc(r.id)} · ${r.progress ?? 0}%${r.qa_rounds ? ` · ${r.qa_rounds} QA fix round(s)` : ""}</span></div>
+        <span class="muted small">${esc(r.id)} · ${r.progress ?? 0}%${r.qa_rounds ? ` · ${r.qa_rounds} QA fix round(s)` : ""}${usageText(r.usage) ? ` · ${esc(usageText(r.usage))}` : ""}</span></div>
       ${r.error ? `<div class="note warn" style="margin-top:8px">${esc(r.error)}</div>` : ""}
       ${RESUMABLE.includes(r.status) ? `<button type="button" class="btn small" style="margin-top:8px" data-resume-run="${esc(r.id)}">Resume from the last finished step</button>` : ""}
     </div>
@@ -903,6 +903,11 @@ $("#btnSettings").addEventListener("click", () => {
     ${field("Project name", text("p_name", p.name))}
     <label class="check"><input type="checkbox" id="p_approval" ${(p.require_approval || []).includes("deploy") ? "checked" : ""}> CEO must approve before DevOps deploys</label>
     ${field("Retries", `<input type="number" id="p_retries" min="1" max="10" value="${esc(p.retry?.attempts ?? 3)}">`, "Tries per step when the LLM has a temporary error (time-out, rate limit, 5xx, lost connection), waiting longer each time; then the agent's fallback model.")}
+    <div class="field"><label>Token budget and prompt size</label>
+      <div class="row2">${field("Tokens per task", `<input type="number" id="b_tt" min="0" step="10000" value="${esc(p.budget?.tokens_per_task || 0)}">`)}${field("USD per task", `<input type="number" id="b_ct" min="0" step="0.5" value="${esc(p.budget?.cost_per_task || 0)}">`)}</div>
+      <div class="row2">${field("Tokens per day", `<input type="number" id="b_td" min="0" step="100000" value="${esc(p.budget?.tokens_per_day || 0)}">`)}${field("USD per day", `<input type="number" id="b_cd" min="0" step="1" value="${esc(p.budget?.cost_per_day || 0)}">`)}</div>
+      <div class="help">0 = no limit. A task over its budget stops before its next step (raise the budget, then Resume); over the daily budget, queued tasks wait. Costs need a price per agent (agents.json llm.price) unless the tool reports them (Claude Code). Hermes token counts are estimates (~4 characters a token).</div>
+      ${field("Skill texts in prompts", select("p_skills_mode", p.skills_mode || "full", [["full", "Full text (most reliable, most tokens)"], ["lean", "Lean: the start of each skill (~70% fewer skill tokens)"]]))}</div>
     ${field("QA fix rounds", `<input type="number" id="p_rounds" min="0" max="5" value="${esc(p.max_fix_rounds ?? 2)}">`, "How many times a failed QA report goes back to the Developer before the run is blocked.")}
     <div class="field"><label>Parallel work</label>
       ${field("Tasks at the same time", `<input type="number" id="p_tasks" min="1" max="10" value="${esc(p.max_parallel_tasks ?? 3)}">`, "More tasks wait in the queue. A task waiting for your approval does not count.")}
@@ -963,6 +968,8 @@ $("#btnSettings").addEventListener("click", () => {
       await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
         max_parallel_tasks: Number($("#p_tasks").value), parallel_prep: $("#p_prep").checked,
         retry: { attempts: Number($("#p_retries").value) },
+        budget: { tokens_per_task: Number($("#b_tt").value), cost_per_task: Number($("#b_ct").value), tokens_per_day: Number($("#b_td").value), cost_per_day: Number($("#b_cd").value) },
+        skills_mode: $('[name="p_skills_mode"]').value,
         gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked },
         ...Object.fromEntries(PACKS().map((k) => [k.key, { enabled: $(`#pk_en_${k.key}`).checked, enforce: $(`#pk_enf_${k.key}`).checked }])) });
       toast("Settings saved", "ok"); closeModal(); refresh();
@@ -983,6 +990,17 @@ const TASK_LABELS = { running: "running", waiting_approval: "waiting for you", q
 const RESUMABLE = ["failed", "cancelled", "interrupted"];
 const ms = (iso) => (iso ? new Date(iso).getTime() : NaN);
 const serverNow = () => Date.now() + boardOffset;
+
+function fmtTok(n) {
+  if (!n) return "0";
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n);
+}
+function usageText(u, long = false) {
+  if (!u || !(u.input || u.output)) return "";
+  const tok = `${u.estimated ? "~" : ""}${fmtTok((u.input || 0) + (u.output || 0))} tokens`;
+  const cost = u.cost ? ` · $${u.cost.toFixed(u.cost < 1 ? 3 : 2)}${u.cost_unknown ? "+" : ""}` : "";
+  return long ? `${tok} (${fmtTok(u.input)} in / ${fmtTok(u.output)} out)${cost}` : tok + cost;
+}
 
 function fmtDur(sec) {
   if (sec == null || !isFinite(sec)) return "—";
@@ -1036,11 +1054,19 @@ function renderBoard() {
     tile("Done", c.done || 0),
     tile("Failed / stopped", (c.failed || 0) + (c.cancelled || 0) + (c.interrupted || 0), (c.failed ? "var(--bad)" : ""), c.interrupted ? `${c.interrupted} interrupted` : ""),
     tile("Agents busy", `${busy}<span class="of"> / ${B.agents.length}</span>`, "", `${steps} step(s) in parallel`),
-  ].join("");
+    tile("Used today", `${B.usage_today.estimated ? "~" : ""}${fmtTok(B.usage_today.input + B.usage_today.output)}<span class="of"> tok</span>`, "",
+      `${B.usage_today.cost ? `$${B.usage_today.cost.toFixed(2)}${B.usage_today.cost_unknown ? "+" : ""} · ` : ""}${budgetLine()}`),
+  ].join("") + (B.budget_block ? `<div class="note warn budget-note">⛔ ${esc(B.budget_block)}</div>` : "");
   $("#boardLimits").textContent = `Up to ${B.limits.max_parallel_tasks} tasks run at the same time; the rest wait in the queue.${B.limits.parallel_prep ? " Inside a task, QA and DevOps prepare while the Developer builds." : ""}`;
   renderLanes();
   renderGantt();
   renderTasks();
+}
+
+function budgetLine() {
+  const b = B.budget || {};
+  const parts = [b.tokens_per_day ? `${fmtTok(b.tokens_per_day)} tok/day` : "", b.cost_per_day ? `$${b.cost_per_day}/day` : ""].filter(Boolean);
+  return parts.length ? `budget ${parts.join(", ")}` : "no daily budget";
 }
 
 function renderLanes() {
@@ -1052,7 +1078,7 @@ function renderLanes() {
     return `<div class="lane ${a.working.length ? "busy" : ""}" style="--c:${esc(a.color)}">
       <div class="lane-head"><b>${esc(a.name)}</b><span class="slots" title="${a.active} of ${a.capacity} slots busy">${boxes}</span><span class="muted small">${a.active}/${a.capacity} slots</span></div>
       <div class="lane-now">${now || '<div class="muted small">Idle: ready for the next step</div>'}</div>${wait}
-      <div class="lane-stats"><span><b>${a.done}</b> done</span><span>avg <b>${fmtDur(a.avg_seconds)}</b></span><span>busy <b>${fmtDur(a.busy_seconds)}</b></span>${a.failed ? `<span class="bad"><b>${a.failed}</b> failed</span>` : ""}</div>
+      <div class="lane-stats"><span><b>${a.done}</b> done</span><span>avg <b>${fmtDur(a.avg_seconds)}</b></span><span>busy <b>${fmtDur(a.busy_seconds)}</b></span>${a.failed ? `<span class="bad"><b>${a.failed}</b> failed</span>` : ""}${usageText(a.usage) ? `<span title="${esc(usageText(a.usage, true))}"><b>${esc(usageText(a.usage))}</b></span>` : ""}</div>
     </div>`;
   }).join("");
 }
@@ -1137,13 +1163,13 @@ function renderTasks() {
     const now = [...working.map((st) => `<span class="who-chip" style="--c:${colorOf(st.agent)}">${esc(nameOf(st.agent))} · ${esc(KIND_LABELS[st.kind] || st.kind)}</span>`),
       ...waiting.map((st) => `<span class="who-chip wait" style="--c:${colorOf(st.agent)}">${esc(nameOf(st.agent))} · waiting for a slot</span>`)].join("");
     const meta = t.status === "queued" ? `#${t.position} in the queue · added ${clock(ms(t.queued_at))}`
-      : `${t.resume ? "resume · " : ""}${esc(t.id)} · started ${clock(startedMs)} · ${live ? `<span data-since="${esc(t.started_at)}">${fmtDur((endMs - startedMs) / 1000)}</span>` : `took ${fmtDur((endMs - startedMs) / 1000)}`}`;
+      : `${t.resume ? "resume · " : ""}${esc(t.id)} · ${usageText(t.usage) ? `${esc(usageText(t.usage))} · ` : ""}started ${clock(startedMs)} · ${live ? `<span data-since="${esc(t.started_at)}">${fmtDur((endMs - startedMs) / 1000)}</span>` : `took ${fmtDur((endMs - startedMs) / 1000)}`}`;
     const open = openTasks.has(t.id);
     const stepRows = (t.steps || []).map((st) => {
       const waited = st.started_at ? (ms(st.started_at) - ms(st.queued_at)) / 1000 : null;
       return `<tr><td><span class="dot" style="background:${colorOf(st.agent)}"></span>${esc(nameOf(st.agent))}</td><td>${esc(KIND_LABELS[st.kind] || st.kind)}</td>
         <td>${pill(st.status, STATUS_COLORS[st.status] || (st.status === "failed" ? "var(--bad)" : "var(--dim)"), st.status === "working")}${st.retries ? ` <span class="muted" title="${esc(st.last_error || "")}">↻ ${st.retries}</span>` : ""}${st.fallback ? ` <span class="muted" title="${esc(st.last_error || "")}">fallback ${esc(st.fallback)}</span>` : ""}</td>
-        <td>${waited != null && waited >= 1 ? fmtDur(waited) : "—"}</td><td>${st.seconds != null ? fmtDur(st.seconds) : st.status === "working" ? `<span data-since="${esc(st.started_at)}"></span>` : "—"}</td></tr>`;
+        <td>${waited != null && waited >= 1 ? fmtDur(waited) : "—"}</td><td title="${esc(usageText(st.usage, true))}">${esc(usageText(st.usage)) || "—"}</td><td>${st.seconds != null ? fmtDur(st.seconds) : st.status === "working" ? `<span data-since="${esc(st.started_at)}"></span>` : "—"}</td></tr>`;
     }).join("");
     return `<article class="task" data-task="${esc(t.id)}">
       <div class="task-row">
@@ -1162,7 +1188,7 @@ function renderTasks() {
       ${t.error ? `<div class="note warn">${esc(t.error)}</div>` : ""}
       ${open && t.documents?.length && t.status !== "queued" ? docChips(t.documents, t.id) : ""}
       ${open ? workspaceLine(t.workspace) : ""}
-      ${open ? `<div class="task-steps">${stepRows ? `<table><thead><tr><th>Agent</th><th>Step</th><th>Status</th><th>Waited</th><th>Took</th></tr></thead><tbody>${stepRows}</tbody></table>` : '<div class="muted small">No steps yet.</div>'}</div>` : ""}
+      ${open ? `<div class="task-steps">${stepRows ? `<table><thead><tr><th>Agent</th><th>Step</th><th>Status</th><th>Waited</th><th>Tokens</th><th>Took</th></tr></thead><tbody>${stepRows}</tbody></table>` : '<div class="muted small">No steps yet.</div>'}</div>` : ""}
     </article>`;
   }).join("");
 }

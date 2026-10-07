@@ -39,6 +39,7 @@ def is_transient(err):
 class Listener(threading.local):
     """Per-thread hooks set by the run around one step: on_retry(info) and a cancel event."""
     on_retry = None
+    on_usage = None
     cancelled = None
 
 

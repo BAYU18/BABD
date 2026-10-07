@@ -8,6 +8,7 @@ Two API styles are supported:
 import importlib
 import subprocess
 import sys
+import threading
 from urllib.parse import urlparse
 
 from .config import resolve_api_key
@@ -54,6 +55,7 @@ def api_style(llm):
 
 class LLMClient:
     def __init__(self, llm, timeout=600.0):
+        self.usage = threading.local()  # .last = {"input", "output"} of this thread's last call
         self.cfg = llm
         self.api = api_style(llm)
         self.model = llm["model"]
@@ -84,7 +86,8 @@ class LLMClient:
             raise LLMError(f"unknown llm.api {self.api!r} (use 'anthropic' or 'openai')")
 
     def complete(self, system, messages, max_tokens=None, effort=None):
-        """Send a conversation and return the assistant's reply text."""
+        """Send a conversation and return the assistant's reply text (token counts in self.usage.last)."""
+        self.usage.last = None
         if self.api == "anthropic":
             return self._anthropic(system, messages, max_tokens or self.cfg.get("max_tokens", 16000), effort)
         return self._openai(system, messages, max_tokens or self.cfg.get("max_tokens", 4096))
@@ -115,6 +118,11 @@ class LLMClient:
         except anthropic.APIConnectionError as e:
             raise LLMError(f"cannot reach {self.base_url or 'api.anthropic.com'}: {e}") from e
 
+        u = getattr(resp, "usage", None)
+        if u is not None:
+            self.usage.last = {"input": (getattr(u, "input_tokens", 0) or 0) + (getattr(u, "cache_read_input_tokens", 0) or 0)
+                               + (getattr(u, "cache_creation_input_tokens", 0) or 0),
+                               "output": getattr(u, "output_tokens", 0) or 0}
         if resp.stop_reason == "refusal":
             details = getattr(resp, "stop_details", None)
             raise LLMError(f"request declined by the model ({getattr(details, 'category', None)})")
@@ -141,6 +149,9 @@ class LLMClient:
         except openai.APIConnectionError as e:
             raise LLMError(f"cannot reach {self.base_url}: {e}") from e
 
+        u = getattr(resp, "usage", None)
+        if u is not None and getattr(u, "prompt_tokens", None) is not None:
+            self.usage.last = {"input": u.prompt_tokens or 0, "output": u.completion_tokens or 0}
         if not resp.choices:
             raise LLMError("endpoint returned no choices")
         choice = resp.choices[0]
