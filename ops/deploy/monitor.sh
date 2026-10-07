@@ -66,8 +66,8 @@ while true; do
     consecutive=$((consecutive + 1))
     echo "$(date -Is) FAILED (${consecutive}/${THRESHOLD})"
     if [ "$consecutive" -eq "$THRESHOLD" ]; then
-      printf '%s  ALERT: server DOWN for %d consecutive checks (${THRESHOLD}) — 192.168.0.222:8080\n' \
-        "$(date -Is)" "$consecutive" >> "$LOG"
+      printf '%s  ALERT: server DOWN for %d consecutive checks (threshold %d) — 192.168.0.222:8080\n' \
+        "$(date -Is)" "$consecutive" "$THRESHOLD" >> "$LOG"
       echo "$(date -Is) *** ALERT: 2D car game server DOWN (192.168.0.222:8080) ***"
     fi
   fi
