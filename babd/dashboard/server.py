@@ -20,14 +20,14 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, save_config, set_env_var
-from .. import superpowers
+from .. import skillpacks
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
 from ..log import add_listener, log
 from ..team import Agent, Team, apply_run_to_config
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram", "superpowers")
+EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback")
 
 
@@ -76,6 +76,9 @@ def public_agent(a):
         a["harness_summary"] = create_harness(a).describe()
     except Exception as e:  # show the problem on the card instead of failing the whole page
         a["harness_summary"] = f"error: {e}"
+    for sp in skillpacks.packs():  # the lists in effect (the role's recommended ones when none is set)
+        a[sp.key] = sp.assigned(a)
+    a["skill_status"] = skillpacks.recommendation_status(a)
     return a
 
 
@@ -123,9 +126,11 @@ class Dashboard:
         return {
             "project": cfg["project"],
             "brain": GBrain(cfg["project"]).status(),
-            "superpowers": {"catalog": superpowers.catalog(), "steps": superpowers.STEP_SKILLS,
-                            "defaults": superpowers.DEFAULT_ASSIGNMENT,
-                            "enabled": superpowers.enabled(cfg["project"])},
+            "skillpacks": [{"key": sp.key, "title": sp.title, "source": sp.source, "url": sp.url,
+                            "catalog": sp.catalog(), "steps": sp.steps, "recommended": sp.recommended,
+                            "enabled": sp.enabled(cfg["project"]), "enforce": sp.enforce(cfg["project"])}
+                           for sp in skillpacks.packs()],
+            "general_skills": skillpacks.GENERAL_RECOMMENDED,
             "workflow": cfg.get("workflow", []),
             "agents": [public_agent(a) for a in cfg["agents"]],
             "harnesses": {k: {"label": c.label, "doc": (c.__doc__ or "").strip().splitlines()[0],
@@ -142,11 +147,15 @@ class Dashboard:
         with self.cfg_lock:
             cfg = self.load()
             a = self.agent_cfg(cfg, agent_id)
-            if "superpowers" in body:
-                known = set(superpowers.skill_names())
-                unknown = [n for n in body["superpowers"] if n not in known]
-                if unknown:
-                    raise ApiError(400, f"unknown superpowers skill: {', '.join(unknown)}")
+            for sp in skillpacks.packs():
+                if sp.key in body:
+                    names = body[sp.key]
+                    if not isinstance(names, list):
+                        raise ApiError(400, f"{sp.key} must be a list of skill names")
+                    unknown = [n for n in names if n not in sp.skill_names()]
+                    if unknown:
+                        raise ApiError(400, f"unknown {sp.key} skill: {', '.join(map(str, unknown))}")
+                    a[sp.key] = list(dict.fromkeys(names))
             for k in EDITABLE_AGENT_FIELDS:
                 if k in body:
                     a[k] = body[k]
@@ -188,11 +197,12 @@ class Dashboard:
                 p["name"] = str(body["name"])[:60]
             if "require_approval" in body:
                 p["require_approval"] = ["deploy"] if body["require_approval"] else []
-            if "superpowers" in body:
-                sp = p.setdefault("superpowers", {})
-                for k in ("enabled", "enforce"):
-                    if k in body["superpowers"]:
-                        sp[k] = bool(body["superpowers"][k])
+            for pack in skillpacks.packs():
+                if isinstance(body.get(pack.key), dict):
+                    sp = p.setdefault(pack.key, {})
+                    for k in ("enabled", "enforce"):
+                        if k in body[pack.key]:
+                            sp[k] = bool(body[pack.key][k])
             if "gbrain" in body:
                 g = p.setdefault("gbrain", {})
                 for k in ("enabled", "strict", "allow_cloud"):

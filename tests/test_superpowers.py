@@ -66,6 +66,7 @@ class SuperpowersTest(unittest.TestCase):
         self.addCleanup(p.stop)
         self.cfg = copy.deepcopy(load_config())
         self.cfg["project"]["gbrain"] = {"enabled": False}
+        self.cfg["project"]["mattpocock"] = {"enabled": False}  # covered in test_mattpocock.py
         for a in self.cfg["agents"]:
             a["harness"] = {"type": "direct"}
             a["llm"]["api_key"] = "test"
@@ -178,7 +179,8 @@ class SuperpowersTest(unittest.TestCase):
     def test_system_prompt_has_the_agents_catalog_only(self):
         qa = Agent(self.cfg["agents"][3], project=self.cfg["project"])
         prompt = qa.system_prompt()
-        self.assertIn("## Superpowers skills (always on)", prompt)
+        self.assertIn("## Skills (always on)", prompt)
+        self.assertIn("### Superpowers (obra/superpowers)", prompt)
         self.assertIn("- test-driven-development:", prompt)
         self.assertNotIn("- brainstorming:", prompt)
 

@@ -103,46 +103,88 @@ When the project folder is a git checkout, the brain is created with `gbrain ini
 gbrain refuses with `local_conflict`). A brain that was half-made by an earlier failed setup is moved
 aside to `.gbrain.failed-<time>` and created again; a working brain is never touched.
 
-## Skills: Superpowers
+## Skills: Superpowers and Matt Pocock's skills
 
-The 15 skills of [obra/superpowers](https://github.com/obra/superpowers) are vendored, unmodified, in
-`skills/superpowers/` (MIT, see `LICENSE` and `SOURCE.md` for the exact commit). They run **locally**:
-nothing is downloaded at run time. Each agent gets the skills its role needs:
+Two skill packs are vendored, unmodified, and run **locally** (nothing is downloaded at run time):
 
-| Agent | Superpowers skills |
-| --- | --- |
-| Team Lead | using-superpowers, brainstorming, writing-plans, subagent-driven-development, dispatching-parallel-agents, requesting-code-review, verification-before-completion, finishing-a-development-branch, diagnosing-superpowers, writing-skills |
-| Architect | using-superpowers, brainstorming, writing-plans, dispatching-parallel-agents |
-| Developer | using-superpowers, test-driven-development, executing-plans, systematic-debugging, receiving-code-review, verification-before-completion, using-git-worktrees |
-| QA / Tester | using-superpowers, test-driven-development, systematic-debugging, requesting-code-review, verification-before-completion |
-| DevOps | using-superpowers, verification-before-completion, finishing-a-development-branch, using-git-worktrees, systematic-debugging |
+| Pack | Folder | Source |
+| --- | --- | --- |
+| Superpowers (15 skills) | `skills/superpowers/` | [obra/superpowers](https://github.com/obra/superpowers), MIT |
+| Matt Pocock's skills (38 skills) | `skills/mattpocock/` | [mattpocock/skills](https://github.com/mattpocock/skills), MIT |
 
-They are **always used**, enforced by BABD rather than left to the model (`babd/superpowers.py`):
+Each folder has the `LICENSE`, a `SOURCE.md` with the exact commit, and an `ADAPTATION.md` that tells
+the agents how the skills map onto this team ("the user" is the CEO through the Team Lead, sub-agents
+are the other agents, questions go under **Open questions** with a recommended answer instead of
+stopping, results not actually observed are marked **NOT RUN**).
 
-- every agent's system prompt has the using-superpowers rule and the list of its skills;
-- every step of a team run gets the **full text** of the agent's skills for that step, plus
-  `skills/superpowers/ADAPTATION.md` (how "your human partner", subagents and approval gates map onto
-  this team):
+### Recommended skills per agent
 
-  | Step | Skills (those the agent has) |
-  | --- | --- |
-  | plan | brainstorming, writing-plans, subagent-driven-development, dispatching-parallel-agents |
-  | design | brainstorming, writing-plans |
-  | code | test-driven-development, executing-plans, using-git-worktrees, verification-before-completion |
-  | test | test-driven-development, systematic-debugging, requesting-code-review, verification-before-completion |
-  | fix | systematic-debugging, receiving-code-review, test-driven-development, verification-before-completion |
-  | deploy | verification-before-completion, finishing-a-development-branch, using-git-worktrees |
-  | report | verification-before-completion, finishing-a-development-branch (+ diagnosing-superpowers when blocked) |
+Each agent gets the skills its role needs. The dashboard marks them **★ Recommended**; everything else
+is **Optional** (available to tick, not needed for the role).
 
-- the answer must end with `Skills applied:` and one line per skill. If one is missing, the agent
-  redoes the step once; what is still missing is recorded in the run and shown with ⚠ in the timeline;
-- agents with native skill support also get the files: Hermes in `HERMES_HOME/skills/superpowers/`
-  (`hermes skills list` shows them), Claude Code in its private config dir's `skills/` (only when BABD
-  owns that dir; your own `~/.claude` is never changed).
+| Agent | Superpowers | Matt Pocock's skills |
+| --- | --- | --- |
+| Team Lead | using-superpowers, brainstorming, writing-plans, subagent-driven-development, dispatching-parallel-agents, requesting-code-review, verification-before-completion, finishing-a-development-branch, diagnosing-superpowers, writing-skills | grilling, to-spec, to-tickets, implement-spec, triage, wayfinder, chief-of-staff, handoff, to-questionnaire, wait-what, retro, writing-for-agents, ask-matt |
+| Architect | using-superpowers, brainstorming, writing-plans, dispatching-parallel-agents | grilling, domain-modeling, codebase-design, improve-codebase-architecture, prototype, research, to-spec |
+| Developer | using-superpowers, test-driven-development, executing-plans, systematic-debugging, receiving-code-review, verification-before-completion, using-git-worktrees | implement, tdd, codebase-design, diagnosing-bugs, prototype, pr, research |
+| QA / Tester | using-superpowers, test-driven-development, systematic-debugging, requesting-code-review, verification-before-completion | tdd, code-review, diagnosing-bugs, triage |
+| DevOps | using-superpowers, verification-before-completion, finishing-a-development-branch, using-git-worktrees, systematic-debugging | wizard, diagnosing-bugs, pr, setup-pre-commit |
 
-Change an agent's skills in the dashboard (Configure → Skills, defaults marked ★) or in `agents.json`
-(`superpowers` list). Team settings has `project.superpowers.enabled` and `enforce` (the redo).
-The skill texts make prompts larger (about 20–70k characters per step), so each step costs more tokens.
+Matt Pocock's skills that no agent gets by default, and why (see `babd/mattpocock.py`): `grill-me` and
+`grill-with-docs` only call grilling / domain-modeling, which are given directly;
+`setup-matt-pocock-skills` is done by BABD itself; `claude-handoff` and `git-guardrails-claude-code`
+change a machine's Claude Code setup; `setup-ts-deep-modules` and `migrate-to-shoehorn` are
+TypeScript-only; `scaffold-exercises`, `teach`, `loop-me` and the three `writing-*` skills are not
+about software delivery.
+
+The basic skills (the short names on each card, e.g. `Python`, `Docker`) also have recommended ones
+per role, starting with **GBrain** for everyone.
+
+Where you see it:
+
+- **Agent card**: a `★ Recommended 18/18 ✓` chip, amber with `· fix` when a recommended skill is off.
+  Click it to open the agent's Skills tab.
+- **Skills tab** (Configure → Skills): a summary ("11 of 13 recommended skills are on"), a **Turn on
+  all recommended** button, recommended basic skills you can add with one click, and per pack the
+  recommended skills first (each with a plain-language line on what it does for you and the steps it
+  is used in) and the optional ones folded away.
+- **★ Skill guide** (top bar): every agent with its recommended skills, ✓ on / ✗ off.
+- **Workspace image**: the same `★ Recommended n/m` chip on each card.
+
+### Always used
+
+BABD enforces the skills around every step rather than leaving it to the model (`babd/skillpacks.py`):
+
+- every agent's system prompt has the rule (check for a matching skill before any action) and the list
+  of its skills, pack by pack;
+- every step of a team run gets the **full text** of the agent's skills for that step, from both packs,
+  plus each pack's `ADAPTATION.md`:
+
+  | Step | Superpowers | Matt Pocock's skills |
+  | --- | --- | --- |
+  | plan | brainstorming, writing-plans, subagent-driven-development, dispatching-parallel-agents | grilling, to-spec, to-tickets |
+  | design | brainstorming, writing-plans | domain-modeling, codebase-design, grilling |
+  | code | test-driven-development, executing-plans, using-git-worktrees, verification-before-completion | implement, tdd, codebase-design |
+  | test | test-driven-development, systematic-debugging, requesting-code-review, verification-before-completion | code-review, tdd, diagnosing-bugs |
+  | fix | systematic-debugging, receiving-code-review, test-driven-development, verification-before-completion | diagnosing-bugs, tdd |
+  | deploy | verification-before-completion, finishing-a-development-branch, using-git-worktrees | wizard, pr |
+  | report | verification-before-completion, finishing-a-development-branch (+ diagnosing-superpowers when blocked) | wait-what, retro (+ to-questionnaire when blocked) |
+
+  (a step uses only the skills the agent has; the others stay in its catalog and are used when they fit);
+- the answer must end with `Skills applied:` and one line per skill (the exact name). If one is
+  missing, the agent redoes the step once; what is still missing is recorded in the run and shown with
+  ⚠ in the timeline;
+- agents with native skill support also get the files: Hermes in `HERMES_HOME/skills/superpowers/` and
+  `HERMES_HOME/skills/mattpocock/` (`hermes skills list` shows them as local, enabled), Claude Code in
+  its private config dir's `skills/` (only when BABD owns that dir; your own `~/.claude` is never
+  changed).
+
+Change an agent's skills in the dashboard or in `agents.json` (`superpowers` and `mattpocock` lists;
+without a list the role's recommended skills apply). Team settings has `enabled` and `enforce` (the
+redo) per pack: `project.superpowers`, `project.mattpocock`.
+
+The skill texts make prompts larger: in a team run a step's skills add about 20–80k characters
+(roughly 5–20k tokens; the largest is the Team Lead's plan), so each step costs more tokens.
 
 ## How the agents talk to each other
 
@@ -172,12 +214,12 @@ Team Lead ──report──▶ CEO
 | File | Description |
 | --- | --- |
 | `install.sh` | One-command install (see above) |
-| `workspace.svg` | The illustration as a scalable vector (1920×1658) |
+| `workspace.svg` | The illustration as a scalable vector (1920×1802) |
 | `workspace.png` | The same image rendered as a PNG |
 | `agents.json` | **Configuration** for each agent (LLM, harness, Telegram bot, skills, tasks, status) and for the CEO dashboard and flow |
 | `generate_workspace.py` | Script that reads `agents.json` and writes `workspace.svg` |
-| `babd/` | The runtime: LLM clients, harnesses (`harness/`), team flow (`flow.py`), team memory (`gbrain.py`), dashboard (`dashboard/`) and the command line |
-| `skills/` | Instruction files for skills (see `skills/README.md`); `skills/superpowers/` holds the vendored Superpowers skills |
+| `babd/` | The runtime: LLM clients, harnesses (`harness/`), team flow (`flow.py`), team memory (`gbrain.py`), skill packs (`skillpacks.py`, `superpowers.py`, `mattpocock.py`), dashboard (`dashboard/`) and the command line |
+| `skills/` | Instruction files for skills (see `skills/README.md`); `skills/superpowers/` and `skills/mattpocock/` hold the vendored skill packs |
 | `tests/` | Tests: GBrain read/write around every step (fake gbrain CLI), the flow with scripted agents, the dashboard API over HTTP, real HTTP calls through both SDKs to a mock LLM server, and fake `hermes` / `claude` CLIs |
 
 ## Command line
@@ -340,6 +382,8 @@ Each agent has an **AGENT CONFIG** section on its card, filled from `agents.json
 | `telegram.bot_username` | The agent's bot username (from @BotFather) |
 | `telegram.token_env` | Name of the environment variable that holds the bot token |
 | `skills` | List of skills, added to the agent's system prompt. Add `skills/<name>.md` to give a skill real instructions |
+| `superpowers` | Superpowers skills of this agent (names of folders in `skills/superpowers/`). Without it: the ones recommended for the role |
+| `mattpocock` | Matt Pocock's skills of this agent (names of folders in `skills/mattpocock/`). Without it: the ones recommended for the role |
 
 `project.ceo_telegram` configures the CEO's own Telegram bot, which receives
 approvals, blockers and reports (`notify`).

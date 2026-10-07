@@ -25,6 +25,10 @@
       "enabled": true,
       "enforce": true
     },
+    "mattpocock": {
+      "enabled": true,
+      "enforce": true
+    },
     "ceo_telegram": {
       "enabled": true,
       "bot_username": "@babd_ceo_bot",
@@ -94,6 +98,21 @@
         "finishing-a-development-branch",
         "diagnosing-superpowers",
         "writing-skills"
+      ],
+      "mattpocock": [
+        "grilling",
+        "to-spec",
+        "to-tickets",
+        "implement-spec",
+        "triage",
+        "wayfinder",
+        "chief-of-staff",
+        "handoff",
+        "to-questionnaire",
+        "wait-what",
+        "retro",
+        "writing-for-agents",
+        "ask-matt"
       ]
     },
     {
@@ -154,6 +173,15 @@
         "brainstorming",
         "writing-plans",
         "dispatching-parallel-agents"
+      ],
+      "mattpocock": [
+        "grilling",
+        "domain-modeling",
+        "codebase-design",
+        "improve-codebase-architecture",
+        "prototype",
+        "research",
+        "to-spec"
       ]
     },
     {
@@ -213,6 +241,15 @@
         "receiving-code-review",
         "verification-before-completion",
         "using-git-worktrees"
+      ],
+      "mattpocock": [
+        "implement",
+        "tdd",
+        "codebase-design",
+        "diagnosing-bugs",
+        "prototype",
+        "pr",
+        "research"
       ]
     },
     {
@@ -274,6 +311,12 @@
         "systematic-debugging",
         "requesting-code-review",
         "verification-before-completion"
+      ],
+      "mattpocock": [
+        "tdd",
+        "code-review",
+        "diagnosing-bugs",
+        "triage"
       ]
     },
     {
@@ -334,6 +377,12 @@
         "finishing-a-development-branch",
         "using-git-worktrees",
         "systematic-debugging"
+      ],
+      "mattpocock": [
+        "wizard",
+        "diagnosing-bugs",
+        "pr",
+        "setup-pre-commit"
       ]
     }
   ],

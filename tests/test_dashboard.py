@@ -51,6 +51,7 @@ class DashboardTest(unittest.TestCase):
         cfg = copy.deepcopy(load_config())
         cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
         cfg["project"]["superpowers"] = {"enabled": False}  # covered in test_superpowers.py
+        cfg["project"]["mattpocock"] = {"enabled": False}  # covered in test_mattpocock.py
         for a in cfg["agents"]:
             a["harness"] = {"type": "direct"}
         with open(self.cfg_path, "w") as f:
@@ -156,6 +157,28 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual((a["skills"], a["main_task"]), (["Go", "Rust"], ["SHIP", "CODE"]))
         status, p = self.call("PUT", "/api/project", {"name": "Shop", "require_approval": False, "max_fix_rounds": 9})
         self.assertEqual((p["name"], p["require_approval"], p["max_fix_rounds"]), ("Shop", [], 5))
+
+    def test_skill_packs_and_recommendations(self):
+        state = self.call("GET", "/api/state")[1]
+        self.assertEqual([p["key"] for p in state["skillpacks"]], ["superpowers", "mattpocock"])
+        mp = state["skillpacks"][1]
+        self.assertEqual(len(mp["catalog"]), 38)
+        tdd = [c for c in mp["catalog"] if c["name"] == "tdd"][0]
+        self.assertTrue(tdd["plain"] and tdd["steps"])
+        self.assertIn("tdd", mp["recommended"]["developer"])
+        self.assertIn("Docker", state["general_skills"]["devops"])
+        dev = [a for a in state["agents"] if a["id"] == "developer"][0]
+        self.assertEqual(dev["skill_status"]["have"], dev["skill_status"]["recommended"])
+        self.assertEqual(self.call("PUT", "/api/agents/developer", {"mattpocock": ["tdd", "nope"]})[0], 400)
+        self.assertEqual(self.call("PUT", "/api/agents/developer", {"mattpocock": "tdd"})[0], 400)
+        status, dev = self.call("PUT", "/api/agents/developer", {"mattpocock": ["tdd", "teach"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(dev["mattpocock"], ["tdd", "teach"])
+        self.assertIn("diagnosing-bugs", dev["skill_status"]["packs"]["mattpocock"]["missing"])
+        self.assertEqual(dev["skill_status"]["packs"]["mattpocock"]["extra"], ["teach"])
+        self.assertEqual(json.loads(read(self.cfg_path))["agents"][2]["mattpocock"], ["tdd", "teach"])
+        p = self.call("PUT", "/api/project", {"mattpocock": {"enabled": True, "enforce": False}})[1]
+        self.assertEqual(p["mattpocock"], {"enabled": True, "enforce": False})
 
     def test_chat_job(self):
         with mock.patch.object(Agent, "chat", lambda self, m, **kw: (self.history.append({"role": "user", "content": m}),

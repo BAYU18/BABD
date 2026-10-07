@@ -19,16 +19,16 @@ for _cls in (Direct, HermesLocal, HermesGateway, ClaudeCode, Process):
 
 
 def create_harness(agent_cfg, project=None):
-    """The agent's harness. With `project`, it also knows the agent's Superpowers skills (setup copies
-    them into harnesses that load skills natively)."""
+    """The agent's harness. With `project`, it also knows the agent's skills of every enabled skill pack
+    (setup copies them into harnesses that load skills natively)."""
     kind = harness_config(agent_cfg).get("type", "direct")
     cls = HARNESSES.get(kind)
     if not cls:
         raise HarnessError(f"agent {agent_cfg['id']}: unknown harness {kind!r} (known: {', '.join(HARNESSES)})")
     h = cls(agent_cfg)
     if project is not None:
-        from .. import superpowers
-        h.superpowers = superpowers.assigned(agent_cfg) if superpowers.enabled(project) else []
+        from .. import skillpacks
+        h.skill_packs = skillpacks.agent_skills(agent_cfg, project)
     return h
 
 

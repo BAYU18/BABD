@@ -10,7 +10,7 @@ from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-W, H = 1920, 1658
+W, H = 1920, 1802
 
 BG = "#0d1628"
 PANEL = "#15223a"
@@ -214,16 +214,32 @@ def chip_width(s):
 
 
 def chip_skills(agent):
-    """Skill chips for a card: its skills plus one chip for its Superpowers skills."""
-    sp = agent.get("superpowers") or []
-    return list(agent["skills"]) + ([f"Superpowers ×{len(sp)}"] if sp else [])
+    """Skill chips for a card: its skills, one chip per skill pack, and how many of the skills
+    recommended for its role are on (a "★" chip)."""
+    chips = list(agent["skills"])
+    for key, short in (("superpowers", "Superpowers"), ("mattpocock", "Pocock")):
+        names = agent.get(key) or []
+        if names:
+            chips.append(f"{short} ×{len(names)}")
+    try:
+        from babd.skillpacks import recommendation_status
+        st = recommendation_status(agent)
+        if st["recommended"]:
+            ok = st["have"] == st["recommended"]
+            chips.append((f"★ Recommended {st['have']}/{st['recommended']}" + (" ✓" if ok else ""), GOOD if ok else WARN))
+    except Exception:  # the image must still draw without the runtime
+        pass
+    return chips
 
 
 def skill_chips(x, y, w, skills, color):
-    """Wrapping skill chips + an "Add Skill" chip. Returns the bottom y."""
+    """Wrapping skill chips + an "Add Skill" chip. A skill may be (label, color). Returns the bottom y."""
     cx, cy = x, y
     items = [(s, False) for s in skills] + [("+ Add Skill", True)]
     for s, is_add in items:
+        c = color
+        if isinstance(s, tuple):
+            s, c = s
         cw = chip_width(s)
         if cx + cw > x + w and cx > x:
             cx, cy = x, cy + 32
@@ -231,9 +247,9 @@ def skill_chips(x, y, w, skills, color):
             rect(cx, cy, cw, 26, "none", r=13, stroke=MUTED, sw=1.4, extra='stroke-dasharray="4 3"')
             text(cx + cw / 2, cy + 17.5, s, size=12, fill=MUTED, weight=700, anchor="middle")
         else:
-            rect(cx, cy, cw, 26, color, r=13, opacity=0.14)
-            rect(cx, cy, cw, 26, "none", r=13, stroke=color, sw=1, opacity=0.55)
-            text(cx + cw / 2, cy + 17.5, s, size=12, fill=color, weight=700, anchor="middle")
+            rect(cx, cy, cw, 26, c, r=13, opacity=0.14)
+            rect(cx, cy, cw, 26, "none", r=13, stroke=c, sw=1, opacity=0.55)
+            text(cx + cw / 2, cy + 17.5, s, size=12, fill=c, weight=700, anchor="middle")
         cx += cw + 6
     return cy + 26
 
@@ -469,8 +485,8 @@ def build(cfg):
 
     # geometry
     agents_x0, card_w, gap = 40, 297, 24
-    agents_y, agents_h = 640, 798
-    lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 440
+    agents_y, agents_h = 712, 870
+    lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 512
     dash_x, dash_y, dash_w, dash_h = 1360, 30, 520, agents_y + agents_h - 30
 
     # --- connections ---------------------------------------------------

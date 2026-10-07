@@ -20,7 +20,7 @@ import threading
 import time
 
 from .config import ROOT
-from . import superpowers
+from . import skillpacks
 from .gbrain import one_line, slugify
 
 RUNS_DIR = os.path.join(ROOT, "runs")
@@ -164,7 +164,7 @@ class Run:
 
     def work(self, agent_id, prompt, task, kind, fact=None, skills_for=None):
         agent = self.team.by_id[agent_id]
-        skills = superpowers.for_step(agent.cfg | {"superpowers": agent.superpowers}, skills_for or kind)
+        skills = skillpacks.for_step(agent.skill_packs, skills_for or kind)
 
         def on_skills(entry):
             entry = {**entry, "after_seq": len(self.bus.messages), "kind": kind}

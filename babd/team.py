@@ -4,7 +4,7 @@ import datetime
 from .config import load_skill_text
 from .flow import Run, extract_json  # noqa: F401  (extract_json re-exported for callers)
 from .gbrain import BrainError, GBrain, format_memory, one_line
-from . import superpowers
+from . import skillpacks
 from .harness import create_harness
 
 
@@ -17,8 +17,9 @@ class Agent:
         self.brain = brain if brain is not None and brain.enabled else None
         if self.brain:
             self.harness.extra_env = self.brain.agent_env()  # the agent's own `gbrain` command
-        self.superpowers = superpowers.assigned(cfg) if superpowers.enabled(project) else []
-        self.enforce_skills = (project or {}).get("superpowers", {}).get("enforce", True)
+        self.project = project or {}
+        self.skill_packs = skillpacks.agent_skills(cfg, project)  # {pack: skills}, only enabled packs
+        self.superpowers = self.skill_packs.get("superpowers", [])
         self.history = []
 
     @property
@@ -40,8 +41,9 @@ class Agent:
             text = load_skill_text(skill)
             if text:
                 lines.append(f"\n## Skill: {skill}\n{text}")
-        if self.superpowers:
-            lines.append("\n" + superpowers.system_section(self.cfg | {"superpowers": self.superpowers}))
+        section = skillpacks.system_section(self.skill_packs)
+        if section:
+            lines.append("\n" + section)
         lines.append("\nWork concretely: produce the actual design, code, tests or steps, not a description "
                      "of what you would do. Say plainly what is still missing or blocked.")
         return "\n".join(lines)
@@ -79,21 +81,22 @@ class Agent:
         return out
 
     def _with_skills(self, prompt, skills, on_skills=None, **kwargs):
-        """Run the step with its Superpowers skills in the prompt; check the answer accounts for each
-        one in "Skills applied:", and ask once to redo the step when one is missing."""
-        skills = [s for s in skills if s in self.superpowers]
+        """Run the step with its skills (all packs) in the prompt; check the answer accounts for each
+        one in "Skills applied:", and ask once to redo the step when one is missing (if its pack enforces)."""
+        mine = skillpacks.all_names(self.skill_packs)
+        skills = [s for s in skills if s in mine]
         if not skills:
             return self.ask(prompt, **kwargs)
-        full = f"{superpowers.step_block(skills)}\n\n---\n\n{prompt}"
+        full = f"{skillpacks.step_block(skills)}\n\n---\n\n{prompt}"
         out = self.ask(full, **kwargs)
-        miss, retried = superpowers.missing(out, skills), False
-        if miss and self.enforce_skills:
+        miss, retried = skillpacks.missing(out, skills), False
+        if skillpacks.enforced(self.project, miss):
             retried = True
             out = self.ask(f"{full}\n\n---\n\n## Your previous answer\n{out}\n\n## Redo required\n"
                            f"You did not show how you applied: {', '.join(miss)}. Redo the task following "
                            f"{'that skill' if len(miss) == 1 else 'those skills'}, and end with the "
                            f"\"Skills applied:\" section, one line for each of: {', '.join(skills)}.", **kwargs)
-            miss = superpowers.missing(out, skills)
+            miss = skillpacks.missing(out, skills)
         if on_skills:
             on_skills({"agent": self.id, "op": "skills", "skills": skills, "missing": miss, "retried": retried,
                        "at": now()})

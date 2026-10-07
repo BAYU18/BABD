@@ -76,15 +76,19 @@ class HermesLocal(Harness):
         return [f"config {os.path.relpath(os.path.join(self.home, 'config.yaml'), ROOT)}"] + self._native_skills()
 
     def _native_skills(self):
-        """Superpowers skills as native Hermes skills (HERMES_HOME/skills/superpowers/<name>)."""
-        from .. import superpowers
-        dest = os.path.join(self.home, "skills", "superpowers")
-        if not self.superpowers:
-            if os.path.isdir(dest):
-                shutil.rmtree(dest)
-            return []
-        superpowers.install_native(self.superpowers, dest)
-        return [f"{len(self.superpowers)} superpowers skills"]
+        """Skill-pack skills as native Hermes skills (HERMES_HOME/skills/<pack>/<name>)."""
+        from .. import skillpacks
+        notes = []
+        for pack in skillpacks.packs():
+            dest = os.path.join(self.home, "skills", pack.key)
+            names = self.skill_packs.get(pack.key) or []
+            if not names:
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest)
+                continue
+            skillpacks.install_native(names, dest)
+            notes.append(f"{len(names)} {pack.key} skills")
+        return notes
 
     def build(self, system, messages):
         """(argv, env) for one run. Separate from complete() so it can be tested."""

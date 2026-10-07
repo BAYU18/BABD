@@ -195,7 +195,8 @@ function agentCard(a) {
         <span class="chip" title="${esc(a.harness_summary)}">Harness <b>${esc(harnessLabel)}</b></span>
         <span class="chip" title="${esc(llm.base_url || "")}">LLM <b>${esc(llm.model)}</b></span>
         <span class="chip ${llm.api_key_set ? "ok" : "bad"}">${llm.api_key_set ? "key set" : "no key"}</span>
-        ${S.superpowers?.enabled && (a.superpowers ?? []).length ? `<span class="chip" title="${esc(a.superpowers.join("\n"))}">Superpowers <b>×${a.superpowers.length}</b></span>` : ""}
+        ${recChip(a)}
+        ${packsChip(a)}
         ${a.telegram?.enabled ? `<span class="chip">Telegram <b>${esc(a.telegram.bot_username)}</b></span>` : ""}
         ${check ? `<span class="chip ${check.ok ? "ok" : "bad"}" title="${esc(check.summary)}">${check.ok ? "check OK" : "check failed"}</span>` : ""}
       </div>
@@ -206,6 +207,89 @@ function agentCard(a) {
       </div>
     </div>
   </article>`;
+}
+
+// ---- skills: packs and what is recommended per agent --------------------------------------
+const PACKS = () => S.skillpacks || [];
+const STEP_LABELS = { plan: "Plan", design: "Design", code: "Code", test_report: "Test", fix: "Fix",
+  deploy_report: "Deploy", report: "Report", report_blocked: "Report when blocked" };
+const packList = (f, p) => f[p.key] ?? p.recommended[f.id] ?? [];
+
+function recStatus(f) {
+  const out = { packs: {}, have: 0, total: 0 };
+  for (const p of PACKS()) {
+    const rec = p.recommended[f.id] || [];
+    const mine = packList(f, p);
+    out.packs[p.key] = { rec, missing: rec.filter((n) => !mine.includes(n)) };
+  }
+  const listed = (f.skills || []).map((s) => s.toLowerCase());
+  const gen = (S.general_skills || {})[f.id] || [];
+  out.general = { rec: gen, missing: gen.filter((n) => !listed.includes(n.toLowerCase())) };
+  for (const part of [...Object.values(out.packs), out.general]) { out.total += part.rec.length; out.have += part.rec.length - part.missing.length; }
+  return out;
+}
+
+function recChip(a) {
+  const st = recStatus(a);
+  if (!st.total) return "";
+  const missing = [...st.general.missing, ...Object.values(st.packs).flatMap((x) => x.missing)];
+  const ok = !missing.length;
+  const title = ok ? "Every skill recommended for this agent is on. Click to see them." : `Recommended but off:\n${missing.join("\n")}\nClick to fix.`;
+  return `<button type="button" class="chip rec ${ok ? "ok" : "warn"}" data-act="skills" title="${esc(title)}">★ Recommended <b>${st.have}/${st.total}</b>${ok ? " ✓" : " · fix"}</button>`;
+}
+
+function packsChip(a) {
+  const on = PACKS().filter((p) => p.enabled && packList(a, p).length);
+  if (!on.length) return "";
+  const title = on.map((p) => `${p.title}:\n${packList(a, p).join("\n")}`).join("\n\n");
+  return `<span class="chip" title="${esc(title)}">Skill packs <b>${on.map((p) => `${esc(p.title.split(" ")[0])} ×${packList(a, p).length}`).join(" · ")}</b></span>`;
+}
+
+function packSection(f, p) {
+  const rec = p.recommended[f.id] || [];
+  const mine = packList(f, p);
+  const byName = Object.fromEntries(p.catalog.map((c) => [c.name, c]));
+  const recItems = rec.filter((n) => byName[n]).map((n) => byName[n]);
+  const others = p.catalog.filter((c) => !rec.includes(c.name));
+  const item = (c, isRec) => {
+    const on = mine.includes(c.name);
+    const steps = c.steps.map((k) => STEP_LABELS[k] || k);
+    return `<label class="sp-item ${isRec ? "rec" : ""} ${isRec && !on ? "off" : ""}"><input type="checkbox" name="pk_${p.key}_${esc(c.name)}" ${on ? "checked" : ""}>
+      <span><b>${esc(c.name)}</b> ${isRec ? '<span class="rec-badge">★ Recommended</span>' : '<span class="opt-badge">Optional</span>'}${isRec && !on ? ' <span class="off-badge">off</span>' : ""}
+        <span class="plain">${esc(c.plain || c.description)}</span>
+        <span class="help">${c.optional ? `Not given by default: ${esc(c.optional)} · ` : ""}${steps.length ? `used in: ${esc([...new Set(steps)].join(", "))}` : "used whenever it fits"}</span></span></label>`;
+  };
+  const onCount = mine.length;
+  const recOn = rec.filter((n) => mine.includes(n)).length;
+  return `<div class="field pack-head"><label>${esc(p.title)} · <a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.source)}</a> · runs locally</label>
+      <div class="help">${recOn} of ${rec.length} recommended on · ${onCount} in use. ${p.enabled ? 'Skills that are on are always used: on every team step they fit, their full text goes into the prompt and the answer must end with "Skills applied".' : "This pack is turned off in Team settings."}</div></div>
+    ${recItems.length ? `<div class="sp-list">${recItems.map((c) => item(c, true)).join("")}</div>` : '<div class="muted small">Nothing in this pack is needed for this role.</div>'}
+    ${others.length ? `<details class="sp-more" data-pack="${esc(p.key)}"><summary>Optional skills (${others.length}): not needed for this role</summary>
+      <div class="sp-list">${others.map((c) => item(c, false)).join("")}</div></details>` : ""}`;
+}
+
+function skillGuide() {
+  const rows = S.agents.map((a) => {
+    const st = recStatus(a);
+    const ok = st.have === st.total;
+    const line = (name, plain, on) => `<li class="${on ? "on" : "off"}"><span class="mark">${on ? "✓" : "✗"}</span><b>${esc(name)}</b><span>${esc(plain)}</span></li>`;
+    const basic = st.general.rec.map((n) => line(n, n.toLowerCase() === "gbrain" ? "Shared team memory: read before, write after every task." : "Listed in the agent's instructions.", !st.general.missing.includes(n)));
+    const packs = PACKS().map((p) => {
+      const rec = p.recommended[a.id] || [];
+      if (!rec.length) return "";
+      const byName = Object.fromEntries(p.catalog.map((c) => [c.name, c]));
+      return `<h5>${esc(p.title)}</h5><ul class="guide-list">${rec.map((n) => line(n, byName[n]?.plain || "", !st.packs[p.key].missing.includes(n))).join("")}</ul>`;
+    }).join("");
+    return `<section class="guide-agent" style="--c:${esc(a.color)}">
+      <header><b>${esc(a.name)}</b><span class="chip rec ${ok ? "ok" : "warn"}">★ ${st.have}/${st.total}${ok ? " ✓" : ""}</span>
+        <button class="btn small" data-guide="${esc(a.id)}">${ok ? "Open skills" : "Fix"}</button></header>
+      <div class="help">${esc(a.main_task.join(" "))}</div>
+      <h5>Basic skills</h5><ul class="guide-list">${basic.join("")}</ul>${packs}</section>`;
+  }).join("");
+  openModal("Skill guide", `
+    <div class="note">Each agent needs the skills marked ★ for its job. ✓ = on, ✗ = recommended but off. Skills run on this machine and are used on every step they fit.</div>
+    <div class="guide">${rows}</div>`);
+  for (const b of document.querySelectorAll("[data-guide]")) b.onclick = () => { closeModal(); openDrawer("config", b.dataset.guide, "skills"); };
 }
 
 const stations = {}; // agent id -> its <svg class="station">, reused across renders
@@ -244,6 +328,7 @@ $("#agents").addEventListener("click", async (e) => {
   if (!btn) return;
   const id = btn.closest("[data-agent]").dataset.agent;
   if (btn.dataset.act === "config") openDrawer("config", id);
+  if (btn.dataset.act === "skills") openDrawer("config", id, "skills");
   if (btn.dataset.act === "chat") openDrawer("chat", id);
   if (btn.dataset.act === "setup") {
     try { trackJob(await api("POST", `agents/${id}/setup`)); toast(`Setting up ${nameOf(id)}…`); }
@@ -298,7 +383,7 @@ function skillsItem(k) {
   const what = ok ? `applied ${k.skills.length} skill(s)${k.retried ? " (after a redo)" : ""}`
     : `⚠ skipped ${esc(k.missing.join(", "))}${k.retried ? " even after a redo" : ""}`;
   return `<li class="mem skills ${ok ? "ok" : "bad"}" title="${esc(k.skills.join("\n"))}"><span class="mem-dot"></span>
-    <span class="who" style="--c:${colorOf(k.agent)}">${esc(nameOf(k.agent))}</span> superpowers · ${what}
+    <span class="who" style="--c:${colorOf(k.agent)}">${esc(nameOf(k.agent))}</span> skills · ${what}
     <span class="kind">${esc(k.skills.join(", "))}</span><span class="msg-time">${fmtTime(k.at)}</span></li>`;
 }
 
@@ -528,20 +613,26 @@ function renderConfig() {
       ${field("Token variable", text("tg_token_env", t.token_env, "TELEGRAM_DEV_BOT_TOKEN"), "Environment variable holding the BotFather token.")}
       <div class="note warn">Shown on the dashboard and workspace image. The Telegram bot itself is not connected yet.</div>`;
   } else if (drawer.tab === "skills") {
+    const st = recStatus(f);
+    const allOn = st.have === st.total;
+    const recGeneral = new Set(st.general.rec.map((n) => n.toLowerCase()));
     html = `
-      <div class="skill-editor">${f.skills.map((s, i) => `<span class="skill">${esc(s)}<button type="button" data-rmskill="${i}" aria-label="Remove ${esc(s)}">×</button></span>`).join("") || '<span class="muted">No skills yet</span>'}</div>
+      <div class="rec-summary ${allOn ? "ok" : "warn"}">
+        <div><span class="rec-badge">★ Recommended</span> <b>${st.have} of ${st.total}</b> recommended skills are on for ${esc(f.short_name || f.name)}.
+          <div class="help">★ Recommended = what this agent needs for its job, picked for its role. Optional = available, but not needed for this role.</div></div>
+        ${allOn ? '<span class="rec-ok">✓ All set</span>' : '<button type="button" class="btn small primary" id="useRec">Turn on all recommended</button>'}
+      </div>
+      <div class="field"><label>Basic skills</label>
+        <div class="help">Short names that go into the agent's instructions. GBrain is the shared team memory, read before and written after every task.</div></div>
+      <div class="skill-editor">${f.skills.map((s, i) => `<span class="skill">${recGeneral.has(s.toLowerCase()) ? '<i class="star" title="Recommended">★</i>' : ""}${esc(s)}<button type="button" data-rmskill="${i}" aria-label="Remove ${esc(s)}">×</button></span>`).join("") || '<span class="muted">No skills yet</span>'}</div>
+      ${st.general.missing.length ? `<div class="suggest"><span class="help">Recommended, not added yet:</span> ${st.general.missing.map((n) => `<button type="button" class="skill add" data-addskill="${esc(n)}">+ ${esc(n)} <i class="star">★</i></button>`).join("")}</div>` : ""}
       <div class="chat-input"><input type="text" id="newSkill" placeholder="Add a skill, e.g. Kubernetes"><button type="button" class="btn" id="addSkill">Add</button></div>
-      <div class="note">Skills go into the system prompt. Add <code>skills/&lt;skill-name&gt;.md</code> to give a skill real instructions.</div>
-      <div class="field"><label>Superpowers skills (obra/superpowers, run locally)</label>
-        <div class="help">Checked skills are always used: on every team step they apply to, their full text goes into the prompt and the answer must end with "Skills applied". Defaults for this role are marked ★.</div></div>
-      <div class="sp-list">${S.superpowers.catalog.map((c) => {
-        const on = (f.superpowers ?? S.superpowers.defaults[f.id] ?? []).includes(c.name);
-        const star = (S.superpowers.defaults[f.id] || []).includes(c.name) ? " ★" : "";
-        return `<label class="sp-item"><input type="checkbox" name="sp_${esc(c.name)}" ${on ? "checked" : ""}>
-          <span><b>${esc(c.name)}${star}</b><span class="help">${esc(c.why)}${c.steps.length ? ` · steps: ${esc(c.steps.join(", "))}` : " · on demand"}</span></span></label>`;
-      }).join("")}</div>`;
+      <div class="note">Add <code>skills/&lt;skill-name&gt;.md</code> to give a basic skill real instructions.</div>
+      ${PACKS().map((p) => packSection(f, p)).join("")}`;
   }
+  const open = new Set([...document.querySelectorAll("#drawerBody details[open][data-pack]")].map((d) => d.dataset.pack));
   $("#drawerBody").innerHTML = html;
+  for (const d of document.querySelectorAll("#drawerBody details[data-pack]")) if (open.has(d.dataset.pack)) d.open = true;
   $("#drawerFoot").innerHTML = `
     <span class="muted small" style="margin-right:auto">Saved to agents.json · image redrawn</span>
     <button class="btn" id="saveCfg">Save</button>
@@ -559,6 +650,7 @@ $("#tabs").addEventListener("click", (e) => {
 });
 
 $("#drawerBody").addEventListener("change", (e) => {
+  if (e.target.name?.startsWith("pk_")) { readForm(); renderConfig(); return; }
   if (e.target.name === "harness_type") {
     readForm();
     const type = e.target.value;
@@ -573,6 +665,15 @@ $("#drawerBody").addEventListener("click", (e) => {
     if (v && !form.skills.includes(v)) form.skills.push(v);
     renderConfig();
     $("#newSkill")?.focus();
+  }
+  const add = e.target.closest("[data-addskill]");
+  if (add) { readForm(); if (!form.skills.includes(add.dataset.addskill)) form.skills.push(add.dataset.addskill); renderConfig(); }
+  if (e.target.id === "useRec") {
+    readForm();
+    for (const p of PACKS()) form[p.key] = [...new Set([...packList(form, p), ...(p.recommended[form.id] || [])])];
+    for (const n of recStatus(form).general.missing) form.skills.push(n);
+    renderConfig();
+    toast("All recommended skills are on. Save to keep them.", "ok");
   }
   const rm = e.target.closest("[data-rmskill]");
   if (rm) { form.skills.splice(Number(rm.dataset.rmskill), 1); renderConfig(); }
@@ -613,7 +714,7 @@ function readForm() {
     }
     form.harness = h;
   } else if (tab === "skills") {
-    form.superpowers = S.superpowers.catalog.map((c) => c.name).filter((n) => $(`[name="sp_${CSS.escape(n)}"]`)?.checked);
+    for (const p of PACKS()) form[p.key] = p.catalog.map((c) => c.name).filter((n) => $(`[name="pk_${p.key}_${CSS.escape(n)}"]`)?.checked);
   } else if (tab === "telegram") {
     form.telegram = { ...(form.telegram || {}), enabled: !!$('[name="tg_enabled"]').checked,
       bot_username: get("tg_bot_username"), token_env: get("tg_token_env") };
@@ -626,7 +727,7 @@ async function saveConfig(setup) {
   const body = {
     name: f.name, short_name: f.short_name, main_task: f.main_task, sub_tasks: f.sub_tasks, status: f.status,
     skills: f.skills, telegram: f.telegram, harness: f.harness,
-    ...(f.superpowers ? { superpowers: f.superpowers } : {}),
+    ...Object.fromEntries(PACKS().filter((p) => f[p.key]).map((p) => [p.key, f[p.key]])),
     llm: Object.fromEntries(["provider", "api", "base_url", "model", "effort", "api_key_env", "max_tokens"].map((k) => [k, f.llm[k] ?? ""])),
   };
   if (f.api_key) body.api_key = f.api_key;
@@ -688,6 +789,8 @@ function closeModal() { $("#modal").classList.add("hidden"); }
 $("#modalClose").addEventListener("click", closeModal);
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
+$("#btnGuide").addEventListener("click", skillGuide);
+
 $("#btnImage").addEventListener("click", () =>
   openModal("Workspace image", `<img src="/workspace.svg?t=${Date.now()}" alt="AI software development workspace">`));
 
@@ -702,17 +805,17 @@ $("#btnSettings").addEventListener("click", () => {
       <label class="check"><input type="checkbox" id="g_strict" ${(p.gbrain?.strict ?? true) ? "checked" : ""}> Stop the agent step when gbrain can't be read or written</label>
       <label class="check"><input type="checkbox" id="g_cloud" ${p.gbrain?.allow_cloud ? "checked" : ""}> Allow gbrain to use cloud API keys (off = memory stays on this machine)</label>
     </div>
-    <div class="field"><label>Superpowers skills</label>
-      <label class="check"><input type="checkbox" id="s_enabled" ${(p.superpowers?.enabled ?? true) ? "checked" : ""}> Agents use their Superpowers skills on every step they apply to</label>
-      <label class="check"><input type="checkbox" id="s_enforce" ${(p.superpowers?.enforce ?? true) ? "checked" : ""}> Ask an agent to redo a step once when its answer skips a required skill</label>
-      <div class="help">Brain: ${esc(S.brain?.home || "")} · ${S.brain?.brain ? "ready" : "not set up yet (Set up all)"}</div></div>
+    <div class="help">Brain: ${esc(S.brain?.home || "")} · ${S.brain?.brain ? "ready" : "not set up yet (Set up all)"}</div>
+    ${PACKS().map((k) => `<div class="field"><label>${esc(k.title)} (${esc(k.source)})</label>
+      <label class="check"><input type="checkbox" id="pk_en_${k.key}" ${(p[k.key]?.enabled ?? true) ? "checked" : ""}> Agents use their ${esc(k.title)} on every step they apply to</label>
+      <label class="check"><input type="checkbox" id="pk_enf_${k.key}" ${(p[k.key]?.enforce ?? true) ? "checked" : ""}> Ask an agent to redo a step once when its answer skips one of these skills</label></div>`).join("")}
     <div class="note">Flow: ${S.flow.stages.map((s) => esc(s.label)).join(" → ")}. Specialists only talk to the Team Lead; only the Team Lead reports to the CEO.</div>
     <div style="display:flex;justify-content:flex-end"><button class="btn primary" id="p_save">Save</button></div>`, true);
   $("#p_save").onclick = async () => {
     try {
       await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
         gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked },
-        superpowers: { enabled: $("#s_enabled").checked, enforce: $("#s_enforce").checked } });
+        ...Object.fromEntries(PACKS().map((k) => [k.key, { enabled: $(`#pk_en_${k.key}`).checked, enforce: $(`#pk_enf_${k.key}`).checked }])) });
       toast("Settings saved", "ok"); closeModal(); refresh();
     } catch (err) { toast(err.message, "bad"); }
   };

@@ -1,26 +1,11 @@
 """Superpowers skills (https://github.com/obra/superpowers), vendored in skills/superpowers and run locally.
 
-Each agent gets the skills that fit its role (`superpowers` in agents.json, defaults below). They are
-always used, enforced by BABD rather than left to the model:
-
-  * every agent's system prompt carries the using-superpowers rule and the catalog of its skills;
-  * every step of a team run gets the FULL text of the agent's skills that apply to that step
-    (STEP_SKILLS), plus ADAPTATION.md (how the skills map onto this team);
-  * the answer must end with "Skills applied:" naming each of those skills; if one is missing, the
-    agent is asked once to redo the step following it, and the result is recorded in the run;
-  * agents with native skill support also get the files: Hermes in HERMES_HOME/skills/superpowers,
-    Claude Code in its private config dir's skills/ (only when BABD owns that dir).
+Each agent gets the skills that fit its role (`superpowers` in agents.json, DEFAULT_ASSIGNMENT below:
+the skills recommended for it). How they are always used is in babd/skillpacks.py.
 """
-import os
-import re
-import shutil
+from . import skillpacks
 
-from .config import ROOT
-
-SKILLS_DIR = os.path.join(ROOT, "skills", "superpowers")
-ADAPTATION = "ADAPTATION.md"
-
-# Which skills fit which agent (used when agents.json has no `superpowers` list for an agent).
+# Which skills each agent needs: shown as recommended, and used when agents.json has no list for the agent.
 DEFAULT_ASSIGNMENT = {
     "lead": ["using-superpowers", "brainstorming", "writing-plans", "subagent-driven-development",
              "dispatching-parallel-agents", "requesting-code-review", "verification-before-completion",
@@ -66,102 +51,38 @@ WHY = {  # one line per agent/skill pair, shown in the dashboard
     "writing-skills": "create or edit team skills, tested like code",
 }
 
-_FRONT = re.compile(r"\A---\n(.*?)\n---\n?", re.S)
+PLAIN = {  # what the skill does for you, in plain words (shown to people new to this)
+    "using-superpowers": "Makes the agent check its skills before every action, so it never skips them.",
+    "brainstorming": "Thinks through what you really want and the options before building anything.",
+    "writing-plans": "Writes a clear step-by-step plan that anyone on the team can follow.",
+    "subagent-driven-development": "Gives each piece of work to the right agent with clear instructions, then checks it.",
+    "dispatching-parallel-agents": "Splits work that does not depend on each other so it can be done at the same time.",
+    "requesting-code-review": "Has the work checked against what was asked, with problems sorted by how serious they are.",
+    "receiving-code-review": "Checks review comments are really right before changing the code.",
+    "test-driven-development": "Writes a test first, then the code: fewer bugs reach you.",
+    "systematic-debugging": "Finds the real cause of a bug instead of guessing at fixes.",
+    "verification-before-completion": "Never says \"done\" without proof: test output, logs, a health check.",
+    "executing-plans": "Builds the plan one small, tested step at a time.",
+    "using-git-worktrees": "Works in a separate copy of the code so the main version stays safe.",
+    "finishing-a-development-branch": "Closes the work properly: tests green, then merge, pull request or discard.",
+    "diagnosing-superpowers": "When a run goes wrong, finds out why with evidence.",
+    "writing-skills": "Writes and improves the team's own skills, tested like code.",
+}
 
-
-class SuperpowersError(Exception):
-    pass
-
-
-def skill_names():
-    if not os.path.isdir(SKILLS_DIR):
-        return []
-    return sorted(d for d in os.listdir(SKILLS_DIR) if os.path.isfile(os.path.join(SKILLS_DIR, d, "SKILL.md")))
-
-
-def load(name):
-    """(meta, body) of a skill. meta has name and description from the frontmatter."""
-    path = os.path.join(SKILLS_DIR, name, "SKILL.md")
-    if not os.path.isfile(path):
-        raise SuperpowersError(f"superpowers skill {name!r} not found in {os.path.relpath(SKILLS_DIR, ROOT)}")
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    meta = {"name": name, "description": ""}
-    m = _FRONT.match(text)
-    if m:
-        for line in m.group(1).splitlines():
-            key, _, value = line.partition(":")
-            if key.strip() in ("name", "description"):
-                meta[key.strip()] = value.strip().strip('"')
-        text = text[m.end():]
-    return meta, text.strip()
-
-
-def catalog():
-    return [{**load(n)[0], "why": WHY.get(n, ""),
-             "steps": [k for k, v in STEP_SKILLS.items() if n in v]} for n in skill_names()]
-
-
-def assigned(agent_cfg):
-    """The agent's skills: its `superpowers` list, or the default for its role."""
-    names = agent_cfg.get("superpowers")
-    if names is None:
-        names = DEFAULT_ASSIGNMENT.get(agent_cfg.get("id"), ["using-superpowers"])
-    return [n for n in names if n in skill_names()]
-
-
-def enabled(project_cfg):
-    return (project_cfg or {}).get("superpowers", {}).get("enabled", True) and bool(skill_names())
-
-
-def for_step(agent_cfg, kind):
-    """Skills the agent must use on this step, in the step's order."""
-    mine = set(assigned(agent_cfg))
-    return [n for n in STEP_SKILLS.get(kind, []) if n in mine]
+PACK = skillpacks.Pack("superpowers", "Superpowers", "obra/superpowers", "https://github.com/obra/superpowers",
+                       DEFAULT_ASSIGNMENT, STEP_SKILLS, WHY, PLAIN)
+SKILLS_DIR = PACK.dir
+SuperpowersError = skillpacks.SkillError
+skill_names = PACK.skill_names
+load = PACK.load
+catalog = PACK.catalog
+assigned = PACK.assigned
+enabled = PACK.enabled
+for_step = PACK.for_step
+missing = skillpacks.missing
+step_block = skillpacks.step_block
+install_native = skillpacks.install_native
 
 
 def system_section(agent_cfg):
-    """The always-on part of the system prompt: the rule and the agent's catalog."""
-    names = assigned(agent_cfg)
-    if not names:
-        return ""
-    lines = ["## Superpowers skills (always on)",
-             "You have these skills. If there is even a small chance one applies to what you are doing, "
-             "use it: announce \"Using <skill> to <purpose>\" and follow it exactly. Process skills "
-             "(brainstorming, systematic-debugging) come first, then implementation skills."]
-    for n in names:
-        lines.append(f"- {n}: {load(n)[0]['description']}")
-    return "\n".join(lines)
-
-
-def step_block(names):
-    """Prompt section for one step: the adaptation notes and the full text of each skill."""
-    if not names:
-        return ""
-    with open(os.path.join(SKILLS_DIR, ADAPTATION), encoding="utf-8") as f:
-        adaptation = f.read().strip()
-    parts = [f"# Skills you must use for this step: {', '.join(names)}", adaptation]
-    for n in names:
-        parts.append(f"<skill name=\"{n}\" path=\"skills/superpowers/{n}/SKILL.md\">\n{load(n)[1]}\n</skill>")
-    return "\n\n".join(parts)
-
-
-def missing(output, names):
-    """Skills not accounted for in the answer's "Skills applied:" section."""
-    m = re.search(r"skills applied\s*:?(.*)\Z", output or "", re.I | re.S)
-    section = m.group(1).lower() if m else ""
-    return [n for n in names if n.lower() not in section]
-
-
-def install_native(names, dest):
-    """Copy skill folders into a harness's skills dir (dest/<name>). Returns the names copied."""
-    os.makedirs(dest, exist_ok=True)
-    keep = set(names)
-    for existing in os.listdir(dest):  # drop skills this agent no longer has
-        if existing not in keep and os.path.isfile(os.path.join(dest, existing, "SKILL.md")):
-            shutil.rmtree(os.path.join(dest, existing))
-    for n in names:
-        target = os.path.join(dest, n)
-        shutil.rmtree(target, ignore_errors=True)
-        shutil.copytree(os.path.join(SKILLS_DIR, n), target)
-    return list(names)
+    return skillpacks.system_section({"superpowers": assigned(agent_cfg)})

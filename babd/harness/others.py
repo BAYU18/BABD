@@ -60,10 +60,11 @@ class ClaudeCode(Harness):
             return ["using this machine's Claude Code login"]
         os.makedirs(self.config_dir, mode=0o700, exist_ok=True)
         notes = [f"config {os.path.relpath(self.config_dir, ROOT)}"]
-        if self.superpowers:  # private config dir only: never touch the machine's own ~/.claude
-            from .. import superpowers
-            superpowers.install_native(self.superpowers, os.path.join(self.config_dir, "skills"))
-            notes.append(f"{len(self.superpowers)} superpowers skills")
+        from .. import skillpacks
+        names = skillpacks.all_names(self.skill_packs)
+        if names:  # private config dir only: never touch the machine's own ~/.claude
+            skillpacks.install_native(names, os.path.join(self.config_dir, "skills"))
+            notes += [f"{len(v)} {k} skills" for k, v in self.skill_packs.items() if v]
         return notes
 
     def build(self, system, messages, effort=None):

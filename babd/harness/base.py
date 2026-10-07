@@ -26,7 +26,7 @@ class Harness:
 
     def __init__(self, agent_cfg):
         self.extra_env = {}   # set by the team (e.g. GBRAIN_HOME + the gbrain command); PATH is prepended
-        self.superpowers = []  # this agent's Superpowers skills, installed natively where the harness supports it
+        self.skill_packs = {}  # {pack: this agent's skills}, installed natively where the harness supports it
         self.agent_cfg = agent_cfg
         self.agent_id = agent_cfg["id"]
         self.llm = agent_cfg["llm"]
