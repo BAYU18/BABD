@@ -86,12 +86,16 @@ class AuthServerTest(unittest.TestCase):
         status, headers, body = self.login()  # even the right password waits now
         self.assertEqual(status, 429)
         self.assertIn("Retry-After", headers)
+        forged = {"X-Forwarded-For": "10.1.2.3, 127.0.0.1"}  # a forged first entry does not reset the limit
+        self.assertEqual(self.login(headers=forged)[0], 429)
         other = {"X-Forwarded-For": "10.1.2.3"}  # another address is not blocked
         self.assertEqual(self.login(headers=other)[0], 200)
 
     def test_ip_allow_list(self):
         self.assertEqual(self.req("GET", "/", headers={"X-Forwarded-For": "203.0.113.9"})[0], 403)
         self.assertEqual(self.req("GET", "/api/auth", headers={"X-Forwarded-For": "10.9.9.9"})[0], 200)
+        # a client cannot forge its address: the proxy's own (last) entry counts
+        self.assertEqual(self.req("GET", "/", headers={"X-Forwarded-For": "10.9.9.9, 203.0.113.9"})[0], 403)
         self.use(Security(password_hash="", allow="192.168.0.0/16"))
         self.assertEqual(self.req("GET", "/api/state", headers={"X-BABD-Token": td.TOKEN})[0], 403)
 

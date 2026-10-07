@@ -29,6 +29,11 @@ WORKTREES_DIR = os.path.join(ROOT, "workspace", "worktrees")
 DEFAULT_ID = "default"
 MERGE_POLICIES = ("on_approval", "on_pass", "never")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,47}$")
+BRANCH_RE = re.compile(r"^(?!-)(?!.*\.\.)(?!.*//)(?!.*@\{)[A-Za-z0-9._/-]{1,200}(?<![./])$")
+# Where a project may be cloned from: https / http / ssh / git URLs, scp-style git@host:path, or a
+# local repository path. Never an option (a "repo" like --upload-pack=... runs a command) and never
+# git's ext:: transport.
+REPO_RE = re.compile(r"^(https?://|ssh://|git://|file://|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:|/|~)[^\s]*$")
 _locks = {}
 _locks_lock = threading.Lock()
 
@@ -64,11 +69,17 @@ def normalize(p):
     path = p.get("path") or os.path.join(PROJECTS_DIR, pid)
     if not os.path.isabs(path):
         path = os.path.join(ROOT, path)
+    repo = str(p.get("repo") or "").strip()
+    if repo and (repo.startswith("-") or not REPO_RE.match(repo) or "::" in repo.split("/")[0]):
+        raise ProjectError(f"project {pid}: repo must be a git URL (https://, ssh://, git@host:path) or a local path")
+    branch = str(p.get("branch") or "").strip()
+    if branch and not BRANCH_RE.match(branch):
+        raise ProjectError(f"project {pid}: {branch!r} is not a valid branch name")
     merge = p.get("merge", "on_approval")
     if merge not in MERGE_POLICIES:
         raise ProjectError(f"project {pid}: merge must be one of {', '.join(MERGE_POLICIES)}")
-    return {"id": pid, "name": p.get("name") or pid, "path": os.path.normpath(path), "repo": p.get("repo") or "",
-            "branch": p.get("branch") or "", "merge": merge, "push": bool(p.get("push", False)),
+    return {"id": pid, "name": p.get("name") or pid, "path": os.path.normpath(path), "repo": repo,
+            "branch": branch, "merge": merge, "push": bool(p.get("push", False)),
             "test_command": (p.get("test_command") or "").strip(), "custom_path": bool(p.get("path"))}
 
 
@@ -112,7 +123,7 @@ def ensure(project):
         if not is_repo_root(path):
             if project["repo"] and not (os.path.isdir(path) and os.listdir(path)):
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                git(["clone", project["repo"], path], ROOT, timeout=900)
+                git(["-c", "protocol.ext.allow=never", "clone", "--", project["repo"], path], ROOT, timeout=900)
             else:
                 os.makedirs(path, exist_ok=True)
                 git(["init", "-q", "-b", project["branch"] or "main"], path)
@@ -219,7 +230,8 @@ def is_secret(root, rel):
 def run_tests(command, cwd, timeout=900):
     """Run the project's own test command in the task's worktree: {"command", "exit", "output", "seconds"}."""
     started = time.monotonic()
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_DIR", "GIT_WORK_TREE"))}
+    from .config import scrub_env
+    env = {k: v for k, v in scrub_env(os.environ).items() if not k.startswith(("GIT_DIR", "GIT_WORK_TREE"))}
     try:
         proc = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
         code, out = proc.returncode, (proc.stdout + ("\n" + proc.stderr if proc.stderr else ""))

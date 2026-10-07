@@ -65,7 +65,13 @@ class PermissionsTest(unittest.TestCase):
         self.assertEqual(pm.hermes_toolsets("workspace", ["terminal", "file"]), ["terminal", "file"])
 
     def test_claude_flags(self):
-        self.assertEqual(pm.claude_args("plan")[-2:], ["--disallowedTools", "Bash"])
+        plan = pm.claude_args("plan")
+        self.assertEqual(plan[plan.index("--disallowedTools") + 1], "Bash")
+        from babd.config import ROOT
+        for profile in ("plan", "workspace"):  # file tools stay away from BABD's secrets and code
+            args = pm.claude_args(profile)
+            self.assertIn(f"Read(/{ROOT}/.env)", args)
+            self.assertIn(f"Edit(/{ROOT}/babd/**)", args)
         self.assertIn("--allowedTools", pm.claude_args("workspace"))
         self.assertEqual(pm.claude_args("full"), ["--dangerously-skip-permissions"])
         self.assertEqual(pm.claude_args("ask"), [])

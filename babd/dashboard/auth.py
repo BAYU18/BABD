@@ -117,9 +117,12 @@ class Security:
     def client_ip(self, handler):
         ip = handler.client_address[0]
         if self.trust_proxy:
-            fwd = handler.headers.get("X-Forwarded-For")
+            # The proxy appends the address it saw as the LAST entry; anything before it was sent by the
+            # client and can be forged (e.g. "X-Forwarded-For: 127.0.0.1" to pass --allow-ip or to
+            # dodge the login rate limit).
+            fwd = [p.strip() for p in (handler.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]
             if fwd:
-                ip = fwd.split(",")[0].strip()
+                ip = fwd[-1]
         return ip
 
     def ip_allowed(self, ip):

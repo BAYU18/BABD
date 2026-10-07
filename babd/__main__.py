@@ -37,6 +37,8 @@ from .team import Team, apply_run_to_config
 
 def main(argv=None):
     load_dotenv()
+    from .config import secure_dirs
+    secure_dirs()
     p = argparse.ArgumentParser(prog="python -m babd", description="Run the AI development team.")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check", help="ping every agent through its harness and LLM")

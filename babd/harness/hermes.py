@@ -168,7 +168,15 @@ class HermesLocal(Harness):
         python = python_of(argv[0])
         if python:
             return python + ["-I", "-c", LAUNCHER] + argv, prompt
-        path = os.path.join(self.home, "prompts", f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}.md")
+        folder = os.path.join(self.home, "prompts")
+        try:  # task texts do not stay on disk: prompts older than a day are removed
+            for old in os.listdir(folder):
+                p = os.path.join(folder, old)
+                if os.path.isfile(p) and time.time() - os.path.getmtime(p) > 86400:
+                    os.remove(p)
+        except OSError:
+            pass
+        path = os.path.join(folder, f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}.md")
         _write_private(path, prompt)
         note = (f"Your full task is too long for the command line, so it is in the file {path}. Read the whole "
                 "file first with your file tool, then do exactly what it says and answer as it asks.")

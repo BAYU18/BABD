@@ -518,7 +518,7 @@ class Dashboard:
         ceo = cfg["project"].get("ceo_telegram") or {}
         return {"running": self.telegram_on, "bots": self.telegram.status(),
                 "ceo": {k: ceo.get(k) for k in ("enabled", "bot_username", "token_env", "allowed_users", "notify",
-                                               "daily_report_hour")} | {"token_set": bool(resolve_env(ceo.get("token_env")))},
+                                               "daily_report_hour", "allow_groups")} | {"token_set": bool(resolve_env(ceo.get("token_env")))},
                 "agents": {a["id"]: bool(resolve_env((a.get("telegram") or {}).get("token_env"))) for a in cfg["agents"]},
                 "notify_options": list(telegram.NOTIFY)}
 
@@ -537,6 +537,8 @@ class Dashboard:
                 ceo["allowed_users"] = [str(u).strip() for u in users if str(u).strip()][:50]
             if "notify" in body:
                 ceo["notify"] = [n for n in body["notify"] if n in telegram.NOTIFY]
+            if "allow_groups" in body:
+                ceo["allow_groups"] = bool(body["allow_groups"])
             if "daily_report_hour" in body:
                 ceo["daily_report_hour"] = max(0, min(23, int(body["daily_report_hour"])))
             if body.get("token"):
@@ -957,7 +959,12 @@ def make_handler(dash, token, allowed_hosts, security=None):
             self.wfile.write(data)
 
         def body(self):
-            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise ApiError(400, "bad Content-Length")
+            if n < 0:
+                raise ApiError(400, "bad Content-Length")
             if n > 12_000_000:  # task documents can be uploaded (up to 20 x 500 KB)
                 raise ApiError(413, "request too large")
             raw = self.rfile.read(n) if n else b"{}"

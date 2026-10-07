@@ -412,6 +412,40 @@ one per task in the goal form or task board, or on the command line with `--proj
 There is always a `default` project (`workspace/projects/default`). `project.use_projects: false`
 turns all this off (agents then work in `workspace/`).
 
+## Security model
+
+What BABD protects, and what it cannot:
+
+- **The dashboard is full control.** Whoever can use it can configure agents, harness commands and a
+  project's `test_command`, so it runs commands on this machine. Keep it on 127.0.0.1, or behind
+  HTTPS with a password (`babd set-password`), `--allow-ip` and `--public-url` (see Remote access).
+  Behind a proxy (`--trust-proxy`) the client address is the proxy's own entry of X-Forwarded-For
+  (the last one), so a client cannot forge it to pass `--allow-ip` or dodge the login limit.
+- **Agents never get BABD's secrets in their environment.** Every variable in `.env` (and its
+  backup), every key / token variable named in agents.json and the dashboard password hash are
+  removed from the environment of agent programs and of the project's `test_command`; the LLM routing
+  then adds back only that agent's own key. A tool an agent needs (e.g. `GH_TOKEN` for DevOps) is
+  passed on purpose with the harness option `"pass_env": ["GH_TOKEN"]`.
+- **Agents stay out of BABD.** Terminal commands that touch the installation, its `.env`, `.babd`,
+  `logs`, the secrets backup or `/proc/*/environ` are denied, and Claude Code agents' file tools may
+  not read `.env`, `.babd` or the backup nor edit BABD's code, agents.json, runs or logs. These are
+  pattern rules, a guardrail and not a sandbox: an agent determined to get around them (relative
+  paths, scripts) can. For real isolation give the agents `"sandbox": "docker"` or run BABD as its
+  own Linux user.
+- **Task documents are untrusted.** A linked or uploaded document reaches agents that can run
+  commands, so it can try to instruct them (prompt injection). Links are only read from public
+  internet addresses (never 127.0.0.1, the local network or a cloud metadata address, also after a
+  redirect; `BABD_ALLOW_PRIVATE_LINKS=1` allows your own network), and links with a user name or
+  password are refused.
+- **Projects:** a project's `repo` must be a git URL or a local path and its `branch` a branch name, so
+  neither can smuggle a git option in (`--upload-pack=…`); git's `ext::` transport is off.
+- **Telegram:** only allowed users are served; a @username is tied to the numeric id of the first
+  account that uses it (usernames can be changed and taken over), so prefer numeric ids. The bots
+  answer in private chats only unless Team settings → Telegram → group chats is on.
+- **Secrets on disk:** `.env` and the backup are mode 600; `runs/`, `logs/` and `.babd/` (task texts,
+  agent outputs, logs, tool state) are made 700 at start-up; private keys and `.env` files are never
+  committed from a task's worktree; long Hermes prompts written to disk are deleted after a day.
+
 ## Permissions: what each agent may do with its tools
 
 Each agent has a permission profile (`permissions` in `agents.json`, or Configure → Harness):

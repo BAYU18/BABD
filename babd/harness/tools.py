@@ -104,7 +104,13 @@ def install_node():
                 root = os.path.realpath(tmp)
                 for member in tar.getmembers():
                     target = os.path.realpath(os.path.join(tmp, member.name))
-                    if not target.startswith(root + os.sep) or member.isdev():
+                    link = None
+                    if member.issym():
+                        link = os.path.realpath(os.path.join(os.path.dirname(target), member.linkname))
+                    elif member.islnk():
+                        link = os.path.realpath(os.path.join(tmp, member.linkname))
+                    if (not target.startswith(root + os.sep) or member.isdev()
+                            or (link is not None and not link.startswith(root + os.sep))):
                         raise HarnessError(f"unsafe path in the Node.js archive: {member.name}")
                 tar.extractall(tmp)
         shutil.rmtree(node_dir(), ignore_errors=True)

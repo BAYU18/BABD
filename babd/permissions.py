@@ -16,6 +16,7 @@ The deny list is a guardrail, not a sandbox: a determined command can get around
 isolation use the Docker sandbox.
 """
 import json
+import os
 import shutil
 
 from .config import ROOT
@@ -45,9 +46,12 @@ class PermissionsError(ValueError):
 def babd_guards(root=ROOT):
     """Deny patterns for commands that touch the BABD installation (outside its workspace/)."""
     r = root.rstrip("/")
+    from .config import SECRETS_BACKUP
+    backup_dir = os.path.dirname(SECRETS_BACKUP)
     return [f"*cd {r}", f"*cd {r}[ ;&|]*", f"*cd {r}/", f"*-C {r}", f"*-C {r}[ /]*", f"*{r}/babd*",
             f"*{r}/agents.json*", f"*{r}/.env*", f"*{r}/.git", f"*{r}/.git[ /]*", f"*{r}/.babd*",
-            f"*{r}/generate_workspace.py*", f"*{r}/install.sh*"]
+            f"*{r}/generate_workspace.py*", f"*{r}/install.sh*", f"*{r}/logs*",
+            f"*{backup_dir}*", "*.config/babd*", "*/proc/*/environ*"]
 
 
 def profile_of(agent_cfg):
@@ -101,12 +105,23 @@ CLAUDE_DENY = ["Bash(sudo:*)", "Bash(git push --force:*)", "Bash(git push -f:*)"
                "Bash(shutdown:*)", "Bash(reboot:*)", "Bash(mkfs:*)"]
 
 
+def claude_guards(root=ROOT):
+    """Claude Code rules that keep the agent's file tools away from BABD itself and its secrets."""
+    from .config import SECRETS_BACKUP
+    r = root.rstrip("/")
+    secret = [f"{r}/.env", f"{r}/.babd/**", f"{os.path.dirname(SECRETS_BACKUP)}/**"]
+    babd = [f"{r}/agents.json", f"{r}/babd/**", f"{r}/.git/**", f"{r}/runs/**", f"{r}/logs/**"]
+    return ([f"Read(/{p})" for p in secret] + [f"Edit(/{p})" for p in secret + babd]
+            + [f"Bash(cat {r}/.env:*)"])
+
+
 def claude_args(profile):
     """Claude Code flags for a profile (it already keeps file edits inside its working folder)."""
     if profile == "plan":
-        return ["--permission-mode", "acceptEdits", "--disallowedTools", "Bash"]
+        return ["--permission-mode", "acceptEdits", "--disallowedTools", "Bash", *claude_guards()]
     if profile == "workspace":
-        return ["--permission-mode", "acceptEdits", "--allowedTools", "Bash", "--disallowedTools", *CLAUDE_DENY]
+        return ["--permission-mode", "acceptEdits", "--allowedTools", "Bash", "--disallowedTools", *CLAUDE_DENY,
+                *claude_guards()]
     if profile == "full":
         return ["--dangerously-skip-permissions"]
     return []

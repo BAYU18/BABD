@@ -143,6 +143,57 @@ def _write_env_line(path, name, value):
     os.replace(tmp, path)  # never a half-written .env
 
 
+SECRET_NAME_RE = re.compile(r"(^|_)(API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD)(_|$)|_HASH$", re.I)
+
+
+def secret_env_names(cfg=None):
+    """Names of the secrets BABD keeps: every variable in .env and its backup, the key and token
+    variables agents.json names, and BABD's own (the dashboard password hash)."""
+    names = set(_read_env_file(ENV_PATH)) | set(_read_env_file(SECRETS_BACKUP)) | {"BABD_DASHBOARD_PASSWORD_HASH"}
+    if cfg is None:
+        try:
+            cfg = load_config()
+        except (OSError, ValueError):
+            cfg = {}
+    for a in cfg.get("agents") or []:
+        llm = a.get("llm") or {}
+        names |= {llm.get("api_key_env"), (llm.get("fallback") or {}).get("api_key_env"),
+                  (a.get("telegram") or {}).get("token_env")}
+    names.add(((cfg.get("project") or {}).get("ceo_telegram") or {}).get("token_env"))
+    return {n for n in names if n}
+
+
+def scrub_env(env, keep=()):
+    """A copy of `env` without BABD's secrets (API keys of every agent, bot tokens, the dashboard
+    password hash), for programs an agent runs: an agent (or code it wrote, or a prompt injected
+    through a task document) must not be able to read them with `env`. Names in `keep` stay."""
+    keep = set(keep)
+    drop = secret_env_names() - keep
+    return {k: v for k, v in env.items()
+            if k in keep or (k not in drop and not (k.startswith("TELEGRAM_") and SECRET_NAME_RE.search(k)))}
+
+
+PRIVATE_DIRS = ("runs", "logs", ".babd")
+
+
+def secure_dirs(root=None):
+    """BABD's own data folders (task texts and outputs, agent logs, tool state) readable only by the
+    user BABD runs as. Folders owned by another user are left alone."""
+    for name in PRIVATE_DIRS:
+        d = os.path.join(root or ROOT, name)
+        try:
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            if os.stat(d).st_uid == os.geteuid() and os.stat(d).st_mode & 0o077:
+                os.chmod(d, 0o700)
+        except (OSError, AttributeError):
+            pass
+    try:
+        if os.path.exists(ENV_PATH) and os.stat(ENV_PATH).st_mode & 0o077:
+            os.chmod(ENV_PATH, 0o600)
+    except OSError:
+        pass
+
+
 def missing_keys(cfg):
     """{variable: [agent ids]} for API key variables named in agents.json that hold no value."""
     out = {}

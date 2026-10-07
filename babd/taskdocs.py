@@ -7,8 +7,10 @@
 A document becomes the task's brief: its title (first heading) names the task, and its full text goes
 to every agent of the run under "Task document". Only text formats are read; nothing is executed.
 """
+import ipaddress
 import os
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +18,11 @@ import urllib.request
 MAX_BYTES = 500_000          # per document: it is sent to every agent of the run
 TEXT_EXTENSIONS = (".md", ".markdown", ".mdown", ".txt", ".text", ".rst")
 FETCH_TIMEOUT = 20
+MAX_REDIRECTS = 5
+# Links may only reach public internet addresses: never this machine, the local network or a cloud
+# metadata service (a link sent over Telegram must not read internal services). Set
+# BABD_ALLOW_PRIVATE_LINKS=1 to read documents from your own network.
+ALLOW_PRIVATE_ENV = "BABD_ALLOW_PRIVATE_LINKS"
 
 
 class TaskDocError(Exception):
@@ -96,15 +103,52 @@ def raw_url(url):
     return url
 
 
+def check_public(url, resolve=None):
+    """Raise TaskDocError unless `url` is http(s) and its host resolves only to public addresses."""
+    u = urllib.parse.urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise TaskDocError(f"{url or 'link'}: only http(s) links can be read")
+    if u.username or u.password:
+        raise TaskDocError(f"{u.hostname}: links with a user name or password are not read")
+    if os.environ.get(ALLOW_PRIVATE_ENV) == "1":
+        return
+    try:
+        infos = (resolve or socket.getaddrinfo)(u.hostname, u.port or (443 if u.scheme == "https" else 80),
+                                                 type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError, OSError) as e:
+        raise TaskDocError(f"{u.hostname}: cannot resolve the address ({e})") from e
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if getattr(ip, "ipv4_mapped", None):
+            ip = ip.ipv4_mapped
+        if not ip.is_global or ip.is_multicast:
+            raise TaskDocError(f"{u.hostname}: {ip} is a private or local address; only public links are read "
+                               f"(set {ALLOW_PRIVATE_ENV}=1 to allow your own network)")
+
+
+class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to another public http(s) address, at most MAX_REDIRECTS times."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        check_public(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_safe_opener = urllib.request.build_opener(_CheckedRedirects)
+_CheckedRedirects.max_redirections = MAX_REDIRECTS
+
+
 def from_url(url, opener=None):
     url = (url or "").strip()
     u = urllib.parse.urlparse(url)
     if u.scheme not in ("http", "https") or not u.netloc:
         raise TaskDocError(f"{url or 'link'}: only http(s) links can be read")
     fetch = raw_url(url)
+    if opener is None:
+        check_public(fetch)
     req = urllib.request.Request(fetch, headers={"User-Agent": "babd-taskdocs/1", "Accept": "text/markdown, text/plain, */*"})
     try:
-        with (opener or urllib.request.urlopen)(req, timeout=FETCH_TIMEOUT) as r:
+        with (opener or _safe_opener.open)(req, timeout=FETCH_TIMEOUT) as r:
             ctype = (r.headers.get("Content-Type") or "").lower()
             raw = r.read(MAX_BYTES + 1)
     except urllib.error.HTTPError as e:

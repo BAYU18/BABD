@@ -13,7 +13,10 @@ CEO bot (`project.ceo_telegram`): the CEO's line to the team.
 Agent bots (`agents[].telegram`): chat with that one agent, like the dashboard's Chat.
 
 Only Telegram users listed in `project.ceo_telegram.allowed_users` (numeric ids or @usernames) are
-served; anyone else is told their id so the owner can add it. Bot tokens live in .env, never in
+served; anyone else is told their id so the owner can add it. A @username is tied to the numeric id
+of the first account that uses it (usernames can be changed and taken by someone else); after that
+only that account is served under it. The bots answer in private chats only, unless
+`ceo_telegram.allow_groups` is on (in a group, everyone in it reads the replies and reports). Bot tokens live in .env, never in
 agents.json. Chats that may receive notifications are kept in .babd/telegram.json.
 """
 import json
@@ -84,8 +87,9 @@ class API:
 class Bot(threading.Thread):
     """Long-polling loop; subclasses handle updates."""
 
-    def __init__(self, name, token, allowed, base=None):
+    def __init__(self, name, token, allowed, base=None, allow_groups=False):
         super().__init__(daemon=True, name=f"telegram-{name}")
+        self.allow_groups = bool(allow_groups)
         self.api = API(token, base)
         self.label = name
         self.allowed = {str(a).lstrip("@").lower() for a in allowed or [] if str(a).strip()}
@@ -95,9 +99,27 @@ class Bot(threading.Thread):
         self.poll_timeout = 25  # seconds Telegram holds a getUpdates call open (long polling)
 
     def is_allowed(self, user):
-        if not user:
+        if not user or user.get("is_bot"):
             return False
-        return str(user.get("id")) in self.allowed or (user.get("username") or "").lower() in self.allowed
+        uid, name = str(user.get("id")), (user.get("username") or "").lower()
+        if uid in self.allowed:
+            return True
+        if not name or name not in self.allowed:
+            return False
+        with _pins_lock:  # a @username belongs to the first account that used it here
+            st = _state()
+            pins = st.setdefault("username_ids", {})
+            if name not in pins:
+                pins[name] = uid
+                _save_state(st)
+                log(f"telegram: @{name} is now tied to user id {uid}", "telegram")
+            elif pins[name] != uid:
+                log(f"telegram: refused @{name} from user id {uid} (tied to {pins[name]})", "telegram")
+                return False
+        return True
+
+    def chat_ok(self, chat):
+        return self.allow_groups or (chat or {}).get("type", "private") == "private"
 
     def deny(self, chat_id, user):
         self.api.send(chat_id, f"Not allowed yet. Your Telegram user id is {user.get('id')}"
@@ -143,6 +165,9 @@ class Bot(threading.Thread):
         pass
 
 
+_pins_lock = threading.Lock()
+
+
 def _state():
     try:
         with open(STATE_PATH) as f:
@@ -161,7 +186,7 @@ def _save_state(state):
 
 class CeoBot(Bot):
     def __init__(self, dash, token, cfg, base=None):
-        super().__init__("ceo", token, cfg.get("allowed_users"), base)
+        super().__init__("ceo", token, cfg.get("allowed_users"), base, cfg.get("allow_groups"))
         self.dash = dash
         self.notify = set(cfg.get("notify") or NOTIFY)
         self.daily_hour = int(cfg.get("daily_report_hour", 18))
@@ -199,6 +224,8 @@ class CeoBot(Bot):
         chat, user = msg.get("chat", {}).get("id"), msg.get("from")
         if chat is None:
             return
+        if not self.chat_ok(msg.get("chat")):
+            return self.api.send(chat, "I only work in a private chat (groups are off: ceo_telegram.allow_groups).")
         if not self.is_allowed(user):
             return self.deny(chat, user)
         self.remember_chat(chat)
@@ -390,8 +417,8 @@ class CeoBot(Bot):
 class AgentBot(Bot):
     """Chat with one agent."""
 
-    def __init__(self, dash, agent_id, token, allowed, base=None):
-        super().__init__(agent_id, token, allowed, base)
+    def __init__(self, dash, agent_id, token, allowed, base=None, allow_groups=False):
+        super().__init__(agent_id, token, allowed, base, allow_groups)
         self.dash, self.agent_id = dash, agent_id
 
     def handle(self, update):
@@ -399,6 +426,8 @@ class AgentBot(Bot):
         chat, user, text = msg.get("chat", {}).get("id"), msg.get("from"), (msg.get("text") or "").strip()
         if chat is None or not text:
             return
+        if not self.chat_ok(msg.get("chat")):
+            return self.api.send(chat, "I only work in a private chat.")
         if not self.is_allowed(user):
             return self.deny(chat, user)
         if text in ("/start", "/help"):
@@ -437,8 +466,9 @@ class Manager:
             t = a.get("telegram") or {}
             token = resolve_env(t.get("token_env"))
             if t.get("enabled") and token:
-                want[a["id"]] = (json.dumps([token, allowed], sort_keys=True),
-                                 lambda a=a, token=token: AgentBot(self.dash, a["id"], token, allowed, self.base))
+                want[a["id"]] = (json.dumps([token, allowed, bool(ceo.get("allow_groups"))], sort_keys=True),
+                                 lambda a=a, token=token: AgentBot(self.dash, a["id"], token, allowed, self.base,
+                                                                   ceo.get("allow_groups")))
         return want
 
     def reconcile(self):

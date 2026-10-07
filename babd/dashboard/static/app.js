@@ -995,7 +995,8 @@ $("#btnSettings").addEventListener("click", () => {
       <div class="row2"><input type="text" id="tg_username" value="${esc(S.telegram?.ceo?.bot_username || "")}" placeholder="@my_ceo_bot">
         <input type="password" id="tg_token" placeholder="${S.telegram?.ceo?.token_set ? "•••••••• token set — type to replace" : "bot token from @BotFather"}" autocomplete="new-password"></div>
       <input type="text" id="tg_users" value="${esc((S.telegram?.ceo?.allowed_users || []).join(", "))}" placeholder="Allowed Telegram users: numeric ids or @usernames, comma separated">
-      <div class="help">Only these users can use the CEO bot and the agent bots. Anyone else who writes to a bot is told their id, so you can add it here.</div>
+      <div class="help">Only these users can use the CEO bot and the agent bots. Anyone else who writes to a bot is told their id, so you can add it here. Prefer numeric ids: a @username is tied to the first account that uses it.</div>
+      <label class="check"><input type="checkbox" id="tg_groups" ${S.telegram?.ceo?.allow_groups ? "checked" : ""}> Also answer in group chats (everyone in the group reads the replies and reports)</label>
       <div class="tg-notify">${(S.telegram?.notify_options || []).map((n) => `<label class="check"><input type="checkbox" name="tg_notify" value="${esc(n)}" ${(S.telegram?.ceo?.notify || S.telegram?.notify_options || []).includes(n) ? "checked" : ""}> ${esc(n)}</label>`).join("")}
         <label class="project-pick">Daily report at <input type="number" id="tg_hour" min="0" max="23" value="${esc(S.telegram?.ceo?.daily_report_hour ?? 18)}" style="width:64px">:00</label></div>
       ${tgStatus("ceo")}
@@ -1014,7 +1015,8 @@ $("#btnSettings").addEventListener("click", () => {
     try {
       await api("PUT", "telegram", { enabled: $("#tg_enabled").checked, bot_username: $("#tg_username").value.trim(),
         token: $("#tg_token").value.trim() || undefined, allowed_users: $("#tg_users").value,
-        notify: [...document.querySelectorAll('[name="tg_notify"]:checked')].map((c) => c.value), daily_report_hour: Number($("#tg_hour").value) });
+        notify: [...document.querySelectorAll('[name="tg_notify"]:checked')].map((c) => c.value), daily_report_hour: Number($("#tg_hour").value),
+        allow_groups: $("#tg_groups").checked });
       toast("Telegram saved", "ok"); await refresh(); setTimeout(async () => { await refresh(); }, 2500);
     } catch (err) { toast(err.message, "bad"); }
   };

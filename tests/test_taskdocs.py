@@ -53,6 +53,9 @@ def serve_pages(test):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     test.addCleanup(srv.server_close)
     test.addCleanup(srv.shutdown)
+    env = mock.patch.dict(os.environ, {taskdocs.ALLOW_PRIVATE_ENV: "1"})  # this test server is on 127.0.0.1
+    env.start()
+    test.addCleanup(env.stop)
     return f"http://127.0.0.1:{srv.server_port}"
 
 
@@ -123,6 +126,37 @@ class TaskDocsTest(unittest.TestCase):
         self.assertEqual(tasks[0][1][0]["text"], SPEC.strip())
         self.assertEqual(cli.tasks_from_args([], [path])[0][0], "Login page with lockout")
         self.assertEqual(cli.tasks_from_args(["notes.md"], [])[0], ("notes.md", []))  # not a file: plain text
+
+
+class LinkSafetyTest(unittest.TestCase):
+    """Links only reach public addresses: not this machine, the local network or cloud metadata."""
+
+    def setUp(self):
+        env = mock.patch.dict(os.environ, {taskdocs.ALLOW_PRIVATE_ENV: ""})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_private_and_local_addresses_are_refused(self):
+        for url in ("http://127.0.0.1:8800/api/state", "http://localhost/x.md", "http://169.254.169.254/latest/meta-data/",
+                    "http://10.0.0.5/spec.md", "http://[::1]/x.md", "http://192.168.1.1/a.md"):
+            with self.assertRaisesRegex(taskdocs.TaskDocError, "private or local|cannot resolve"):
+                taskdocs.from_url(url)
+
+    def test_a_name_that_resolves_to_a_private_address_is_refused(self):
+        fake = lambda host, port, type=0: [(2, 1, 6, "", ("10.1.2.3", port))]  # noqa: E731
+        with self.assertRaisesRegex(taskdocs.TaskDocError, "private or local"):
+            taskdocs.check_public("https://docs.example.com/spec.md", resolve=fake)
+        public = lambda host, port, type=0: [(2, 1, 6, "", ("93.184.216.34", port))]  # noqa: E731
+        taskdocs.check_public("https://docs.example.com/spec.md", resolve=public)
+
+    def test_redirects_to_private_addresses_are_refused(self):
+        handler = taskdocs._CheckedRedirects()
+        with self.assertRaisesRegex(taskdocs.TaskDocError, "private or local"):
+            handler.redirect_request(None, None, 302, "Found", {}, "http://127.0.0.1/secret")
+
+    def test_credentials_in_links_are_refused(self):
+        with self.assertRaisesRegex(taskdocs.TaskDocError, "user name or password"):
+            taskdocs.check_public("https://user:pw@example.com/a.md")
 
 
 class RunWithDocumentTest(unittest.TestCase):

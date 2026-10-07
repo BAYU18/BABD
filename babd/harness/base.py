@@ -94,7 +94,11 @@ class Harness:
         from .tools import extra_path  # tools imports this module
         extra = dict(self.extra_env)
         extra_paths = [p for p in extra.pop("PATH", "").split(os.pathsep) if p]
-        env = apply_env(os.environ, extra, self.cfg.get("env") or {}, env_overrides)
+        from ..config import scrub_env
+        # BABD's secrets never reach the agent's program; the LLM routing below adds back only this
+        # agent's own key. `pass_env` (harness option) lists variables the agent may still see.
+        base = scrub_env(os.environ, keep=self.cfg.get("pass_env") or ())
+        env = apply_env(base, extra, self.cfg.get("env") or {}, env_overrides)
         env["PATH"] = os.pathsep.join(extra_paths + extra_path() + [env.get("PATH", "")])
         return env
 
