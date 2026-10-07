@@ -50,9 +50,9 @@
 <rect x="102" y="86" width="36" height="6" rx="3" fill="#3a5078" opacity="1" />
 </g>
 <text x="600" y="154" font-size="14" fill="#9b8cff" font-weight="700" text-anchor="start" letter-spacing="1.6" opacity="1">01 · TEAM LEAD / ORCHESTRATOR</text>
-<rect x="600" y="168" width="87.12" height="24" rx="12" fill="#34d399" opacity="0.16" />
-<circle cx="613" cy="180" r="4" fill="#34d399"/>
-<text x="623" y="184.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">WORKING</text>
+<rect x="600" y="168" width="62.64" height="24" rx="12" fill="#5a6c8a" opacity="0.16" />
+<circle cx="613" cy="180" r="4" fill="#5a6c8a"/>
+<text x="623" y="184.5" font-size="12" fill="#5a6c8a" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">IDLE</text>
 <text x="600" y="226" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">MAIN TASK</text>
 <text x="600" y="264" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">MANAGE</text>
 <text x="600" y="302" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">PROJECT</text>
@@ -63,9 +63,9 @@
 <rect x="810" y="272" width="18" height="18" rx="5" fill="#9b8cff" opacity="1" />
 <path d="M814 281 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="840" y="286" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Assign Agents</text>
-<rect x="811" y="303" width="16" height="16" rx="5" fill="none" stroke="#9b8cff" stroke-width="2" opacity="1" />
-<rect x="816" y="308" width="6" height="6" rx="2" fill="#9b8cff" opacity="1" />
-<text x="840" y="316" font-size="16" fill="#e8eef8" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Coordinate Results</text>
+<rect x="810" y="302" width="18" height="18" rx="5" fill="#9b8cff" opacity="1" />
+<path d="M814 311 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="840" y="316" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Coordinate Results</text>
 <rect x="342" y="336" width="656" height="274" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="354" y="360" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
 <circle cx="978" cy="356" r="6.5" fill="none" stroke="#8597b4" stroke-width="4" stroke-dasharray="2.6 2.5"/>
@@ -80,17 +80,17 @@
 <line x1="364" y1="398" x2="384" y2="398" stroke="#9b8cff" stroke-width="1.6"/>
 <rect x="367" y="387" width="14" height="14" rx="3" fill="#1b2a45" stroke="#9b8cff" stroke-width="2" opacity="1" />
 <rect x="371" y="391" width="6" height="6" rx="1" fill="#9b8cff" opacity="1" />
-<text x="394" y="390" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · ANTHROPIC</text>
-<text x="394" y="407" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">claude-opus-5-5</text>
-<text x="394" y="424" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com</text>
-<text x="394" y="439" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $ANTHROPIC_API_K…</text>
+<text x="394" y="390" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · CUSTOM</text>
+<text x="394" y="407" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">ag-hermes</text>
+<text x="394" y="424" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  43.134.238.213:201…</text>
+<text x="394" y="439" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $KEY1</text>
 <circle cx="538" cy="394" r="5" fill="#34d399"/>
 <circle cx="538" cy="394" r="9" fill="#34d399" opacity="0.2"/>
 <rect x="566" y="372" width="200" height="44" rx="10" fill="#1b2a45" opacity="1" />
 <rect x="576" y="386" width="20" height="16" rx="4" fill="#1b2a45" stroke="#9b8cff" stroke-width="2" opacity="1" />
 <path d="M581 391 l3 3 l-3 3 M587 398 h4" stroke="#9b8cff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="606" y="390" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">HARNESS · DIRECT</text>
-<text x="606" y="407" font-size="14" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Direct API</text>
+<text x="606" y="390" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">HARNESS · HERMES_L…</text>
+<text x="606" y="407" font-size="14" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Hermes Agent</text>
 <rect x="566" y="424" width="200" height="44" rx="10" fill="#1b2a45" opacity="1" />
 <circle cx="586" cy="446" r="10" fill="#2aabee"/>
 <path d="M580.5 445.5 L591.5 441 L589.5 451.5 L586.5 448.5 L584.5 450.5 L584.5 447.5 Z" fill="#ffffff"/>
@@ -147,9 +147,9 @@
 <rect x="102" y="86" width="36" height="6" rx="3" fill="#3a5078" opacity="1" />
 </g>
 <text x="64" y="864" font-size="14" fill="#38bdf8" font-weight="700" text-anchor="start" letter-spacing="1.6" opacity="1">02 · ARCHITECT</text>
-<rect x="225.88" y="847" width="87.12" height="24" rx="12" fill="#34d399" opacity="0.16" />
-<circle cx="238.88" cy="859" r="4" fill="#34d399"/>
-<text x="248.88" y="863.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">WORKING</text>
+<rect x="250.36" y="847" width="62.64" height="24" rx="12" fill="#5a6c8a" opacity="0.16" />
+<circle cx="263.36" cy="859" r="4" fill="#5a6c8a"/>
+<text x="273.36" y="863.5" font-size="12" fill="#5a6c8a" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">IDLE</text>
 <line x1="64" y1="878" x2="313" y2="878" stroke="#26385a"/>
 <text x="64" y="904" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">MAIN TASK</text>
 <text x="64" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">DESIGN</text>
@@ -157,13 +157,10 @@
 <text x="64" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
 <rect x="64" y="1042" width="18" height="18" rx="5" fill="#38bdf8" opacity="1" />
 <path d="M68 1051 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="94" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Analyze Requirements</text>
+<text x="94" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Design HTML Structure</text>
 <rect x="64" y="1072" width="18" height="18" rx="5" fill="#38bdf8" opacity="1" />
 <path d="M68 1081 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="94" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Design Architecture</text>
-<rect x="65" y="1103" width="16" height="16" rx="5" fill="none" stroke="#38bdf8" stroke-width="2" opacity="1" />
-<rect x="70" y="1108" width="6" height="6" rx="2" fill="#38bdf8" opacity="1" />
-<text x="94" y="1116" font-size="16" fill="#e8eef8" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Research Solutions</text>
+<text x="94" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Write Spec</text>
 <rect x="52" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="60" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
 <circle cx="309" cy="1162" r="6.5" fill="none" stroke="#8597b4" stroke-width="4" stroke-dasharray="2.6 2.5"/>
@@ -183,10 +180,10 @@
 <line x1="70" y1="1256" x2="90" y2="1256" stroke="#38bdf8" stroke-width="1.6"/>
 <rect x="73" y="1245" width="14" height="14" rx="3" fill="#1b2a45" stroke="#38bdf8" stroke-width="2" opacity="1" />
 <rect x="77" y="1249" width="6" height="6" rx="1" fill="#38bdf8" opacity="1" />
-<text x="100" y="1248" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · ANTHROPIC</text>
-<text x="100" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">claude-opus-5-5</text>
-<text x="100" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com</text>
-<text x="100" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $ANTHROPIC_API_KEY</text>
+<text x="100" y="1248" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · CUSTOM</text>
+<text x="100" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">ag-hermes</text>
+<text x="100" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  43.134.238.213:20128/v1</text>
+<text x="100" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $KEY1</text>
 <circle cx="301" cy="1252" r="5" fill="#34d399"/>
 <circle cx="301" cy="1252" r="9" fill="#34d399" opacity="0.2"/>
 <rect x="60" y="1314" width="257" height="44" rx="10" fill="#1b2a45" opacity="1" />
@@ -245,9 +242,9 @@
 <rect x="102" y="86" width="36" height="6" rx="3" fill="#3a5078" opacity="1" />
 </g>
 <text x="385" y="864" font-size="14" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="1.6" opacity="1">03 · DEVELOPER</text>
-<rect x="546.88" y="847" width="87.12" height="24" rx="12" fill="#34d399" opacity="0.16" />
-<circle cx="559.88" cy="859" r="4" fill="#34d399"/>
-<text x="569.88" y="863.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">WORKING</text>
+<rect x="571.36" y="847" width="62.64" height="24" rx="12" fill="#5a6c8a" opacity="0.16" />
+<circle cx="584.36" cy="859" r="4" fill="#5a6c8a"/>
+<text x="594.36" y="863.5" font-size="12" fill="#5a6c8a" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">IDLE</text>
 <line x1="385" y1="878" x2="634" y2="878" stroke="#26385a"/>
 <text x="385" y="904" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">MAIN TASK</text>
 <text x="385" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">BUILD</text>
@@ -255,12 +252,13 @@
 <text x="385" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
 <rect x="385" y="1042" width="18" height="18" rx="5" fill="#34d399" opacity="1" />
 <path d="M389 1051 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="415" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Write Code</text>
-<rect x="386" y="1073" width="16" height="16" rx="5" fill="none" stroke="#34d399" stroke-width="2" opacity="1" />
-<rect x="391" y="1078" width="6" height="6" rx="2" fill="#34d399" opacity="1" />
-<text x="415" y="1086" font-size="16" fill="#e8eef8" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Refactor Code</text>
-<rect x="386" y="1103" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
-<text x="415" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Review Code</text>
+<text x="415" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Write index.html</text>
+<rect x="385" y="1072" width="18" height="18" rx="5" fill="#34d399" opacity="1" />
+<path d="M389 1081 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="415" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Write Tests</text>
+<rect x="385" y="1102" width="18" height="18" rx="5" fill="#34d399" opacity="1" />
+<path d="M389 1111 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="415" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Commit</text>
 <rect x="373" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="381" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
 <circle cx="630" cy="1162" r="6.5" fill="none" stroke="#8597b4" stroke-width="4" stroke-dasharray="2.6 2.5"/>
@@ -269,8 +267,8 @@
 <rect x="381" y="1178" width="257" height="44" rx="10" fill="#1b2a45" opacity="1" />
 <rect x="391" y="1192" width="20" height="16" rx="4" fill="#1b2a45" stroke="#34d399" stroke-width="2" opacity="1" />
 <path d="M396 1197 l3 3 l-3 3 M402 1204 h4" stroke="#34d399" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="421" y="1196" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">HARNESS · CLAUDE_LOCAL</text>
-<text x="421" y="1213" font-size="14" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Claude Code</text>
+<text x="421" y="1196" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">HARNESS · HERMES_LOCAL</text>
+<text x="421" y="1213" font-size="14" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Hermes Agent</text>
 <rect x="381" y="1230" width="257" height="76" rx="10" fill="#1b2a45" opacity="1" />
 <line x1="397" y1="1242" x2="397" y2="1262" stroke="#34d399" stroke-width="1.6"/>
 <line x1="391" y1="1248" x2="411" y2="1248" stroke="#34d399" stroke-width="1.6"/>
@@ -280,10 +278,10 @@
 <line x1="391" y1="1256" x2="411" y2="1256" stroke="#34d399" stroke-width="1.6"/>
 <rect x="394" y="1245" width="14" height="14" rx="3" fill="#1b2a45" stroke="#34d399" stroke-width="2" opacity="1" />
 <rect x="398" y="1249" width="6" height="6" rx="1" fill="#34d399" opacity="1" />
-<text x="421" y="1248" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · ANTHROPIC</text>
-<text x="421" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">claude-sonnet-5-5</text>
-<text x="421" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com</text>
-<text x="421" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $ANTHROPIC_API_KEY</text>
+<text x="421" y="1248" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · CUSTOM</text>
+<text x="421" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">ag-hermes</text>
+<text x="421" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  43.134.238.213:20128/v1</text>
+<text x="421" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $KEY1</text>
 <circle cx="622" cy="1252" r="5" fill="#34d399"/>
 <circle cx="622" cy="1252" r="9" fill="#34d399" opacity="0.2"/>
 <rect x="381" y="1314" width="257" height="44" rx="10" fill="#1b2a45" opacity="1" />
@@ -342,9 +340,9 @@
 <rect x="102" y="86" width="36" height="6" rx="3" fill="#3a5078" opacity="1" />
 </g>
 <text x="706" y="864" font-size="14" fill="#fbbf24" font-weight="700" text-anchor="start" letter-spacing="1.6" opacity="1">04 · QA / TESTER</text>
-<rect x="867.88" y="847" width="87.12" height="24" rx="12" fill="#34d399" opacity="0.16" />
-<circle cx="880.88" cy="859" r="4" fill="#34d399"/>
-<text x="890.88" y="863.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">WORKING</text>
+<rect x="892.36" y="847" width="62.64" height="24" rx="12" fill="#5a6c8a" opacity="0.16" />
+<circle cx="905.36" cy="859" r="4" fill="#5a6c8a"/>
+<text x="915.36" y="863.5" font-size="12" fill="#5a6c8a" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">IDLE</text>
 <line x1="706" y1="878" x2="955" y2="878" stroke="#26385a"/>
 <text x="706" y="904" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">MAIN TASK</text>
 <text x="706" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">VALIDATE</text>
@@ -352,12 +350,13 @@
 <text x="706" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
 <rect x="706" y="1042" width="18" height="18" rx="5" fill="#fbbf24" opacity="1" />
 <path d="M710 1051 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="736" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Create Tests</text>
-<rect x="707" y="1073" width="16" height="16" rx="5" fill="none" stroke="#fbbf24" stroke-width="2" opacity="1" />
-<rect x="712" y="1078" width="6" height="6" rx="2" fill="#fbbf24" opacity="1" />
-<text x="736" y="1086" font-size="16" fill="#e8eef8" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Find Bugs</text>
-<rect x="707" y="1103" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
-<text x="736" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Verify Fixes</text>
+<text x="736" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Verify HTML</text>
+<rect x="706" y="1072" width="18" height="18" rx="5" fill="#fbbf24" opacity="1" />
+<path d="M710 1081 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="736" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Run Tests</text>
+<rect x="706" y="1102" width="18" height="18" rx="5" fill="#fbbf24" opacity="1" />
+<path d="M710 1111 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="736" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Report Verdict</text>
 <rect x="694" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="702" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
 <circle cx="951" cy="1162" r="6.5" fill="none" stroke="#8597b4" stroke-width="4" stroke-dasharray="2.6 2.5"/>
@@ -377,10 +376,10 @@
 <line x1="712" y1="1256" x2="732" y2="1256" stroke="#fbbf24" stroke-width="1.6"/>
 <rect x="715" y="1245" width="14" height="14" rx="3" fill="#1b2a45" stroke="#fbbf24" stroke-width="2" opacity="1" />
 <rect x="719" y="1249" width="6" height="6" rx="1" fill="#fbbf24" opacity="1" />
-<text x="742" y="1248" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · ANTHROPIC</text>
-<text x="742" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">claude-sonnet-5-5</text>
-<text x="742" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  api.anthropic.com</text>
-<text x="742" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $ANTHROPIC_API_KEY</text>
+<text x="742" y="1248" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · CUSTOM</text>
+<text x="742" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">ag-hermes</text>
+<text x="742" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  43.134.238.213:20128/v1</text>
+<text x="742" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $KEY1</text>
 <circle cx="943" cy="1252" r="5" fill="#34d399"/>
 <circle cx="943" cy="1252" r="9" fill="#34d399" opacity="0.2"/>
 <rect x="702" y="1314" width="257" height="44" rx="10" fill="#1b2a45" opacity="1" />
@@ -439,9 +438,9 @@
 <rect x="102" y="86" width="36" height="6" rx="3" fill="#3a5078" opacity="1" />
 </g>
 <text x="1027" y="864" font-size="14" fill="#f472b6" font-weight="700" text-anchor="start" letter-spacing="1.6" opacity="1">05 · DEVOPS</text>
-<rect x="1188.88" y="847" width="87.12" height="24" rx="12" fill="#fbbf24" opacity="0.16" />
-<circle cx="1201.88" cy="859" r="4" fill="#fbbf24"/>
-<text x="1211.88" y="863.5" font-size="12" fill="#fbbf24" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">WAITING</text>
+<rect x="1213.36" y="847" width="62.64" height="24" rx="12" fill="#5a6c8a" opacity="0.16" />
+<circle cx="1226.36" cy="859" r="4" fill="#5a6c8a"/>
+<text x="1236.36" y="863.5" font-size="12" fill="#5a6c8a" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">IDLE</text>
 <line x1="1027" y1="878" x2="1276" y2="878" stroke="#26385a"/>
 <text x="1027" y="904" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">MAIN TASK</text>
 <text x="1027" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">DEPLOY &amp;</text>
@@ -449,11 +448,7 @@
 <text x="1027" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
 <rect x="1027" y="1042" width="18" height="18" rx="5" fill="#f472b6" opacity="1" />
 <path d="M1031 1051 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="1057" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Build</text>
-<rect x="1028" y="1073" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
-<text x="1057" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Deploy</text>
-<rect x="1028" y="1103" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
-<text x="1057" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Monitor</text>
+<text x="1057" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Deploy</text>
 <rect x="1015" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="1023" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
 <circle cx="1272" cy="1162" r="6.5" fill="none" stroke="#8597b4" stroke-width="4" stroke-dasharray="2.6 2.5"/>
@@ -474,9 +469,9 @@
 <rect x="1036" y="1245" width="14" height="14" rx="3" fill="#1b2a45" stroke="#f472b6" stroke-width="2" opacity="1" />
 <rect x="1040" y="1249" width="6" height="6" rx="1" fill="#f472b6" opacity="1" />
 <text x="1063" y="1248" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · CUSTOM</text>
-<text x="1063" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">qwen2.5-coder:7b</text>
-<text x="1063" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  localhost:11434/v1</text>
-<text x="1063" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $LOCAL_LLM_API_KEY</text>
+<text x="1063" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">ag-hermes</text>
+<text x="1063" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  43.134.238.213:20128/v1</text>
+<text x="1063" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $KEY1</text>
 <circle cx="1264" cy="1252" r="5" fill="#34d399"/>
 <circle cx="1264" cy="1252" r="9" fill="#34d399" opacity="0.2"/>
 <rect x="1023" y="1314" width="257" height="44" rx="10" fill="#1b2a45" opacity="1" />
@@ -529,32 +524,33 @@
 <text x="1468" y="108" font-size="28" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">CEO DASHBOARD</text>
 <line x1="1384" y1="142" x2="1856" y2="142" stroke="#26385a"/>
 <text x="1384" y="176" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">PROJECT</text>
-<text x="1384" y="202" font-size="20" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Software Project</text>
+<text x="1384" y="202" font-size="20" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">BABD AI Dev Team</text>
 <text x="1856" y="176" font-size="11" fill="#8597b4" font-weight="700" text-anchor="end" letter-spacing="2" opacity="1">STATUS</text>
-<rect x="1777.04" y="186" width="78.96000000000001" height="24" rx="12" fill="#34d399" opacity="0.16" />
-<circle cx="1790.04" cy="198" r="4" fill="#34d399"/>
-<text x="1800.04" y="202.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">ACTIVE</text>
+<rect x="1793.36" y="186" width="62.64" height="24" rx="12" fill="#5b8cff" opacity="0.16" />
+<circle cx="1806.36" cy="198" r="4" fill="#5b8cff"/>
+<text x="1816.36" y="202.5" font-size="12" fill="#5b8cff" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">DONE</text>
 <rect x="1384" y="313.5" width="472" height="96" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="343.5" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">PROJECT PROGRESS</text>
-<text x="1836" y="359.5" font-size="44" fill="#e8eef8" font-weight="800" text-anchor="end" letter-spacing="0" opacity="1">72%</text>
+<text x="1836" y="359.5" font-size="44" fill="#e8eef8" font-weight="800" text-anchor="end" letter-spacing="0" opacity="1">100%</text>
 <rect x="1404" y="377.5" width="432" height="12" rx="6" fill="#2a3c5e" opacity="1" />
-<rect x="1404" y="377.5" width="311.04" height="12" rx="6" fill="#5b8cff" opacity="1" />
+<rect x="1404" y="377.5" width="432.0" height="12" rx="6" fill="#5b8cff" opacity="1" />
 <rect x="1384.0" y="493.0" width="230.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
 <rect x="1384.0" y="509.0" width="4" height="44" rx="2" fill="#5b8cff" opacity="1" />
 <text x="1402.0" y="523.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">CURRENT GOAL</text>
-<text x="1402.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Complete</text>
-<text x="1402.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Authentication</text>
+<text x="1402.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">2D</text>
+<text x="1402.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">keyboard car game</text>
 <rect x="1626.0" y="493.0" width="230.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
 <rect x="1626.0" y="509.0" width="4" height="44" rx="2" fill="#fbbf24" opacity="1" />
 <text x="1644.0" y="523.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">ACTIVE TASK</text>
-<text x="1644.0" y="551.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">QA Testing</text>
+<text x="1644.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">CEO</text>
+<text x="1644.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">status report</text>
 <rect x="1384" y="652.5" width="472" height="72" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="680.5" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT STATUS</text>
-<text x="1404" y="708.5" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">4 Working / 1 Waiting</text>
-<circle cx="1716" cy="690.5" r="10" fill="#9b8cff"/>
-<circle cx="1746" cy="690.5" r="10" fill="#38bdf8"/>
-<circle cx="1776" cy="690.5" r="10" fill="#34d399"/>
-<circle cx="1806" cy="690.5" r="10" fill="#fbbf24"/>
+<text x="1404" y="708.5" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">0 Working / 5 Waiting</text>
+<circle cx="1716" cy="690.5" r="9" fill="none" stroke="#9b8cff" stroke-width="2.5" stroke-dasharray="4 3"/>
+<circle cx="1746" cy="690.5" r="9" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-dasharray="4 3"/>
+<circle cx="1776" cy="690.5" r="9" fill="none" stroke="#34d399" stroke-width="2.5" stroke-dasharray="4 3"/>
+<circle cx="1806" cy="690.5" r="9" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-dasharray="4 3"/>
 <circle cx="1836" cy="690.5" r="9" fill="none" stroke="#f472b6" stroke-width="2.5" stroke-dasharray="4 3"/>
 <rect x="1384" y="808.0" width="472" height="92" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="836.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">TEAM SETUP</text>
@@ -564,7 +560,7 @@
 <text x="1512.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">4/5</text>
 <text x="1512.0" y="890.0" font-size="12" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Telegram bots</text>
 <circle cx="1564.5" cy="865.0" r="4" fill="#fbbf24"/>
-<text x="1620.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">3</text>
+<text x="1620.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">1</text>
 <text x="1620.0" y="890.0" font-size="12" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Harness types</text>
 <circle cx="1645.5" cy="865.0" r="4" fill="#5b8cff"/>
 <text x="1728.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">20</text>
@@ -573,21 +569,21 @@
 <rect x="1384.0" y="983.5" width="230.0" height="92" rx="14" fill="#fbbf24" opacity="0.12" />
 <rect x="1384.0" y="983.5" width="230.0" height="92" rx="14" fill="none" stroke="#fbbf24" stroke-width="1.5" opacity="0.7" />
 <text x="1402.0" y="1013.5" font-size="11" fill="#fbbf24" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">APPROVAL NEEDED</text>
-<text x="1402.0" y="1059.5" font-size="40" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">2</text>
+<text x="1402.0" y="1059.5" font-size="40" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">0</text>
 <text x="1596.0" y="1057.5" font-size="14" fill="#fbbf24" font-weight="700" text-anchor="end" letter-spacing="0" opacity="1">Review</text>
 <rect x="1626.0" y="983.5" width="230.0" height="92" rx="14" fill="#f87171" opacity="0.12" />
 <rect x="1626.0" y="983.5" width="230.0" height="92" rx="14" fill="none" stroke="#f87171" stroke-width="1.5" opacity="0.7" />
 <text x="1644.0" y="1013.5" font-size="11" fill="#f87171" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">BLOCKERS</text>
-<text x="1644.0" y="1059.5" font-size="40" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">1</text>
+<text x="1644.0" y="1059.5" font-size="40" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">0</text>
 <text x="1838.0" y="1057.5" font-size="14" fill="#f87171" font-weight="700" text-anchor="end" letter-spacing="0" opacity="1">Resolve</text>
 <rect x="1384" y="1159.0" width="472" height="56" rx="14" fill="#1b2a45" opacity="1" />
 <circle cx="1412" cy="1187.0" r="12" fill="#34d399"/>
 <path d="M1406 1187.0 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1436" y="1183.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">RECENT RESULT</text>
-<text x="1436" y="1203.0" font-size="16" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">API Completed</text>
+<text x="1436" y="1203.0" font-size="16" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Live on port 8080</text>
 <rect x="1384" y="1298.5" width="472" height="64" rx="14" fill="#5b8cff" opacity="1" />
 <text x="1404" y="1323.5" font-size="11" fill="#dbe6ff" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">NEXT ACTION</text>
-<text x="1404" y="1347.5" font-size="19" fill="#ffffff" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">Run Integration Tests</text>
+<text x="1404" y="1347.5" font-size="19" fill="#ffffff" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">CEO opens the URL</text>
 <path d="M1816 1330.5 h22 m-8 -8 l8 8 l-8 8" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <rect x="1384" y="1446.0" width="472" height="112" rx="14" fill="#1b2a45" opacity="1" />
 <circle cx="1414" cy="1480.0" r="10" fill="#2aabee"/>
@@ -626,24 +622,23 @@
 <text x="752.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Developer · Done</text>
 <line x1="941.0" y1="1706" x2="977.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M971.0 1700 L979.0 1706 L971.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="987.0" y="1664" width="255.0" height="84" rx="18" fill="#fbbf24" opacity="0.18" />
-<rect x="991.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" stroke="#fbbf24" stroke-width="2" opacity="1" />
+<rect x="991.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
 <circle cx="1029.0" cy="1706" r="18" fill="#fbbf24" opacity="1"/>
 <text x="1029.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">4</text>
 <text x="1061.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">TEST</text>
-<text x="1061.0" y="1726" font-size="13" fill="#fbbf24" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">QA / Tester · In progress</text>
+<text x="1061.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">QA / Tester · Done</text>
 <line x1="1250.0" y1="1706" x2="1286.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M1280.0 1700 L1288.0 1706 L1280.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="1300.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />
-<circle cx="1338.0" cy="1706" r="18" fill="#f472b6" opacity="0.35"/>
+<rect x="1300.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
+<circle cx="1338.0" cy="1706" r="18" fill="#f472b6" opacity="1"/>
 <text x="1338.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">5</text>
-<text x="1370.0" y="1704" font-size="24" fill="#8597b4" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">DEPLOY</text>
-<text x="1370.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">DevOps · Up next</text>
+<text x="1370.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">DEPLOY</text>
+<text x="1370.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">DevOps · Done</text>
 <line x1="1559.0" y1="1706" x2="1595.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M1589.0 1700 L1597.0 1706 L1589.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="1609.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />
-<circle cx="1647.0" cy="1706" r="18" fill="#f472b6" opacity="0.35"/>
+<rect x="1609.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
+<circle cx="1647.0" cy="1706" r="18" fill="#f472b6" opacity="1"/>
 <text x="1647.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">6</text>
-<text x="1679.0" y="1704" font-size="24" fill="#8597b4" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">MONITOR</text>
-<text x="1679.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">DevOps · Up next</text>
+<text x="1679.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">MONITOR</text>
+<text x="1679.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">DevOps · Done</text>
 </svg>

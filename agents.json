@@ -1,14 +1,14 @@
 {
   "project": {
-    "name": "Software Project",
-    "status": "ACTIVE",
-    "progress": 72,
-    "current_goal": "Complete Authentication",
-    "active_task": "QA Testing",
-    "approval_needed": 2,
-    "blockers": 1,
-    "recent_result": "API Completed",
-    "next_action": "Run Integration Tests",
+    "name": "BABD AI Dev Team",
+    "status": "DONE",
+    "progress": 100,
+    "current_goal": "2D keyboard car game",
+    "active_task": "CEO status report",
+    "approval_needed": 0,
+    "blockers": 0,
+    "recent_result": "Live on port 8080",
+    "next_action": "CEO opens the URL",
     "require_approval": [
       "deploy"
     ],
@@ -46,7 +46,7 @@
       "name": "TEAM LEAD / ORCHESTRATOR",
       "short_name": "Team Lead",
       "color": "#9b8cff",
-      "status": "working",
+      "status": "idle",
       "main_task": [
         "MANAGE",
         "PROJECT"
@@ -62,19 +62,26 @@
         },
         {
           "name": "Coordinate Results",
-          "state": "active"
+          "state": "done"
         }
       ],
       "llm": {
-        "provider": "Anthropic",
-        "api": "anthropic",
-        "base_url": "https://api.anthropic.com",
-        "model": "claude-opus-5-5",
-        "api_key_env": "ANTHROPIC_API_KEY",
+        "provider": "Custom",
+        "api": "openai",
+        "base_url": "http://43.134.238.213:20128/v1",
+        "model": "ag-hermes",
+        "api_key_env": "KEY1",
         "effort": "high"
       },
       "harness": {
-        "type": "direct"
+        "type": "hermes_local",
+        "toolsets": [
+          "terminal",
+          "file"
+        ],
+        "max_turns": 30,
+        "timeout_sec": 1200,
+        "yolo": false
       },
       "telegram": {
         "enabled": true,
@@ -120,31 +127,27 @@
       "name": "ARCHITECT",
       "short_name": "Architect",
       "color": "#38bdf8",
-      "status": "working",
+      "status": "idle",
       "main_task": [
         "DESIGN",
         "SYSTEM"
       ],
       "sub_tasks": [
         {
-          "name": "Analyze Requirements",
+          "name": "Design HTML Structure",
           "state": "done"
         },
         {
-          "name": "Design Architecture",
+          "name": "Write Spec",
           "state": "done"
-        },
-        {
-          "name": "Research Solutions",
-          "state": "active"
         }
       ],
       "llm": {
-        "provider": "Anthropic",
-        "api": "anthropic",
-        "base_url": "https://api.anthropic.com",
-        "model": "claude-opus-5-5",
-        "api_key_env": "ANTHROPIC_API_KEY",
+        "provider": "Custom",
+        "api": "openai",
+        "base_url": "http://43.134.238.213:20128/v1",
+        "model": "ag-hermes",
+        "api_key_env": "KEY1",
         "effort": "high"
       },
       "harness": {
@@ -189,38 +192,35 @@
       "name": "DEVELOPER",
       "short_name": "Developer",
       "color": "#34d399",
-      "status": "working",
+      "status": "idle",
       "main_task": [
         "BUILD",
         "SOFTWARE"
       ],
       "sub_tasks": [
         {
-          "name": "Write Code",
+          "name": "Write index.html",
           "state": "done"
         },
         {
-          "name": "Refactor Code",
-          "state": "active"
+          "name": "Write Tests",
+          "state": "done"
         },
         {
-          "name": "Review Code",
-          "state": "todo"
+          "name": "Commit",
+          "state": "done"
         }
       ],
       "llm": {
-        "provider": "Anthropic",
-        "api": "anthropic",
-        "base_url": "https://api.anthropic.com",
-        "model": "claude-sonnet-5-5",
-        "api_key_env": "ANTHROPIC_API_KEY",
-        "effort": "medium"
+        "provider": "Custom",
+        "api": "openai",
+        "base_url": "http://43.134.238.213:20128/v1",
+        "model": "ag-hermes",
+        "api_key_env": "KEY1",
+        "effort": "high"
       },
       "harness": {
-        "type": "claude_local",
-        "max_turns": 40,
-        "timeout_sec": 1800,
-        "dangerously_skip_permissions": false
+        "type": "hermes_local"
       },
       "telegram": {
         "enabled": true,
@@ -257,32 +257,32 @@
       "name": "QA / TESTER",
       "short_name": "QA / Tester",
       "color": "#fbbf24",
-      "status": "working",
+      "status": "idle",
       "main_task": [
         "VALIDATE",
         "SOFTWARE"
       ],
       "sub_tasks": [
         {
-          "name": "Create Tests",
+          "name": "Verify HTML",
           "state": "done"
         },
         {
-          "name": "Find Bugs",
-          "state": "active"
+          "name": "Run Tests",
+          "state": "done"
         },
         {
-          "name": "Verify Fixes",
-          "state": "todo"
+          "name": "Report Verdict",
+          "state": "done"
         }
       ],
       "llm": {
-        "provider": "Anthropic",
-        "api": "anthropic",
-        "base_url": "https://api.anthropic.com",
-        "model": "claude-sonnet-5-5",
-        "api_key_env": "ANTHROPIC_API_KEY",
-        "effort": "medium"
+        "provider": "Custom",
+        "api": "openai",
+        "base_url": "http://43.134.238.213:20128/v1",
+        "model": "ag-hermes",
+        "api_key_env": "KEY1",
+        "effort": "high"
       },
       "harness": {
         "type": "hermes_local",
@@ -324,31 +324,24 @@
       "name": "DEVOPS",
       "short_name": "DevOps",
       "color": "#f472b6",
-      "status": "waiting",
+      "status": "idle",
       "main_task": [
         "DEPLOY &",
         "OPERATE"
       ],
       "sub_tasks": [
         {
-          "name": "Build",
-          "state": "done"
-        },
-        {
           "name": "Deploy",
-          "state": "todo"
-        },
-        {
-          "name": "Monitor",
-          "state": "todo"
+          "state": "done"
         }
       ],
       "llm": {
         "provider": "Custom",
         "api": "openai",
-        "base_url": "http://localhost:11434/v1",
-        "model": "qwen2.5-coder:7b",
-        "api_key_env": "LOCAL_LLM_API_KEY"
+        "base_url": "http://43.134.238.213:20128/v1",
+        "model": "ag-hermes",
+        "api_key_env": "KEY1",
+        "effort": "high"
       },
       "harness": {
         "type": "hermes_local",
@@ -405,17 +398,17 @@
     {
       "step": "TEST",
       "owner": "qa",
-      "state": "active"
+      "state": "done"
     },
     {
       "step": "DEPLOY",
       "owner": "devops",
-      "state": "todo"
+      "state": "done"
     },
     {
       "step": "MONITOR",
       "owner": "devops",
-      "state": "todo"
+      "state": "done"
     }
   ]
 }
