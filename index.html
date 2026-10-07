@@ -3,9 +3,369 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hello World</title>
+  <title>2D Car Game</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d1017; overflow: hidden; }
+    body { display: flex; align-items: center; justify-content: center; }
+    canvas { display: block; max-width: 100%; max-height: 100vh; height: auto; image-rendering: auto; }
+  </style>
 </head>
 <body>
-  <h1>Hello World</h1>
+  <canvas id="game" width="400" height="600"></canvas>
+  <script>
+    (function () {
+      "use strict";
+
+      // ---- Constants (Architect spec §2) ------------------------------------
+      var W = 400, H = 600;              // logical canvas size
+      var LANES = 4;                     // 4 lanes
+      var LANE_W = W / LANES;            // 100 px
+      var CAR_W = 40, CAR_H = 70;
+      var CAR_Y = H - 90;                // top of car rect = 510
+      var START_LANE = 1;
+      var START_SPAWN_INTERVAL = 1.1;    // seconds
+      var MIN_SPAWN_INTERVAL = 0.45;
+      var START_OBSTACLE_SPEED = 140;    // px/s
+      var MAX_OBSTACLE_SPEED = 360;      // px/s
+      var SPEED_NUDGE = 15;              // px/s per Up/Down press
+      var DT_CLAMP = 0.05;               // 50 ms — dt clamp
+      var HIGH_SCORE_KEY = "carGameHighScore";
+
+      // ---- Canvas ------------------------------------------------------------
+      var canvas = document.getElementById("game");
+      var ctx = canvas.getContext("2d");
+
+      // ---- Helpers -----------------------------------------------------------
+      function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+      // Left edge x of a car/obstacle centered in lane i
+      function laneX(lane) { return lane * LANE_W + (LANE_W - CAR_W) / 2; }
+
+      function readHighScore() {
+        try {
+          var raw = localStorage.getItem(HIGH_SCORE_KEY);
+          var n = parseInt(raw, 10);
+          return isFinite(n) && n >= 0 ? n : 0;
+        } catch (e) {
+          return 0; // localStorage unavailable (private mode / file:// sandbox)
+        }
+      }
+
+      function writeHighScore(value) {
+        try { localStorage.setItem(HIGH_SCORE_KEY, String(value)); } catch (e) { /* ignore */ }
+      }
+
+      // ---- Game state (spec §3) ---------------------------------------------
+      var state = "start";               // "start" | "playing" | "over"
+      var carLane = START_LANE;
+      var obstacles = [];                // [{ lane, y }]
+      var score = 0;
+      var highScore = readHighScore();
+      var obstacleSpeed = START_OBSTACLE_SPEED;
+      var spawnInterval = START_SPAWN_INTERVAL;
+      var spawnTimer = 0;
+      var dashOffset = 0;                // purely visual lane-dash scroll
+      var lastTime = 0;
+      var keys = {};                     // held-key map (for Up/Down nudge + blur clear)
+      var speedNudge = 0;                // player's Up/Down speed adjustment
+
+      function resetRun() {
+        carLane = START_LANE;
+        obstacles = [];
+        score = 0;
+        speedNudge = 0;
+        obstacleSpeed = START_OBSTACLE_SPEED;
+        spawnInterval = START_SPAWN_INTERVAL;
+        spawnTimer = 0;
+        dashOffset = 0;
+        state = "playing";
+      }
+
+      function start() {
+        resetRun();
+        lastTime = 0; // next frame initialises the clock
+      }
+
+      function gameOver() {
+        state = "over";
+        var finalScore = Math.floor(score);
+        if (finalScore > highScore) {
+          highScore = finalScore;
+          writeHighScore(highScore);
+        }
+      }
+
+      // ---- Spawning (spec §2: never two obstacles in the same lane) ---------
+      function freeLanes() {
+        var occupied = {};
+        for (var i = 0; i < obstacles.length; i++) occupied[obstacles[i].lane] = true;
+        var free = [];
+        for (var l = 0; l < LANES; l++) if (!occupied[l]) free.push(l);
+        return free;
+      }
+
+      function spawnObstacle() {
+        var free = freeLanes();
+        if (free.length === 0) return; // all lanes busy — skip this cycle
+        var lane = free[Math.floor(Math.random() * free.length)];
+        obstacles.push({ lane: lane, y: -CAR_H });
+      }
+
+      // ---- Difficulty (spec §4) ---------------------------------------------
+      function updateDifficulty() {
+        spawnInterval = Math.max(MIN_SPAWN_INTERVAL, START_SPAWN_INTERVAL - score * 0.01);
+        var base = Math.min(MAX_OBSTACLE_SPEED, START_OBSTACLE_SPEED + score * 0.6);
+        obstacleSpeed = clamp(base + speedNudge, base, MAX_OBSTACLE_SPEED);
+      }
+
+      // ---- Collision (spec §2: AABB) ----------------------------------------
+      function carRect() {
+        return { x: laneX(carLane), y: CAR_Y, w: CAR_W, h: CAR_H };
+      }
+
+      function collides(car, obs) {
+        var ox = laneX(obs.lane);
+        return car.x < ox + CAR_W && car.x + CAR_W > ox &&
+               car.y < obs.y + CAR_H && car.y + CAR_H > obs.y;
+      }
+
+      function checkCollision() {
+        var car = carRect();
+        for (var i = 0; i < obstacles.length; i++) {
+          if (collides(car, obstacles[i])) { gameOver(); return true; }
+        }
+        return false;
+      }
+
+      // ---- Update (spec §3) --------------------------------------------------
+      function update(dt) {
+        if (state !== "playing") return;
+
+        // Optional held-key speed nudge (Up/Down) within [base, cap]
+        if (keys["ArrowUp"] || keys["w"] || keys["W"]) speedNudge = clamp(speedNudge + SPEED_NUDGE * dt * 6, 0, MAX_OBSTACLE_SPEED);
+        if (keys["ArrowDown"] || keys["s"] || keys["S"]) speedNudge = clamp(speedNudge - SPEED_NUDGE * dt * 6, -MAX_OBSTACLE_SPEED, 0);
+        updateDifficulty();
+
+        // Spawn timer
+        spawnTimer += dt;
+        if (spawnTimer >= spawnInterval) {
+          spawnTimer = 0;
+          spawnObstacle();
+        }
+
+        // Move obstacles; remove off-screen ones
+        for (var i = obstacles.length - 1; i >= 0; i--) {
+          obstacles[i].y += obstacleSpeed * dt;
+          if (obstacles[i].y > H) obstacles.splice(i, 1);
+        }
+
+        // Visual lane-dash scroll
+        dashOffset = (dashOffset + obstacleSpeed * dt) % 40;
+
+        // Score (time-based) + collision
+        score += dt * 10;
+        checkCollision();
+      }
+
+      // ---- Render (spec §2, §4, §6) -----------------------------------------
+      function drawRoad() {
+        ctx.fillStyle = "#1b2a1f";
+        ctx.fillRect(0, 0, W, H);
+
+        // Edge lines
+        ctx.fillStyle = "#e8e8e8";
+        ctx.fillRect(0, 0, 2, H);
+        ctx.fillRect(W - 2, 0, 2, H);
+
+        // Dashed lane dividers at x = 100, 200, 300 (scroll downward)
+        ctx.fillStyle = "#cfcfcf";
+        var dash = 24, gap = 16, period = dash + gap;
+        for (var l = 1; l < LANES; l++) {
+          var x = l * LANE_W - 2;
+          for (var y = -period + (dashOffset % period); y < H; y += period) {
+            ctx.fillRect(x, y, 4, dash);
+          }
+        }
+      }
+
+      function drawCar() {
+        var x = laneX(carLane);
+        ctx.fillStyle = "#ffd93d";
+        ctx.fillRect(x, CAR_Y, CAR_W, CAR_H);
+        ctx.strokeStyle = "#8a6d00";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x + 1.5, CAR_Y + 1.5, CAR_W - 3, CAR_H - 3);
+        // windscreen detail
+        ctx.fillStyle = "#3a3a3a";
+        ctx.fillRect(x + 8, CAR_Y + 10, CAR_W - 16, 14);
+      }
+
+      function drawObstacles() {
+        for (var i = 0; i < obstacles.length; i++) {
+          var o = obstacles[i];
+          var x = laneX(o.lane);
+          ctx.fillStyle = "#ff5c5c";
+          ctx.fillRect(x, o.y, CAR_W, CAR_H);
+          ctx.strokeStyle = "#8a1c1c";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(x + 1.5, o.y + 1.5, CAR_W - 3, CAR_H - 3);
+        }
+      }
+
+      function drawHud() {
+        ctx.font = "20px monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillText("SCORE " + Math.floor(score), 12, 10);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText("SCORE " + Math.floor(score), 10, 8);
+
+        ctx.textAlign = "right";
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillText("HI " + highScore, W - 8, 10);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText("HI " + highScore, W - 10, 8);
+      }
+
+      function drawOverlay() {
+        if (state !== "start" && state !== "over") return;
+        ctx.fillStyle = "rgba(0,0,0,0.62)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        if (state === "start") {
+          ctx.fillStyle = "#ffd93d";
+          ctx.font = "bold 34px monospace";
+          ctx.fillText("2D CAR GAME", W / 2, H / 2 - 70);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "18px monospace";
+          ctx.fillText("Dodge the red cars", W / 2, H / 2 - 20);
+          ctx.fillText("Use \u2190 \u2192 (or A / D) to change lane", W / 2, H / 2 + 14);
+          ctx.fillText("Press SPACE or an arrow to start", W / 2, H / 2 + 48);
+          ctx.fillStyle = "#9fe6a0";
+          ctx.font = "16px monospace";
+          ctx.fillText("HI SCORE " + highScore, W / 2, H / 2 + 96);
+        } else {
+          ctx.fillStyle = "#ff5c5c";
+          ctx.font = "bold 40px monospace";
+          ctx.fillText("GAME OVER", W / 2, H / 2 - 70);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "22px monospace";
+          ctx.fillText("SCORE " + Math.floor(score), W / 2, H / 2 - 10);
+          ctx.fillStyle = "#9fe6a0";
+          ctx.fillText("HI SCORE " + highScore, W / 2, H / 2 + 26);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "18px monospace";
+          ctx.fillText("Press SPACE to restart", W / 2, H / 2 + 78);
+        }
+      }
+
+      function render() {
+        drawRoad();
+        drawObstacles();
+        drawCar();
+        drawHud();
+        drawOverlay();
+      }
+
+      // ---- Game loop (spec §3) ----------------------------------------------
+      var running = true;   // rAF loop on/off — QA can pause it for deterministic steps
+
+      function step(dt) {
+        update(dt);
+      }
+
+      function frame(now) {
+        if (!running) { lastTime = 0; requestAnimationFrame(frame); return; }
+        if (!lastTime) lastTime = now;
+        var dt = (now - lastTime) / 1000;
+        lastTime = now;
+        if (dt > DT_CLAMP) dt = DT_CLAMP;
+        if (dt > 0) step(dt);
+        render();
+        requestAnimationFrame(frame);
+      }
+
+      // ---- Input (spec §3) --------------------------------------------------
+      var ARROW_KEYS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
+      var WASD_KEYS = ["a", "d", "w", "s", "A", "D", "W", "S"];
+
+      function applyKey(name, down) {
+        keys[name] = down;
+        if (!down) return;
+
+        var isLeft = (name === "ArrowLeft" || name === "a" || name === "A");
+        var isRight = (name === "ArrowRight" || name === "d" || name === "D");
+        var isStart = (name === " " || name === "Space" || name === "ArrowUp" || name === "ArrowDown" ||
+                       ARROW_KEYS.indexOf(name) !== -1 ||
+                       name === "w" || name === "W" || name === "s" || name === "S");
+
+        if (state === "start" || state === "over") {
+          if (isStart) start();
+          return;
+        }
+
+        // playing
+        if (isLeft) carLane = clamp(carLane - 1, 0, LANES - 1);
+        if (isRight) carLane = clamp(carLane + 1, 0, LANES - 1);
+      }
+
+      function onKeyDown(e) {
+        var name = e.key;
+        if (ARROW_KEYS.indexOf(name) !== -1 || name === " " ||
+            WASD_KEYS.indexOf(name) !== -1) {
+          if (e.preventDefault) e.preventDefault();
+        }
+        applyKey(name, true);
+      }
+
+      function onKeyUp(e) {
+        applyKey(e.key, false);
+      }
+
+      function clearKeys() {
+        keys = {};
+        speedNudge = 0;
+      }
+
+      document.addEventListener("keydown", onKeyDown);
+      document.addEventListener("keyup", onKeyUp);
+      window.addEventListener("blur", clearKeys);
+      document.addEventListener("visibilitychange", function () {
+        if (document.hidden) clearKeys();
+      });
+
+      // ---- Debug hook for QA (spec §7: window.__GAME__) ---------------------
+      window.__GAME__ = {
+        start: start,
+        step: step,
+        setKey: applyKey,
+        pause: function () { running = false; },
+        resume: function () { running = true; lastTime = 0; },
+        forceObstacle: function (lane, y) {
+          obstacles.push({ lane: clamp(lane, 0, LANES - 1), y: y });
+        },
+        snapshot: function () {
+          return {
+            state: state,
+            carLane: carLane,
+            carX: laneX(carLane),
+            carY: CAR_Y,
+            startLane: START_LANE,
+            score: score,
+            highScore: highScore,
+            obstacles: obstacles.map(function (o) { return { lane: o.lane, y: o.y }; }),
+            obstacleSpeed: obstacleSpeed,
+            spawnInterval: spawnInterval
+          };
+        }
+      };
+
+      // ---- Boot -------------------------------------------------------------
+      render();
+      requestAnimationFrame(frame);
+    })();
+  </script>
 </body>
 </html>
