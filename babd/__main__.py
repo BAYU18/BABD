@@ -6,6 +6,7 @@
                                                select a harness: installs and configures it
   python -m babd setup [agent ...]             install + configure every agent's harness
   python -m babd dashboard [--port 8800]       web panel: configure, command and watch the agents
+  python -m babd brain [words ...]             team memory (GBrain): status, or recall about some words
   python -m babd ask <agent> "message"         one message to one agent
   python -m babd chat <agent>                  interactive chat with one agent
   python -m babd run "goal" [--approve] [--update-dashboard]
@@ -16,6 +17,7 @@ import json
 import sys
 
 from .config import ROOT, load_config, load_dotenv, save_config
+from .gbrain import BrainError, GBrain, format_memory
 from .harness import HARNESSES, create_harness, select_harness
 from .llm import LLMError
 from .team import Team, apply_run_to_config
@@ -35,6 +37,8 @@ def main(argv=None):
     u.add_argument("--no-setup", action="store_true", help="only change agents.json")
     st = sub.add_parser("setup", help="install and configure the harness of every (or the named) agent")
     st.add_argument("agents", nargs="*")
+    br = sub.add_parser("brain", help="the team's GBrain memory: status, or recall what it knows about some words")
+    br.add_argument("words", nargs="*", help="words to recall (empty: show status)")
     db = sub.add_parser("dashboard", help="open the web panel to configure, command and watch the agents")
     db.add_argument("--host", default="127.0.0.1")
     db.add_argument("--port", type=int, default=8800)
@@ -64,6 +68,18 @@ def main(argv=None):
     cfg = load_config()
     agents = {a["id"]: a for a in cfg["agents"]}
 
+    if args.cmd == "brain":
+        brain = GBrain(cfg["project"])
+        if not args.words:
+            print(json.dumps(brain.status(), indent=2))
+            return 0
+        try:
+            print(format_memory(brain.recall(" ".join(args.words))))
+        except BrainError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        return 0
+
     if args.cmd in ("use", "setup"):
         targets = [args.agent] if args.cmd == "use" else (args.agents or list(agents))
         unknown = [t for t in targets if t not in agents]
@@ -87,6 +103,12 @@ def main(argv=None):
             if args.no_setup:
                 return 0
         failed = 0
+        if args.cmd == "setup" or args.cmd == "use":
+            try:
+                print(f"OK   {'gbrain':<10} [team memory] {GBrain(cfg['project']).setup()}")
+            except (BrainError, OSError) as e:
+                failed += 1
+                print(f"FAIL {'gbrain':<10} {e}")
         for agent_id in targets:
             try:
                 h = create_harness(agents[agent_id])

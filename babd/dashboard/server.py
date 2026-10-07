@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, save_config, set_env_var
+from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
 from ..log import add_listener, log
 from ..team import Agent, Team, apply_run_to_config
@@ -120,6 +121,7 @@ class Dashboard:
         cfg = self.load()
         return {
             "project": cfg["project"],
+            "brain": GBrain(cfg["project"]).status(),
             "workflow": cfg.get("workflow", []),
             "agents": [public_agent(a) for a in cfg["agents"]],
             "harnesses": {k: {"label": c.label, "doc": (c.__doc__ or "").strip().splitlines()[0],
@@ -177,6 +179,11 @@ class Dashboard:
                 p["name"] = str(body["name"])[:60]
             if "require_approval" in body:
                 p["require_approval"] = ["deploy"] if body["require_approval"] else []
+            if "gbrain" in body:
+                g = p.setdefault("gbrain", {})
+                for k in ("enabled", "strict", "allow_cloud"):
+                    if k in body["gbrain"]:
+                        g[k] = bool(body["gbrain"][k])
             if "max_fix_rounds" in body:
                 p["max_fix_rounds"] = max(0, min(5, int(body["max_fix_rounds"])))
             self.save(cfg)
@@ -208,6 +215,12 @@ class Dashboard:
     def setup_agents(self, agent_ids=None):
         cfg = self.load()
         results = {}
+        if not agent_ids:  # the team brain first: every agent reads and writes it
+            try:
+                results["gbrain"] = {"ok": True, "summary": GBrain(cfg["project"]).setup()}
+            except (BrainError, OSError) as e:
+                results["gbrain"] = {"ok": False, "summary": str(e)}
+            log(f"gbrain: {'OK' if results['gbrain']['ok'] else 'FAIL'} {results['gbrain']['summary']}", "setup")
         for a in cfg["agents"]:
             if agent_ids and a["id"] not in agent_ids:
                 continue
@@ -230,10 +243,10 @@ class Dashboard:
         with lock:
             cached = self.chats.get(agent_id)
             if not cached or cached[0] != fingerprint:
-                cached = (fingerprint, Agent(a))
+                cached = (fingerprint, Agent(a, GBrain(cfg["project"])))
                 self.chats[agent_id] = cached
             agent = cached[1]
-            reply = agent.chat(message)
+            reply = agent.chat(message, on_memory=lambda e: self.hub.publish("memory", e))
             return {"reply": reply, "history": agent.history}
 
     # -- team runs ---------------------------------------------------------------------------
@@ -244,7 +257,7 @@ class Dashboard:
         s = self.run.state
         return {k: s[k] for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
-                                  "blockers", "report")} | {"messages": s["messages"]}
+                                  "blockers", "report", "memory")} | {"messages": s["messages"]}
 
     def history(self):
         out = []
@@ -431,6 +444,14 @@ def make_handler(dash, token, allowed_hosts):
                 return d.state()
             if method == "PUT" and parts == ["project"]:
                 return d.update_project(self.body())
+            if method == "GET" and parts == ["brain", "recall"]:
+                words = (parse_qs(urlparse(self.path).query).get("q") or [""])[0]
+                if not words.strip():
+                    raise ApiError(400, "type some words to recall")
+                try:
+                    return GBrain(d.load()["project"]).recall(words, budget_tokens=2000)
+                except BrainError as e:
+                    raise ApiError(503, str(e))
             if method == "POST" and parts == ["setup"]:
                 return d.job("setup", d.setup_agents)
             if method == "POST" and parts == ["check"]:

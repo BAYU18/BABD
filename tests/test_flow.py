@@ -52,6 +52,7 @@ class FlowTest(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
         self.cfg = copy.deepcopy(load_config())
+        self.cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
         for a in self.cfg["agents"]:
             a["harness"] = {"type": "direct"}
             a["llm"]["api_key"] = "test"

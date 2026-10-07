@@ -20,6 +20,7 @@ import threading
 import time
 
 from .config import ROOT
+from .gbrain import one_line, slugify
 
 RUNS_DIR = os.path.join(ROOT, "runs")
 ROLES = ("lead", "architect", "developer", "qa", "devops")
@@ -110,10 +111,11 @@ class Run:
             "started_at": now(), "finished_at": None, "error": None, "dir": self.dir,
             "agents": {a.id: {"status": "idle", "task": ""} for a in team.agents},
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
-            "approval": None, "deployed": False, "blockers": [], "report": None,
+            "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [],
         }
         self.bus = MessageBus(self.emit, self.dir)
         self.state["messages"] = self.bus.messages
+        self.steps = 0
 
     # -- state + events ----------------------------------------------------------------------
 
@@ -157,6 +159,27 @@ class Run:
             a["task"] = task
         self.emit("agent", {"agent": agent_id, **a})
 
+    # -- one agent step, always through the GBrain cycle (read -> work -> write) ---------------
+
+    def work(self, agent_id, prompt, task, kind, fact=None):
+        agent = self.team.by_id[agent_id]
+        self.steps += 1
+        goal_short = one_line(self.goal, 80)
+
+        def default_fact(out):
+            return f"{agent.name} ({kind}) for '{goal_short}': {one_line(out, 220)}"
+
+        def on_memory(entry):
+            entry = {**entry, "after_seq": len(self.bus.messages), "kind": kind}
+            self.state["memory"].append(entry)
+            self.emit("memory", entry)
+
+        return agent.work(prompt, query=(self.goal, task), task=task, page_title=f"{agent.name} · {kind} · {goal_short}",
+                          page_slug=f"babd/runs/{self.id}/{self.steps:02d}-{agent_id}-{kind}",
+                          entity=f"babd/goals/{slugify(self.goal)}",
+                          provenance=f"babd run {self.id} · {agent.name} · {kind}",
+                          fact=fact or default_fact, on_memory=on_memory)
+
     # -- one exchange: Team Lead -> agent -> Team Lead -----------------------------------------
 
     def delegate(self, agent_id, kind, task, prompt, reply_kind):
@@ -166,7 +189,10 @@ class Run:
         self.agent(agent_id, "working", task)
         started = time.monotonic()
         try:
-            out = self.team.by_id[agent_id].ask(prompt)
+            fact = None
+            if reply_kind == "test_report":
+                fact = (lambda o: f"QA verdict {parse_verdict(o)} for '{one_line(self.goal, 80)}': {one_line(o, 200)}")
+            out = self.work(agent_id, prompt, task, reply_kind, fact=fact)
         except Exception:
             self.agent(agent_id, "blocked")
             raise
@@ -207,12 +233,15 @@ class Run:
         team_desc = "\n".join(f"- {r}: {names[r]} - main task {team.by_id[r].main_task}; skills: "
                               f"{', '.join(team.by_id[r].cfg.get('skills', []))}" for r in specialists)
         slots = ", ".join(f'"{r}": "<task>"' for r in specialists)
-        plan_text = team.lead.ask(
+        plan_text = self.work("lead",
             f"CEO goal:\n{goal}\n\nYour team:\n{team_desc}\n\n"
             "The work flows through you: Architect designs, Developer builds, QA tests (failed tests go back "
             "to the Developer), DevOps deploys and sets up monitoring after QA passes and the CEO approves.\n"
             "Plan the work and assign one concrete task to every agent. Answer with only a JSON object:\n"
-            '{"plan_summary": "<2-4 sentences>", "assignments": {' + slots + "}}")
+            '{"plan_summary": "<2-4 sentences>", "assignments": {' + slots + "}}",
+            "Plan the work and assign agents", "plan",
+            fact=lambda out: f"Team Lead plan for '{one_line(goal, 80)}': "
+                             f"{one_line((extract_json(out) or {}).get('plan_summary') or out, 240)}")
         plan = extract_json(plan_text) or {}
         assignments = plan.get("assignments") if isinstance(plan.get("assignments"), dict) else {}
         summary = plan.get("plan_summary") or plan_text
@@ -304,12 +333,15 @@ class Run:
         outputs = f"### Design\n{design}\n\n### Code\n{code}\n\n### QA report\n{report}"
         if deploy:
             outputs += f"\n\n### Deploy report\n{deploy}"
-        report_text = team.lead.ask(
+        report_text = self.work("lead",
             f"CEO goal:\n{goal}\n\nFacts: {facts}\n\nTeam output:\n\n{outputs}\n\n"
             "Write the CEO report: high-level status only, no code. Answer with only a JSON object:\n"
             '{"current_goal": "<max 4 words>", "active_task": "<max 3 words>", "recent_result": "<max 4 words>", '
             '"next_action": "<max 4 words>", "summary": "<short paragraph for the CEO>", '
-            '"blocker_list": ["<blocker>"]}')
+            '"blocker_list": ["<blocker>"]}',
+            "Report to the CEO", "report",
+            fact=lambda out: f"CEO report for '{one_line(goal, 80)}' ({facts}): "
+                             f"{one_line((extract_json(out) or {}).get('summary') or out, 240)}")
         rep = extract_json(report_text) or {"summary": report_text}
         rep.update(self._facts(verdict, bool(deploy)))
         self.state["report"] = rep

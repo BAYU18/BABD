@@ -49,6 +49,7 @@ class DashboardTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.cfg_path = os.path.join(self.tmp, "agents.json")
         cfg = copy.deepcopy(load_config())
+        cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
         for a in cfg["agents"]:
             a["harness"] = {"type": "direct"}
         with open(self.cfg_path, "w") as f:
@@ -156,7 +157,7 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual((p["name"], p["require_approval"], p["max_fix_rounds"]), ("Shop", [], 5))
 
     def test_chat_job(self):
-        with mock.patch.object(Agent, "chat", lambda self, m: (self.history.append({"role": "user", "content": m}),
+        with mock.patch.object(Agent, "chat", lambda self, m, **kw: (self.history.append({"role": "user", "content": m}),
                                                                "hi from " + self.id)[1]):
             status, job = self.call("POST", "/api/agents/architect/chat", {"message": "hello"})
             self.assertEqual(status, 200)

@@ -95,6 +95,7 @@ class TeamTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         os.environ["TEST_ANTHROPIC_KEY"] = "sk-ant-test"
         cfg = copy.deepcopy(load_config())
+        cfg["project"]["gbrain"] = {"enabled": False}  # memory is covered in test_gbrain.py
         # Point every agent at the mock: Anthropic agents keep the Anthropic API style,
         # custom ones keep the OpenAI-compatible style.
         for a in cfg["agents"]:

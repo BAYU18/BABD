@@ -25,6 +25,7 @@ class Harness:
     defaults = {}         # options written to agents.json when this harness is selected
 
     def __init__(self, agent_cfg):
+        self.extra_env = {}   # set by the team (e.g. GBRAIN_HOME + the gbrain command); PATH is prepended
         self.agent_cfg = agent_cfg
         self.agent_id = agent_cfg["id"]
         self.llm = agent_cfg["llm"]
@@ -69,10 +70,17 @@ class Harness:
         os.makedirs(cwd, exist_ok=True)
         return cwd
 
-    def run_process(self, argv, env_overrides, stdin_text=None):
+    def child_env(self, env_overrides):
+        """Environment for the harness's program: ours + team extras + harness `env` + LLM routing."""
         from .tools import extra_path  # tools imports this module
-        env = apply_env(os.environ, self.cfg.get("env") or {}, env_overrides)
-        env["PATH"] = os.pathsep.join(extra_path() + [env.get("PATH", "")])
+        extra = dict(self.extra_env)
+        extra_paths = [p for p in extra.pop("PATH", "").split(os.pathsep) if p]
+        env = apply_env(os.environ, extra, self.cfg.get("env") or {}, env_overrides)
+        env["PATH"] = os.pathsep.join(extra_paths + extra_path() + [env.get("PATH", "")])
+        return env
+
+    def run_process(self, argv, env_overrides, stdin_text=None):
+        env = self.child_env(env_overrides)
         try:
             proc = subprocess.run(argv, input=stdin_text, capture_output=True, text=True, env=env,
                                   cwd=self.cwd, timeout=self.timeout)

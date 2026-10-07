@@ -208,7 +208,7 @@ class HermesGateway(Harness):
         hermes = self.command_path()
         routing_env, _ = write_hermes_home(self.home, self.llm)
         port = int(self.cfg.get("port") or _free_port())
-        env = apply_env(os.environ, self.cfg.get("env") or {}, routing_env, {
+        env = apply_env(self.child_env(routing_env), {
             "API_SERVER_ENABLED": "true", "API_SERVER_KEY": self._managed_key(),
             "API_SERVER_HOST": "127.0.0.1", "API_SERVER_PORT": str(port), "NO_COLOR": "1"})
         log_path = os.path.join(self.home, "gateway.log")

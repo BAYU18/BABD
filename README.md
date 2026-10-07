@@ -19,7 +19,9 @@ git clone https://github.com/bayu18/babd.git && cd babd
 
 1. creates `.venv` and installs BABD with its Python dependencies (`anthropic`, `openai`);
 2. creates `.env` (file mode 600) for API keys;
-3. installs and configures the harness of every agent in `agents.json`: Hermes Agent into its own
+3. installs **GBrain** (the team memory: Bun 1.4+ from GitHub releases, checksum-verified, and the
+   gbrain source) and creates a local brain in `.babd/gbrain`;
+4. installs and configures the harness of every agent in `agents.json`: Hermes Agent into its own
    virtualenv, Claude Code with npm (BABD downloads Node.js itself, checksum-verified, when npm is
    missing), and a per-agent config for each.
 
@@ -50,6 +52,46 @@ Opens the CEO command center in your browser (`http://127.0.0.1:8800/?token=…`
 The panel listens on 127.0.0.1 only. Every API call needs the token from the start-up URL, and the
 Host header must be the panel's own address, so other web pages can't drive it.
 
+## Team memory: GBrain
+
+Every agent has the **GBrain** skill ([garrytan/gbrain](https://github.com/garrytan/gbrain)) and
+uses it on every task, enforced by BABD around each step rather than left to the model:
+
+```
+read  gbrain recall  (keywords of the goal + the task)  ->  "Team memory (gbrain)" at the top of the prompt
+work  the agent does the task with that memory
+write gbrain put     babd/runs/<run>/<nn>-<agent>-<kind>   (the agent's full output as a page)
+      gbrain remember "<one-line fact>" --entity babd/goals/<goal> --provenance "babd run <run> · <agent> · <kind>"
+```
+
+This holds for every step of a team run (plan, design, code, test, fix, deploy, report) and for
+direct chats. So the next agent, and the next run, starts from what the team already decided: a new
+goal's plan reads the earlier designs, QA verdicts and CEO reports. Agents with tools (Hermes, Claude
+Code) also get the `gbrain` command and `GBRAIN_HOME` to search or save more themselves; the skill's
+instructions are in `skills/gbrain.md`.
+
+It runs **locally and keyless**: a PGLite brain (embedded Postgres, no server, no Docker) with keyword
+search and no embeddings. BABD strips cloud API keys from gbrain's environment, including when an
+agent calls `gbrain` itself, so no memory text leaves the machine (`allow_cloud: true` changes that).
+
+| `project.gbrain` | Meaning |
+| --- | --- |
+| `enabled` | Read before / write after every agent step (default `true`) |
+| `strict` | A failed gbrain read or write stops that step with a clear error (default `true`). `false`: carry on without memory |
+| `allow_cloud` | Pass cloud API keys to gbrain, e.g. for embeddings or fact extraction (default `false`) |
+| `home` | Where the brain lives (default `.babd/gbrain`, i.e. `GBRAIN_HOME`) |
+| `ref` | gbrain git ref to install (default `latest-stable`) |
+| `budget_tokens` | How much memory one recall may put in a prompt (default 1200) |
+| `command` | Use an existing `gbrain` program instead of installing one |
+
+```bash
+babd brain                     # status
+babd brain login lockout       # what the team knows about these words
+```
+
+The dashboard shows each read and write in the run timeline, has a **Team memory** search, a GBrain
+status in the top bar, and the GBrain settings under Team settings.
+
 ## How the agents talk to each other
 
 ```
@@ -78,13 +120,13 @@ Team Lead ──report──▶ CEO
 | File | Description |
 | --- | --- |
 | `install.sh` | One-command install (see above) |
-| `workspace.svg` | The illustration as a scalable vector (1920×1566) |
+| `workspace.svg` | The illustration as a scalable vector (1920×1630) |
 | `workspace.png` | The same image rendered as a PNG |
 | `agents.json` | **Configuration** for each agent (LLM, harness, Telegram bot, skills, tasks, status) and for the CEO dashboard and flow |
 | `generate_workspace.py` | Script that reads `agents.json` and writes `workspace.svg` |
-| `babd/` | The runtime: LLM clients, harnesses (`harness/`), team flow (`flow.py`), dashboard (`dashboard/`) and the command line |
+| `babd/` | The runtime: LLM clients, harnesses (`harness/`), team flow (`flow.py`), team memory (`gbrain.py`), dashboard (`dashboard/`) and the command line |
 | `skills/` | Optional instruction files for skills (see `skills/README.md`) |
-| `tests/` | Tests: the flow with scripted agents, the dashboard API over HTTP, real HTTP calls through both SDKs to a mock LLM server, and fake `hermes` / `claude` CLIs |
+| `tests/` | Tests: GBrain read/write around every step (fake gbrain CLI), the flow with scripted agents, the dashboard API over HTTP, real HTTP calls through both SDKs to a mock LLM server, and fake `hermes` / `claude` CLIs |
 
 ## Command line
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # One-command install for BABD (Linux / macOS; on Windows use WSL).
 #   ./install.sh
-# Creates .venv, installs BABD and its Python dependencies, then installs and configures the
-# harness of every agent in agents.json (Hermes Agent, Claude Code + Node.js when needed).
+# Creates .venv, installs BABD and its Python dependencies, then installs GBrain (team memory: Bun +
+# gbrain, local brain in .babd/gbrain) and the harness of every agent in agents.json (Hermes Agent,
+# Claude Code + Node.js when needed).
 # Re-running it is safe. BABD_SKIP_HARNESS=1 skips the harness step.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -41,7 +42,7 @@ fi
 mkdir -p workspace
 
 if [ "${BABD_SKIP_HARNESS:-0}" != "1" ]; then
-  say "Installing and configuring every agent's harness"
+  say "Installing GBrain (team memory) and every agent's harness"
   if ! .venv/bin/babd setup; then
     echo "Some harnesses could not be set up (see above). Fix the cause and run: .venv/bin/babd setup" >&2
   fi

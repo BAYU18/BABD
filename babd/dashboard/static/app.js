@@ -83,6 +83,17 @@ function renderAll() {
 }
 
 // ---- top bar -----------------------------------------------------------------------------
+function brainPill() {
+  const b = S.brain || {};
+  if (!b.enabled) return pill("off", "var(--dim)");
+  if (!b.brain) return pill("not set up", "var(--warn)");
+  return pill("ready", "var(--good)");
+}
+function brainTitle() {
+  const b = S.brain || {};
+  return b.enabled ? `Team brain in ${b.home}${b.brain ? "" : " (run Set up all)"}. Every agent reads it before a task and writes to it after.` : "GBrain is off";
+}
+
 function renderTop() {
   const p = S.project;
   $("#projectName").textContent = p.name;
@@ -97,6 +108,7 @@ function renderTop() {
     <div class="kpi"><div class="l">Agents working</div><div class="v">${working} / ${S.agents.length}</div></div>
     <div class="kpi"><div class="l">Approval needed</div><div class="v" style="color:${(live?.approval?.result === "pending" || p.approval_needed) ? "var(--warn)" : "inherit"}">${live?.approval?.result === "pending" ? 1 : p.approval_needed}</div></div>
     <div class="kpi"><div class="l">Blockers</div><div class="v" style="color:${(p.blockers && !live) ? "var(--bad)" : "inherit"}">${live ? live.blockers.length : p.blockers}</div></div>
+    <div class="kpi" title="${esc(brainTitle())}"><div class="l">GBrain memory</div><div class="v">${brainPill()}</div></div>
     <div class="kpi"><div class="l">Next action</div><div class="v small">${esc(live ? (live.stage || "").toUpperCase() : p.next_action)}</div></div>`;
 }
 
@@ -190,6 +202,28 @@ function messageItem(m) {
   </li>`;
 }
 
+function memoryItem(m) {
+  const what = m.op === "read"
+    ? `read gbrain · ${m.facts} fact(s), ${m.pages} page(s) <span class="kind">${esc(m.query)}</span>`
+    : `wrote gbrain · <span class="kind">${esc(m.page || m.entity)}</span>`;
+  const title = m.op === "read" ? (m.items || []).join("\n") : (m.fact || "");
+  return `<li class="mem ${m.op}" title="${esc(title)}"><span class="mem-dot"></span>
+    <span class="who" style="--c:${colorOf(m.agent)}">${esc(nameOf(m.agent))}</span> ${what}
+    <span class="msg-time">${fmtTime(m.at)}</span></li>`;
+}
+
+function timelineItems(r) {
+  const mem = r.memory || [];
+  const out = [];
+  const memAfter = (seq) => mem.filter((m) => m.after_seq === seq).map(memoryItem);
+  out.push(...memAfter(0));
+  for (const m of r.messages || []) {
+    out.push(messageItem(m));
+    out.push(...memAfter(m.seq));
+  }
+  return out.join("");
+}
+
 function renderRun() {
   const r = viewRun;
   const body = $("#runBody");
@@ -230,7 +264,7 @@ function renderRun() {
     </div>
     <div class="stepper">${stages}</div>
     ${approval}${report}
-    <ol class="timeline" id="timeline">${(r.messages || []).map(messageItem).join("")}</ol>`;
+    <ol class="timeline" id="timeline">${timelineItems(r)}</ol>`;
   const tl = $("#timeline");
   if (r.status === "running" || r.status === "waiting_approval") tl.scrollTop = tl.scrollHeight;
 }
@@ -561,11 +595,17 @@ $("#btnSettings").addEventListener("click", () => {
     ${field("Project name", text("p_name", p.name))}
     <label class="check"><input type="checkbox" id="p_approval" ${(p.require_approval || []).includes("deploy") ? "checked" : ""}> CEO must approve before DevOps deploys</label>
     ${field("QA fix rounds", `<input type="number" id="p_rounds" min="0" max="5" value="${esc(p.max_fix_rounds ?? 2)}">`, "How many times a failed QA report goes back to the Developer before the run is blocked.")}
+    <div class="field"><label>GBrain team memory</label>
+      <label class="check"><input type="checkbox" id="g_enabled" ${(p.gbrain?.enabled ?? true) ? "checked" : ""}> Every agent reads gbrain before a task and writes to it after</label>
+      <label class="check"><input type="checkbox" id="g_strict" ${(p.gbrain?.strict ?? true) ? "checked" : ""}> Stop the agent step when gbrain can't be read or written</label>
+      <label class="check"><input type="checkbox" id="g_cloud" ${p.gbrain?.allow_cloud ? "checked" : ""}> Allow gbrain to use cloud API keys (off = memory stays on this machine)</label>
+      <div class="help">Brain: ${esc(S.brain?.home || "")} · ${S.brain?.brain ? "ready" : "not set up yet (Set up all)"}</div></div>
     <div class="note">Flow: ${S.flow.stages.map((s) => esc(s.label)).join(" → ")}. Specialists only talk to the Team Lead; only the Team Lead reports to the CEO.</div>
     <div style="display:flex;justify-content:flex-end"><button class="btn primary" id="p_save">Save</button></div>`, true);
   $("#p_save").onclick = async () => {
     try {
-      await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value) });
+      await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
+        gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked } });
       toast("Settings saved", "ok"); closeModal(); refresh();
     } catch (err) { toast(err.message, "bad"); }
   };
@@ -576,6 +616,7 @@ function connect() {
   const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
   es.addEventListener("log", (e) => { const d = JSON.parse(e.data); logLine(d.source, d.msg, /fail|error/i.test(d.msg) ? "bad" : ""); });
   es.addEventListener("job", (e) => onJob(JSON.parse(e.data)));
+  es.addEventListener("memory", (e) => { const m = JSON.parse(e.data); logLine("gbrain", `${nameOf(m.agent)} ${m.op === "read" ? "read" : "wrote"} gbrain`); });
   es.addEventListener("config", () => refreshSoon());
   es.addEventListener("approval", (e) => { toast(`Approval needed: ${JSON.parse(e.data).question}`); });
   es.addEventListener("run", (e) => {
@@ -583,6 +624,7 @@ function connect() {
     S.run = d.summary;
     if (!viewingHistory) viewRun = S.run;
     if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`);
+    if (d.event === "memory") logLine("gbrain", `${nameOf(d.data.agent)} ${d.data.op === "read" ? `read ${d.data.facts} fact(s), ${d.data.pages} page(s)` : `wrote ${d.data.page}`}`);
     if (d.event === "finished") { toast(`Run ${d.data.status}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
     renderTop(); renderAgents(); renderRun();
     $("#btnRun").disabled = !!runActive();
@@ -601,3 +643,20 @@ function connect() {
     document.body.innerHTML = `<div class="empty" style="margin:15vh auto;max-width:520px">Cannot load the dashboard: ${esc(err.message)}.<br>Restart <code>babd dashboard</code> and open the new URL.</div>`;
   }
 })();
+
+// ---- team memory search ------------------------------------------------------------------
+async function searchMemory() {
+  const q = $("#memQuery").value.trim();
+  const box = $("#memResults");
+  if (!q) return;
+  box.innerHTML = '<div class="muted small"><span class="spinner"></span> searching gbrain…</div>';
+  try {
+    const r = await api("GET", `brain/recall?q=${encodeURIComponent(q)}`);
+    const facts = r.facts.map((f) => `<li class="msg"><div class="msg-body">${esc(f.fact)}</div><div class="muted small">${esc(f.provenance || f.source || "")}</div></li>`);
+    const pages = r.results.map((p) => `<li class="msg"><div class="msg-head"><span class="kind">${esc(p.slug)}</span></div><div class="msg-body clamp">${esc(p.chunk)}</div></li>`);
+    box.innerHTML = `<div class="muted small">Searched: ${esc(r.query)} · ${r.facts.length} fact(s), ${r.results.length} page(s)</div>
+      <ol class="timeline">${facts.join("") + pages.join("") || '<div class="empty">Nothing in gbrain for these words yet.</div>'}</ol>`;
+  } catch (err) { box.innerHTML = `<div class="note warn">${esc(err.message)}</div>`; }
+}
+$("#memSearch").addEventListener("click", searchMemory);
+$("#memQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); searchMemory(); } });

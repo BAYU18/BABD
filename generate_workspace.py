@@ -10,7 +10,7 @@ from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-W, H = 1920, 1566
+W, H = 1920, 1630
 
 BG = "#0d1628"
 PANEL = "#15223a"
@@ -463,8 +463,8 @@ def build(cfg):
 
     # geometry
     agents_x0, card_w, gap = 40, 297, 24
-    agents_y, agents_h = 580, 766
-    lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 380
+    agents_y, agents_h = 612, 798
+    lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 412
     dash_x, dash_y, dash_w, dash_h = 1360, 30, 520, agents_y + agents_h - 30
 
     # --- connections ---------------------------------------------------
