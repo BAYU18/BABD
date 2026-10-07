@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, save_config, set_env_var
-from .. import skillpacks
+from .. import skillpacks, taskdocs
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
 from ..log import add_listener, log
@@ -30,7 +30,7 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram")
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
-               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps")
+               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback")
 
 
@@ -304,13 +304,14 @@ class Dashboard:
 
     def queued(self):
         with self.tasks_lock:
-            return [{**q, "position": i + 1} for i, q in enumerate(self.queue)] + [dict(f) for f in self.failed_starts]
+            return [{**{k: v for k, v in q.items() if k != "docs"}, "position": i + 1} for i, q in enumerate(self.queue)] \
+                + [{k: v for k, v in f.items() if k != "docs"} for f in self.failed_starts]
 
     def summary(self, run):
         s = run.snapshot()
         return {k: s[k] for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
-                                  "blockers", "report", "memory", "skills", "steps", "messages")}
+                                  "blockers", "report", "memory", "skills", "steps", "documents", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -363,9 +364,29 @@ class Dashboard:
             rid = f"{base}-{n}"
         return rid
 
-    def start_run(self, goal, auto_approve=False, update_dashboard=True):
-        """Add a task. It starts now when a task slot is free, else it waits in the queue."""
-        goal = (goal or "").strip()
+    @staticmethod
+    def read_documents(documents=None, links=None):
+        """Task documents from uploads ([{name, content}]) and links ([url]), in that order."""
+        docs = []
+        try:
+            for d in documents or []:
+                if not isinstance(d, dict):
+                    raise ApiError(400, "each document needs a name and its content")
+                docs.append(taskdocs.from_upload(d.get("name"), d.get("content")))
+            for url in links or []:
+                if str(url).strip():
+                    docs.append(taskdocs.from_url(str(url)))
+        except taskdocs.TaskDocError as e:
+            raise ApiError(400, str(e))
+        if len(docs) > 20:
+            raise ApiError(400, "at most 20 documents at once")
+        return docs
+
+    def start_run(self, goal, auto_approve=False, update_dashboard=True, docs=None):
+        """Add a task. It starts now when a task slot is free, else it waits in the queue. With task
+        documents, the goal may be empty: the first document's title names the task."""
+        docs = list(docs or [])
+        goal = (goal or "").strip() or (docs[0]["title"] if docs else "")
         if not goal:
             raise ApiError(400, "goal is empty")
         if len(goal) > 20000:
@@ -373,21 +394,27 @@ class Dashboard:
         Team(self.load(), log=lambda m: None)  # a broken config fails here, not later in the queue
         with self.tasks_lock:
             entry = {"id": self.new_run_id(), "goal": goal, "status": "queued", "queued_at": flow.now(),
-                     "auto_approve": bool(auto_approve), "update_dashboard": bool(update_dashboard)}
+                     "auto_approve": bool(auto_approve), "update_dashboard": bool(update_dashboard),
+                     "docs": docs, "documents": [taskdocs.summary(d) for d in docs]}
             self.queue.append(entry)
-        self.hub.publish("tasks", {"event": "queued", "task": entry})
+        self.hub.publish("tasks", {"event": "queued", "task": {k: v for k, v in entry.items() if k != "docs"}})
         self._pump()
         with self.tasks_lock:
             ctx = self.active.get(entry["id"])
-        return self.summary(ctx["run"]) if ctx else {**entry, "position": self.queued_position(entry["id"])}
+        if ctx:
+            return self.summary(ctx["run"])
+        return {**{k: v for k, v in entry.items() if k != "docs"}, "position": self.queued_position(entry["id"])}
 
-    def start_tasks(self, goals, auto_approve=False, update_dashboard=True):
+    def start_tasks(self, goals, auto_approve=False, update_dashboard=True, docs=None):
+        """Several tasks: one per goal line and one per document."""
         goals = [g.strip() for g in goals if isinstance(g, str) and g.strip()]
-        if not goals:
+        docs = list(docs or [])
+        if not goals and not docs:
             raise ApiError(400, "no tasks given")
-        if len(goals) > 50:
+        if len(goals) + len(docs) > 50:
             raise ApiError(400, "at most 50 tasks at once")
-        return {"tasks": [self.start_run(g, auto_approve, update_dashboard) for g in goals]}
+        return {"tasks": [self.start_run(g, auto_approve, update_dashboard) for g in goals]
+                + [self.start_run("", auto_approve, update_dashboard, [d]) for d in docs]}
 
     def queued_position(self, run_id):
         with self.tasks_lock:
@@ -435,7 +462,8 @@ class Dashboard:
         def on_event(kind, data):
             self.hub.publish("run", {"event": kind, "data": data, "summary": self.summary(run)})
 
-        run = flow.Run(team, entry["goal"], approver=approver, on_event=on_event, run_id=entry["id"], slots=self.slots)
+        run = flow.Run(team, entry["goal"], approver=approver, on_event=on_event, run_id=entry["id"], slots=self.slots,
+                       docs=entry.get("docs"))
         ctx["run"] = run
         self.active[run.id] = ctx
         self.last_run = run
@@ -560,7 +588,7 @@ def make_handler(dash, token, allowed_hosts):
 
         def body(self):
             n = int(self.headers.get("Content-Length") or 0)
-            if n > 1_000_000:
+            if n > 12_000_000:  # task documents can be uploaded (up to 20 x 500 KB)
                 raise ApiError(413, "request too large")
             raw = self.rfile.read(n) if n else b"{}"
             try:
@@ -653,16 +681,24 @@ def make_handler(dash, token, allowed_hosts):
                 return d.board()
             if method == "POST" and parts == ["tasks"]:
                 b = self.body()
-                goals = b.get("goals")
+                goals = b.get("goals", [])
                 if not isinstance(goals, list):
                     raise ApiError(400, "goals must be a list of task descriptions")
-                return d.start_tasks(goals, bool(b.get("auto_approve")), b.get("update_dashboard", True))
+                docs = d.read_documents(b.get("documents"), b.get("links"))
+                return d.start_tasks(goals, bool(b.get("auto_approve")), b.get("update_dashboard", True), docs)
             if parts[:1] == ["runs"]:
                 if method == "POST" and len(parts) == 1:
                     b = self.body()
-                    return d.start_run(b.get("goal"), bool(b.get("auto_approve")), b.get("update_dashboard", True))
+                    docs = d.read_documents(b.get("documents"), b.get("links"))
+                    return d.start_run(b.get("goal"), bool(b.get("auto_approve")), b.get("update_dashboard", True), docs)
                 if method == "GET" and len(parts) == 2:
                     return d.load_run(parts[1])
+                if method == "GET" and parts[2:] == ["document"]:
+                    path = os.path.join(flow.RUNS_DIR, os.path.basename(parts[1]), "00-task.md")
+                    if not os.path.isfile(path):
+                        raise ApiError(404, "this task has no task document")
+                    with open(path, encoding="utf-8") as f:
+                        return {"text": f.read()}
                 if method == "POST" and parts[2:] == ["approve"]:
                     b = self.body()
                     return d.resolve_approval(parts[1], b.get("approved"), b.get("note", ""))

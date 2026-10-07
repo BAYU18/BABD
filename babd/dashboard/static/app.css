@@ -90,7 +90,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .section-title { display: flex; align-items: baseline; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
 
 /* command */
-textarea, input[type=text], input[type=number], input[type=password], select {
+textarea, input[type=text], input[type=url], input[type=number], input[type=password], select {
   width: 100%; background: var(--bg-2); border: 1px solid var(--stroke-2); border-radius: 10px;
   padding: 9px 11px; outline: none;
 }
@@ -498,3 +498,26 @@ button.chip { font-family: inherit; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .g-bar.working, .lg.live, .stage-track i.active { animation: none; }
 }
+
+/* ---- task documents ---------------------------------------------------------------------- */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.attach { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.attach-btn { cursor: pointer; }
+.attach-btn:focus-within { outline: 2px solid var(--ceo); outline-offset: 2px; }
+.link-input { display: flex; gap: 6px; flex: 1 1 360px; min-width: 0; max-width: 640px; }
+.link-input input { flex: 1; min-width: 0; }
+.link-input input { padding: 6px 10px; font-size: 13px; }
+.attach-hint { flex: 1 1 100%; }
+.attach-list { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 100%; }
+.attach-list:empty { display: none; }
+.doc-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; font-size: 12px; padding: 4px 6px 4px 10px;
+  border: 1px solid var(--stroke-2); border-radius: 10px; background: var(--bg-2); min-width: 0; }
+.doc-chip b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.doc-chip .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.doc-chip button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 3px; }
+.doc-chip.small { padding: 2px 8px; font-size: 11px; }
+.doc-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.doc-chips .linkish { margin-top: 0; }
+.card.dropping { outline: 2px dashed var(--ceo); outline-offset: -6px; background: color-mix(in srgb, var(--ceo) 8%, var(--panel)); }
+.doc-view { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12px; line-height: 1.55; margin: 0;
+  background: var(--bg-2); border: 1px solid var(--stroke); border-radius: 10px; padding: 14px; max-height: 70vh; overflow: auto; }

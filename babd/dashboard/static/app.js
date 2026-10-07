@@ -468,6 +468,7 @@ function renderRun() {
   body.innerHTML = `
     <div>
       <div class="run-goal">${esc(r.goal)}</div>
+      ${docChips(r.documents, r.id)}
       <div class="run-meta">${pill(r.status.replace("_", " "), statusColor, r.status === "running")}
         <span class="muted small">${esc(r.id)} · ${r.progress ?? 0}%${r.qa_rounds ? ` · ${r.qa_rounds} QA fix round(s)` : ""}</span></div>
       ${r.error ? `<div class="note warn" style="margin-top:8px">${esc(r.error)}</div>` : ""}
@@ -498,13 +499,19 @@ $("#runBody").addEventListener("click", async (e) => {
 
 // ---- command center ----------------------------------------------------------------------
 $("#btnRun").addEventListener("click", async () => {
-  const goal = $("#goal").value.trim();
-  if (!goal) { toast("Write a goal for the team first", "bad"); $("#goal").focus(); return; }
+  let goal = $("#goal").value.trim();
+  const att = attachments.command;
+  if (isLink(goal)) { addLink("command", goal); goal = ""; $("#goal").value = ""; }  // a pasted link is a document
+  if (!goal && !att.docs.length && !att.links.length) { toast("Write a goal, or attach a .md task file", "bad"); $("#goal").focus(); return; }
   try {
     viewingHistory = false;
     $("#runHistory").value = "";
-    const r = await api("POST", "runs", { goal, auto_approve: $("#autoApprove").checked, update_dashboard: $("#updateImage").checked });
+    $("#btnRun").disabled = true;
+    const r = await api("POST", "runs", { goal, auto_approve: $("#autoApprove").checked, update_dashboard: $("#updateImage").checked,
+      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links: att.links })
+      .finally(() => { $("#btnRun").disabled = false; });
     $("#goal").value = "";
+    clearAttach("command");
     if (r.status === "queued") {
       toast(`Task queued (#${r.position}): it starts when a task slot is free`);
       refreshSoon();
@@ -1045,7 +1052,7 @@ function renderTasks() {
     return `<article class="task" data-task="${esc(t.id)}">
       <div class="task-row">
         <button type="button" class="task-toggle" data-toggle="${esc(t.id)}" aria-expanded="${open}" aria-label="Show steps">${open ? "▾" : "▸"}</button>
-        <div class="task-title"><div class="goal">${esc(t.goal)}</div><div class="muted small">${meta}</div></div>
+        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
         <div class="task-status">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")}</div>
         <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
@@ -1056,6 +1063,7 @@ function renderTasks() {
         </div>
       </div>
       ${t.error ? `<div class="note warn">${esc(t.error)}</div>` : ""}
+      ${open && t.documents?.length && t.status !== "queued" ? docChips(t.documents, t.id) : ""}
       ${open ? `<div class="task-steps">${stepRows ? `<table><thead><tr><th>Agent</th><th>Step</th><th>Status</th><th>Waited</th><th>Took</th></tr></thead><tbody>${stepRows}</tbody></table>` : '<div class="muted small">No steps yet.</div>'}</div>` : ""}
     </article>`;
   }).join("");
@@ -1101,13 +1109,20 @@ $("#boardView").addEventListener("click", async (e) => {
 });
 
 $("#btnAddTasks").addEventListener("click", async () => {
-  const goals = $("#taskGoals").value.split("\n").map((g) => g.trim()).filter(Boolean);
-  if (!goals.length) { toast("Write at least one task, one per line", "bad"); $("#taskGoals").focus(); return; }
+  const lines = $("#taskGoals").value.split("\n").map((g) => g.trim()).filter(Boolean);
+  const att = attachments.board;
+  const goals = lines.filter((l) => !isLink(l));
+  const links = [...att.links, ...lines.filter(isLink)];
+  if (!goals.length && !att.docs.length && !links.length) { toast("Write at least one task, or attach .md task files", "bad"); $("#taskGoals").focus(); return; }
   try {
-    const r = await api("POST", "tasks", { goals, auto_approve: $("#taskAutoApprove").checked });
+    $("#btnAddTasks").disabled = true;
+    const r = await api("POST", "tasks", { goals, auto_approve: $("#taskAutoApprove").checked,
+      documents: att.docs.map((d) => ({ name: d.name, content: d.content })), links })
+      .finally(() => { $("#btnAddTasks").disabled = false; });
     const started = r.tasks.filter((t) => t.status !== "queued").length;
-    toast(`${goals.length} task(s) added: ${started} started, ${goals.length - started} queued`, "ok");
+    toast(`${r.tasks.length} task(s) added: ${started} started, ${r.tasks.length - started} queued`, "ok");
     $("#taskGoals").value = "";
+    clearAttach("board");
     refreshSoon(); boardSoon();
   } catch (err) { toast(err.message, "bad"); }
 });
@@ -1131,6 +1146,92 @@ setInterval(() => {  // live clocks: elapsed times tick and running bars grow
   for (const el of document.querySelectorAll("#boardView [data-since]")) el.textContent = fmtDur((serverNow() - ms(el.dataset.since)) / 1000);
   renderGantt();
 }, 1000);
+
+// ---- task documents: .md files (attach or drop) and links ----------------------------------
+const MAX_DOC_BYTES = 500_000;
+const DOC_EXT = /\.(md|markdown|mdown|txt|text|rst)$/i;
+const attachments = { command: { docs: [], links: [] }, board: { docs: [], links: [] } };
+const isLink = (t) => /^https?:\/\/\S+$/i.test(t.trim());
+
+async function addFiles(which, files) {
+  for (const f of files) {
+    if (!DOC_EXT.test(f.name)) { toast(`${f.name}: send a Markdown or text file (.md, .txt)`, "bad"); continue; }
+    if (f.size > MAX_DOC_BYTES) { toast(`${f.name}: larger than ${MAX_DOC_BYTES / 1000} KB`, "bad"); continue; }
+    const content = await f.text();
+    if (!content.trim()) { toast(`${f.name}: the file is empty`, "bad"); continue; }
+    const list = attachments[which].docs;
+    const i = list.findIndex((d) => d.name === f.name);
+    if (i >= 0) list.splice(i, 1);
+    list.push({ name: f.name, content, title: docTitle(content, f.name) });
+  }
+  renderAttach(which);
+}
+
+function docTitle(text, fallback) {  // same rule as the server: first heading, else first line
+  const fm = text.match(/^---\n([\s\S]*?)\n---\n/);
+  const t = fm && fm[1].match(/^title:\s*['"]?(.+?)['"]?\s*$/m);
+  if (t) return t[1].slice(0, 120);
+  const body = fm ? text.slice(fm[0].length) : text;
+  for (const line of body.split("\n")) {
+    const t = line.trim().replace(/^#{1,6}\s+/, "").replace(/^[\s#*_`]+|[\s#*_`]+$/g, "");
+    if (t) return t.slice(0, 120);
+  }
+  return fallback.replace(/\.[^.]+$/, "");
+}
+
+function addLink(which, url) {
+  url = url.trim();
+  if (!isLink(url)) { toast("Paste a full link starting with http:// or https://", "bad"); return false; }
+  if (!attachments[which].links.includes(url)) attachments[which].links.push(url);
+  renderAttach(which);
+  return true;
+}
+
+function renderAttach(which) {
+  const a = attachments[which];
+  const fmtKB = (n) => (n < 1000 ? `${n} B` : `${(n / 1000).toFixed(1)} KB`);
+  document.querySelector(`[data-list="${which}"]`).innerHTML = [
+    ...a.docs.map((d, i) => `<span class="doc-chip" title="${esc(d.title)}">📄 <b>${esc(d.name)}</b><span class="muted">${esc(d.title)} · ${fmtKB(new Blob([d.content]).size)}</span><button type="button" data-rm-doc="${which}:${i}" aria-label="Remove ${esc(d.name)}">×</button></span>`),
+    ...a.links.map((u, i) => `<span class="doc-chip" title="${esc(u)}">🔗 <b>${esc(u.replace(/^https?:\/\//, "").slice(0, 60))}</b><span class="muted">read when the task starts</span><button type="button" data-rm-link="${which}:${i}" aria-label="Remove link">×</button></span>`),
+  ].join("");
+}
+
+function clearAttach(which) { attachments[which] = { docs: [], links: [] }; renderAttach(which); }
+
+for (const box of document.querySelectorAll("[data-attach]")) {
+  const which = box.dataset.attach;
+  box.querySelector("[data-file]").addEventListener("change", async (e) => { await addFiles(which, [...e.target.files]); e.target.value = ""; });
+  const input = box.querySelector("[data-link-input]");
+  box.querySelector("[data-add-link]").addEventListener("click", () => { if (addLink(which, input.value)) input.value = ""; });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (addLink(which, input.value)) input.value = ""; } });
+  box.addEventListener("click", (e) => {
+    const d = e.target.closest("[data-rm-doc]"), l = e.target.closest("[data-rm-link]");
+    if (d) { attachments[which].docs.splice(Number(d.dataset.rmDoc.split(":")[1]), 1); renderAttach(which); }
+    if (l) { attachments[which].links.splice(Number(l.dataset.rmLink.split(":")[1]), 1); renderAttach(which); }
+  });
+  const zone = box.closest(".card");
+  zone.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); zone.classList.add("dropping"); } });
+  zone.addEventListener("dragleave", (e) => { if (!zone.contains(e.relatedTarget)) zone.classList.remove("dropping"); });
+  zone.addEventListener("drop", async (e) => {
+    if (!e.dataTransfer.files.length) return;
+    e.preventDefault();
+    zone.classList.remove("dropping");
+    await addFiles(which, [...e.dataTransfer.files]);
+  });
+}
+
+async function viewDocument(runId) {
+  try {
+    const r = await api("GET", `runs/${runId}/document`);
+    openModal("Task document", `<pre class="doc-view">${esc(r.text)}</pre>`);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+function docChips(docs, runId) {
+  if (!docs?.length) return "";
+  return `<div class="doc-chips">${docs.map((d) => `<span class="doc-chip small" title="${esc(d.url || d.name)}">${d.source === "link" ? "🔗" : "📄"} <b>${esc(d.name)}</b></span>`).join("")}${runId ? `<button type="button" class="linkish" data-view-doc="${esc(runId)}">View document</button>` : ""}</div>`;
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-view-doc]"); if (b) viewDocument(b.dataset.viewDoc); });
 
 // ---- live events -------------------------------------------------------------------------
 function connect() {

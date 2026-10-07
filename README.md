@@ -47,6 +47,8 @@ Opens the CEO command center in your browser (`http://127.0.0.1:8800/?token=…`
 - **Give the team a goal** and watch the run live: the stage stepper, every message between the
   agents, and the CEO report at the end. While tasks run you can add more ("Add task"); the run panel
   switches between the tasks running now and the history.
+- **Give the task as a Markdown file**: attach `.md` files (button or drag & drop) or paste links
+  to them; see [Task documents](#task-documents-md-files-and-links).
 - **Task board** (tab at the top): every task and what every agent is doing, see
   [Many tasks at once](#many-tasks-at-once-and-agents-in-parallel).
 - **Approve or reject the deploy** when QA has passed (or tick "approve automatically").
@@ -217,6 +219,30 @@ Team Lead ──report──▶ CEO
   approval, deploy), not taken from the model.
 - Every message is saved in `runs/<id>/messages.jsonl`, with `state.json` and one file per step.
 
+## Task documents (.md files and links)
+
+Instead of typing the main task, give it as a Markdown (or text) file: a spec, a ticket, a PRD.
+
+- **Dashboard, Command center**: *Attach .md file* (or drop files on the goal box) and/or paste a
+  link. The documents go with that goal; the goal text is optional (the first document's title then
+  names the task).
+- **Dashboard, Task board → Add tasks**: each attached file or link (or a line with a link) becomes
+  its own task, named after its first heading.
+- **Command line**: a goal argument that is a `.md`/`.txt` file or a link is read as a task:
+
+  ```bash
+  .venv/bin/babd run specs/login.md https://github.com/acme/app/blob/main/docs/csv-export.md
+  .venv/bin/babd run "Build what the spec says" --doc specs/login.md --doc specs/ui-notes.md
+  ```
+
+Links to a file page on GitHub, GitLab or a Gist are read from the raw file; other links must point
+at the Markdown file itself (a web page is refused). Files are read as text only, up to 500 KB each.
+
+Every agent of the run gets the full document under *Task document* in its prompt (plan, design,
+build, test plan, deploy preparation, test, deploy, report), and it is saved as
+`runs/<run>/00-task.md` for agents with file tools. In the dashboard the task shows its documents,
+and *View document* opens what the team received.
+
 ## Many tasks at once, and agents in parallel
 
 BABD runs several tasks (goals) at the same time, and the agents work in parallel:
@@ -361,6 +387,13 @@ Examples (the shipped `agents.json` uses `direct`, `hermes_local` and `claude_lo
 | `yolo` | hermes_local | Skip Hermes' approval prompts for dangerous commands. **Off by default**: without a terminal those prompts can only deny, so turn it on only inside a sandbox (container/VM) |
 | `dangerously_skip_permissions` | claude_local | Same for Claude Code. **Off by default** |
 | `env`, `extra_args` | CLI harnesses | Extra environment variables / command-line arguments |
+
+Long prompts: Linux refuses a single command-line argument over 128 KB (`[Errno 7] Argument list too
+long`), and a step's prompt (skills, team memory, task document, the work it builds on) is often
+bigger. So BABD passes a prompt over 100 KB to Hermes through stdin, via a small launcher that runs
+the same `hermes` program with the prompt placed into its arguments inside the process. If `hermes`
+is not a Python program, the prompt is written to `HERMES_HOME/prompts/` and Hermes is told to read
+that file (it needs the `file` toolset). Claude Code always gets the prompt on stdin.
 
 ### Automatic install and configuration
 

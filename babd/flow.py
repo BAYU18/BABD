@@ -26,7 +26,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .config import ROOT
-from . import skillpacks
+from . import skillpacks, taskdocs
 from .gbrain import one_line, slugify
 
 RUNS_DIR = os.path.join(ROOT, "runs")
@@ -153,9 +153,10 @@ class MessageBus:
 class Run:
     """One team run on a goal. State is plain JSON so the dashboard can show it as-is."""
 
-    def __init__(self, team, goal, approver=None, on_event=None, run_id=None, slots=None):
+    def __init__(self, team, goal, approver=None, on_event=None, run_id=None, slots=None, docs=None):
         self.team = team
         self.goal = goal
+        self.docs = list(docs or [])       # task documents (babd/taskdocs.py): the brief every agent gets
         self.approver = approver           # fn(request_dict) -> (approved: bool, note: str); None = no approver
         self.on_event = on_event or (lambda kind, data: None)
         self.slots = slots or AgentSlots(team.cfg)  # shared between runs by the dashboard
@@ -182,8 +183,10 @@ class Run:
             "agents": {a.id: {"status": "idle", "task": ""} for a in team.agents},
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
             "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [], "skills": [],
-            "steps": [],
+            "steps": [], "documents": [taskdocs.summary(d) for d in self.docs],
         }
+        if self.docs:
+            self.write("00-task.md", taskdocs.brief_of(self.docs) + "\n")
         self.bus = MessageBus(self.emit, self.dir, self.lock)
         self.state["messages"] = self.bus.messages
         self.steps = 0
@@ -205,6 +208,14 @@ class Run:
         """A copy of the state that is safe to read while steps are still running."""
         with self.lock:
             return json.loads(json.dumps(self.state, ensure_ascii=False, default=str))
+
+    @property
+    def goal_block(self):
+        """The goal as every prompt shows it: the CEO's words plus the full task documents."""
+        if not self.docs:
+            return f"CEO goal:\n{self.goal}"
+        return (f"CEO goal:\n{self.goal}\n\nThe CEO gave the task as document(s); follow them. (Agents with file "
+                f"tools can also read them at {os.path.join(self.dir, '00-task.md')}.)\n\n{taskdocs.brief_of(self.docs)}")
 
     def write(self, name, content):
         with open(os.path.join(self.dir, name), "w") as f:
@@ -349,7 +360,7 @@ class Run:
                               f"{', '.join(team.by_id[r].cfg.get('skills', []))}" for r in specialists)
         slots = ", ".join(f'"{r}": "<task>"' for r in specialists)
         plan_text = self.work("lead",
-            f"CEO goal:\n{goal}\n\nYour team:\n{team_desc}\n\n"
+            f"{self.goal_block}\n\nYour team:\n{team_desc}\n\n"
             "The work flows through you: Architect designs, Developer builds, QA tests (failed tests go back "
             "to the Developer), DevOps deploys and sets up monitoring after QA passes and the CEO approves.\n"
             "Plan the work and assign one concrete task to every agent. Answer with only a JSON object:\n"
@@ -367,7 +378,7 @@ class Run:
         def task_for(role):
             return str(assignments.get(role) or "") or f"Do your part ({team.by_id[role].main_task}) for the goal."
 
-        context = f"CEO goal:\n{goal}\n\nTeam Lead plan:\n{summary}"
+        context = f"{self.goal_block}\n\nTeam Lead plan:\n{summary}"
 
         # DESIGN
         self.stage("design")
@@ -472,7 +483,7 @@ class Run:
         if deploy:
             outputs += f"\n\n### Deploy report\n{deploy}"
         report_text = self.work("lead",
-            f"CEO goal:\n{goal}\n\nFacts: {facts}\n\nTeam output:\n\n{outputs}\n\n"
+            f"{self.goal_block}\n\nFacts: {facts}\n\nTeam output:\n\n{outputs}\n\n"
             "Write the CEO report: high-level status only, no code. Answer with only a JSON object:\n"
             '{"current_goal": "<max 4 words>", "active_task": "<max 3 words>", "recent_result": "<max 4 words>", '
             '"next_action": "<max 4 words>", "summary": "<short paragraph for the CEO>", '

@@ -11,10 +11,15 @@
   python -m babd chat <agent>                  interactive chat with one agent
   python -m babd run "goal" ["goal 2" ...] [--approve] [--update-dashboard]
                                                full team run: plan -> work -> CEO report; several
-                                               goals run at the same time, sharing the agents
+                                               goals run at the same time, sharing the agents.
+                                               A goal can be a .md file or a link to one:
+  python -m babd run specs/login.md https://github.com/o/r/blob/main/spec.md
+  python -m babd run "Build what the spec says" --doc spec.md [--doc <link>]
 """
 import argparse
 import json
+import os
+import re
 import sys
 import threading
 
@@ -51,7 +56,9 @@ def main(argv=None):
     c = sub.add_parser("chat", help="interactive chat with one agent")
     c.add_argument("agent")
     r = sub.add_parser("run", help="full team run on a goal (several goals: run at the same time)")
-    r.add_argument("goal", nargs="+")
+    r.add_argument("goal", nargs="+", help="a goal, a .md/.txt file, or a link to one (each is a task)")
+    r.add_argument("--doc", action="append", default=[], metavar="FILE_OR_LINK",
+                   help="a task document (Markdown file or link) for the goal; repeat for more")
     r.add_argument("--approve", action="store_true", help="approve the deploy without asking (CEO approval gate)")
     r.add_argument("--update-dashboard", action="store_true",
                    help="write the CEO report into agents.json and regenerate workspace.svg")
@@ -160,9 +167,47 @@ def main(argv=None):
         return run_goals(args, cfg, team)
 
 
+def read_doc(ref):
+    from . import taskdocs
+    if re.match(r"^https?://", ref.strip()):
+        return taskdocs.from_url(ref)
+    return taskdocs.from_file(ref)
+
+
+def tasks_from_args(goals, doc_refs):
+    """[(goal, docs)]: a file or link argument is its own task; --doc documents go with the text goal(s)."""
+    from . import taskdocs
+    tasks = []
+    for g in goals:
+        g = g.strip()
+        if not g:
+            continue
+        looks_like_doc = re.match(r"^https?://\S+$", g) or (
+            "\n" not in g and g.lower().endswith(taskdocs.TEXT_EXTENSIONS) and os.path.isfile(os.path.expanduser(g)))
+        if looks_like_doc:
+            doc = read_doc(g)
+            tasks.append((doc["title"], [doc]))
+        else:
+            tasks.append((g, []))
+    if doc_refs:
+        docs = [read_doc(ref) for ref in doc_refs]
+        texts = [i for i, (_, d) in enumerate(tasks) if not d]
+        if not texts:
+            tasks.append((docs[0]["title"], docs))
+        for i in texts:
+            tasks[i] = (tasks[i][0], docs)
+    return tasks
+
+
 def run_goals(args, cfg, team):
+    from . import taskdocs
     from .flow import AgentSlots, Run
-    goals = [g for g in args.goal if g.strip()]
+    try:
+        tasks = tasks_from_args(args.goal, args.doc)
+    except taskdocs.TaskDocError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    goals = [g for g, _ in tasks]
     many = len(goals) > 1
     out_lock = threading.Lock()
 
@@ -191,11 +236,14 @@ def run_goals(args, cfg, team):
     limit = threading.BoundedSemaphore(max(1, int(cfg["project"].get("max_parallel_tasks", 3))))
     states = [None] * len(goals)
 
-    def one(i, goal):
+    def one(i, goal, docs):
         with limit:
-            states[i] = Run(team, goal, approver=approver, on_event=show(i + 1), slots=slots).execute()
+            states[i] = Run(team, goal, approver=approver, on_event=show(i + 1), slots=slots, docs=docs).execute()
 
-    threads = [threading.Thread(target=one, args=(i, g), daemon=True) for i, g in enumerate(goals)]
+    for goal, docs in tasks:
+        for d in docs:
+            print(f"task document: {d['name']} ({d['chars']} characters) -> {goal}", file=sys.stderr)
+    threads = [threading.Thread(target=one, args=(i, g, d), daemon=True) for i, (g, d) in enumerate(tasks)]
     for t in threads:
         t.start()
     for t in threads:
