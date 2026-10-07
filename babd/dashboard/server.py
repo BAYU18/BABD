@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, resolve_env, save_config, set_env_var
 from .. import permissions, projects, skillpacks, taskdocs, telegram
+from .auth import Security, verify_password
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
 from ..log import add_listener, log
@@ -811,7 +812,7 @@ def _alive(pid):
         return False
 
 
-def make_handler(dash, token, allowed_hosts):
+def make_handler(dash, token, allowed_hosts, security=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = "BABD-Dashboard"
 
@@ -820,12 +821,21 @@ def make_handler(dash, token, allowed_hosts):
 
         # -- helpers -------------------------------------------------------------------------
 
-        def send_json(self, status, body):
+        def common_headers(self):
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Frame-Options", "DENY")
+            if security and security.is_https(self):
+                self.send_header("Strict-Transport-Security", "max-age=31536000")
+
+        def send_json(self, status, body, headers=()):
             data = json.dumps(body, ensure_ascii=False, default=str).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.common_headers()
+            for k, v in headers:
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(data)
 
@@ -840,6 +850,7 @@ def make_handler(dash, token, allowed_hosts):
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.common_headers()
             if path.endswith(".html"):
                 self.send_header("Content-Security-Policy",
                                  "default-src 'self'; script-src 'self'; img-src 'self' data:; "
@@ -861,12 +872,55 @@ def make_handler(dash, token, allowed_hosts):
                 raise ApiError(400, "expected a JSON object")
             return data
 
-        def authorized(self, query):
+        def host_ok(self):
             host = (self.headers.get("Host") or "").lower()
-            if allowed_hosts and host not in allowed_hosts:
+            return not allowed_hosts or host in allowed_hosts
+
+        def authorized(self, query):
+            if not self.host_ok():
                 return False
             given = self.headers.get("X-BABD-Token") or (query.get("token") or [""])[0]
-            return secrets.compare_digest(given, token)
+            if given and secrets.compare_digest(given, token):
+                return True
+            return bool(security and security.login_enabled and security.sessions.valid(security.session_of(self)))
+
+        def same_origin(self):
+            """Writes with a session cookie must come from this site (SameSite=Strict, plus Origin)."""
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True
+            return urlparse(origin).netloc.lower() == (self.headers.get("Host") or "").lower()
+
+        def auth_api(self, method, path):
+            """/api/auth, /api/login, /api/logout: the only API calls without a token or session."""
+            if path == "/api/auth" and method == "GET":
+                return self.send_json(200, {"login": bool(security and security.login_enabled),
+                                            "authenticated": self.authorized({})})
+            if not (security and security.login_enabled):
+                return self.send_json(404, {"error": "password login is not enabled (babd set-password)"})
+            if not self.host_ok() or not self.same_origin():
+                return self.send_json(403, {"error": "wrong site"})
+            ip = security.client_ip(self)
+            if path == "/api/login" and method == "POST":
+                wait = security.limiter.blocked_for(ip)
+                if wait:
+                    return self.send_json(429, {"error": f"too many wrong passwords; try again in {wait} s"},
+                                          [("Retry-After", str(wait))])
+                try:
+                    password = str(self.body().get("password") or "")
+                except ApiError as e:
+                    return self.send_json(e.status, {"error": str(e)})
+                if not verify_password(password, security.password_hash):
+                    security.limiter.fail(ip)
+                    log(f"wrong dashboard password from {ip}", "dashboard")
+                    return self.send_json(401, {"error": "wrong password"})
+                security.limiter.reset(ip)
+                sid = security.sessions.create()
+                return self.send_json(200, {"ok": True}, [("Set-Cookie", security.cookie(self, sid))])
+            if path == "/api/logout" and method == "POST":
+                security.sessions.drop(security.session_of(self))
+                return self.send_json(200, {"ok": True}, [("Set-Cookie", security.cookie(self, "", 0))])
+            return self.send_json(404, {"error": "not found"})
 
         # -- routing -------------------------------------------------------------------------
 
@@ -882,6 +936,10 @@ def make_handler(dash, token, allowed_hosts):
         def route(self, method):
             url = urlparse(self.path)
             path, query = url.path, parse_qs(url.query)
+            if security and not security.ip_allowed(security.client_ip(self)):
+                return self.send_json(403, {"error": "this address may not use the dashboard"})
+            if path in ("/api/auth", "/api/login", "/api/logout"):
+                return self.auth_api(method, path)
             if method == "GET" and not path.startswith("/api/"):
                 if path in ("/", "/index.html"):
                     return self.send_file(os.path.join(STATIC, "index.html"))
@@ -892,7 +950,10 @@ def make_handler(dash, token, allowed_hosts):
                     return self.send_file(os.path.join(STATIC, name))
                 return self.send_json(404, {"error": "not found"})
             if not self.authorized(query):
-                return self.send_json(401, {"error": "missing or wrong dashboard token"})
+                return self.send_json(401, {"error": "missing or wrong dashboard token",
+                                            "login": bool(security and security.login_enabled)})
+            if method != "GET" and not self.same_origin():
+                return self.send_json(403, {"error": "request from another site"})
             try:
                 if method == "GET" and path == "/api/events":
                     return self.events()
@@ -1001,8 +1062,10 @@ def make_handler(dash, token, allowed_hosts):
     return Handler
 
 
-def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=None):
+def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=None, public_url=None,
+          allow_ip=None, trust_proxy=False):
     token = token or secrets.token_urlsafe(24)
+    security = Security(allow=allow_ip, trust_proxy=trust_proxy, https=(public_url or "").startswith("https://"))
     dash = Dashboard(cfg_path)
     dash.telegram_on = True
     dash.telegram.reconcile()  # Telegram bots whose token is set start now
@@ -1016,13 +1079,27 @@ def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=N
                 log(f"queue check failed: {e}", "dashboard")
     threading.Thread(target=tick, daemon=True, name="queue-tick").start()
     local = host in ("127.0.0.1", "localhost", "::1")
-    allowed = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"} if local else None
-    server = ThreadingHTTPServer((host, port), make_handler(dash, token, allowed))
+    if public_url:
+        allowed = {urlparse(public_url).netloc.lower()}
+        if local:  # the reverse proxy forwards to us; the terminal URL keeps working too
+            allowed |= {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+    else:
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"} if local else None
+    server = ThreadingHTTPServer((host, port), make_handler(dash, token, allowed, security))
     server.daemon_threads = True
     url = f"http://{'127.0.0.1' if local else host}:{server.server_port}/?token={token}"
     print(f"BABD dashboard: {url}\n(keep this URL private: the token gives full control of the agents)", flush=True)
-    if not local:
-        print("warning: listening on a non-local address; anyone who gets the URL controls the agents.", flush=True)
+    if public_url:
+        print(f"public address: {public_url} ({'password login' if security.login_enabled else 'NO password set: run babd set-password'})",
+              flush=True)
+    if not local and not public_url:
+        print("warning: listening on a non-local address without --public-url; anyone who gets the URL controls the agents.",
+              flush=True)
+    if not local and not security.login_enabled:
+        print("warning: no dashboard password (babd set-password); remote users need the token URL.", flush=True)
+    behind_https = bool(public_url and public_url.startswith("https://"))
+    if not local and not behind_https:
+        print("warning: not behind HTTPS: put a reverse proxy with TLS in front (see README: Remote access).", flush=True)
     if open_browser:
         try:
             import webbrowser

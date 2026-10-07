@@ -15,6 +15,7 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.login && !token) { loginPage("Your session ended. Sign in again."); throw new Error("signed out"); }
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
@@ -942,8 +943,10 @@ $("#btnSettings").addEventListener("click", () => {
       <div class="row"><button type="button" class="btn small" id="projAdd">+ Add project</button>
         <label class="project-pick">Default <select id="projDefault">${(S.projects || []).map((pr) => `<option value="${esc(pr.id)}" ${pr.id === S.default_project ? "selected" : ""}>${esc(pr.name)}</option>`).join("")}</select></label>
         <button type="button" class="btn small primary" id="projSave">Save projects</button></div></div>
+    ${!token ? `<div class="row"><button type="button" class="btn small ghost" id="btnLogout">Sign out</button></div>` : ""}
     <div class="note">Flow: ${S.flow.stages.map((s) => esc(s.label)).join(" → ")}. Specialists only talk to the Team Lead; only the Team Lead reports to the CEO.</div>
     <div style="display:flex;justify-content:flex-end"><button class="btn primary" id="p_save">Save</button></div>`, true);
+  if ($("#btnLogout")) $("#btnLogout").onclick = async () => { await fetch("/api/logout", { method: "POST" }); location.reload(); };
   $("#tgSave").onclick = async () => {
     try {
       await api("PUT", "telegram", { enabled: $("#tg_enabled").checked, bot_username: $("#tg_username").value.trim(),
@@ -1409,10 +1412,34 @@ function connect() {
   es.onerror = () => { /* EventSource reconnects by itself */ };
 }
 
+function loginPage(message = "") {
+  document.body.innerHTML = `<form class="login card" id="loginForm">
+    <div class="brand"><div class="brand-mark" aria-hidden="true"><span></span><span></span></div>
+      <div><div class="eyebrow">CEO Command Center</div><div class="project-name">Sign in</div></div></div>
+    <label class="field"><span class="muted small">Dashboard password</span>
+      <input type="password" id="loginPassword" autocomplete="current-password" required autofocus></label>
+    <div class="note warn ${message ? "" : "hidden"}" id="loginMsg">${esc(message)}</div>
+    <button class="btn primary" type="submit">Sign in</button>
+  </form>`;
+  $("#loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: $("#loginPassword").value }) });
+    if (res.ok) { location.reload(); return; }
+    const body = await res.json().catch(() => ({}));
+    $("#loginMsg").textContent = body.error || "Could not sign in";
+    $("#loginMsg").classList.remove("hidden");
+  });
+}
+
 (async function start() {
   if (!token) {
-    document.body.innerHTML = `<div class="empty" style="margin:15vh auto;max-width:520px">Open the dashboard with the URL printed by <code>babd dashboard</code> (it contains the access token).</div>`;
-    return;
+    const auth = await fetch("/api/auth").then((r) => r.json()).catch(() => ({}));
+    if (auth.login && !auth.authenticated) { loginPage(); return; }
+    if (!auth.authenticated) {
+      document.body.innerHTML = `<div class="empty" style="margin:15vh auto;max-width:520px">Open the dashboard with the URL printed by <code>babd dashboard</code> (it contains the access token).</div>`;
+      return;
+    }
   }
   try {
     await refresh(); connect();

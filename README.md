@@ -65,6 +65,51 @@ Opens the CEO command center in your browser (`http://127.0.0.1:8800/?token=…`
 The panel listens on 127.0.0.1 only. Every API call needs the token from the start-up URL, and the
 Host header must be the panel's own address, so other web pages can't drive it.
 
+## Remote access (opening the dashboard from another machine)
+
+The dashboard listens on 127.0.0.1 and needs the token printed at start-up. To open it from your
+phone or laptop, keep it on 127.0.0.1 and put a reverse proxy with HTTPS in front of it:
+
+1. Set a password (stored as a PBKDF2 hash in `.env`):
+
+   ```bash
+   .venv/bin/babd set-password
+   ```
+
+2. Start the dashboard for the public address (optionally only for some addresses):
+
+   ```bash
+   .venv/bin/babd dashboard --no-browser --public-url https://babd.example.com --trust-proxy \
+       --allow-ip 203.0.113.7,10.0.0.0/8
+   ```
+
+3. Proxy HTTPS to it, e.g. with [Caddy](https://caddyserver.com) (gets the certificate itself):
+
+   ```
+   babd.example.com {
+       reverse_proxy 127.0.0.1:8800
+   }
+   ```
+
+   or nginx (`proxy_pass http://127.0.0.1:8800;` with `proxy_set_header Host $host;`,
+   `X-Forwarded-For $remote_addr;`, `X-Forwarded-Proto $scheme;`, and `proxy_buffering off;` for the
+   live event stream).
+
+Then `https://babd.example.com` shows a sign-in page. What protects it:
+
+- password login → an `HttpOnly`, `SameSite=Strict` session cookie (`Secure` over HTTPS), 12 hours;
+  **Sign out** in Team settings
+- 5 wrong passwords from one address in 10 minutes → that address waits
+- `--allow-ip`: other addresses are refused (with `--trust-proxy` the address comes from
+  `X-Forwarded-For`, so only use it behind your own proxy)
+- `--public-url`: requests must be for that host (stops DNS-rebinding pages); writes must come from
+  the dashboard's own origin
+- `Strict-Transport-Security`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, a strict
+  Content-Security-Policy
+
+The start-up token URL keeps working (keep it private). Without a password, BABD warns when it
+listens on a non-local address.
+
 ## Team memory: GBrain
 
 Every agent has the **GBrain** skill ([garrytan/gbrain](https://github.com/garrytan/gbrain)) and

@@ -6,6 +6,8 @@
                                                select a harness: installs and configures it
   python -m babd setup [agent ...]             install + configure every agent's harness
   python -m babd dashboard [--port 8800]       web panel: configure, command and watch the agents
+        [--public-url https://… --allow-ip … --trust-proxy]   for access from other machines
+  python -m babd set-password                  password login for the dashboard
   python -m babd brain [words ...]             team memory (GBrain): status, or recall about some words
   python -m babd ask <agent> "message"         one message to one agent
   python -m babd chat <agent>                  interactive chat with one agent
@@ -52,6 +54,11 @@ def main(argv=None):
     db.add_argument("--host", default="127.0.0.1")
     db.add_argument("--port", type=int, default=8800)
     db.add_argument("--no-browser", action="store_true")
+    db.add_argument("--public-url", help="the address people open, e.g. https://babd.example.com (behind a reverse proxy)")
+    db.add_argument("--allow-ip", help="only these addresses / networks may connect, e.g. 203.0.113.7,10.0.0.0/8")
+    db.add_argument("--trust-proxy", action="store_true",
+                    help="behind a reverse proxy: client address from X-Forwarded-For, HTTPS from X-Forwarded-Proto")
+    sub.add_parser("set-password", help="set the dashboard password (for access from other machines)")
     a = sub.add_parser("ask", help="send one message to one agent")
     a.add_argument("agent")
     a.add_argument("message")
@@ -77,7 +84,28 @@ def main(argv=None):
 
     if args.cmd == "dashboard":
         from .dashboard.server import serve
-        serve(args.host, args.port, open_browser=not args.no_browser)
+        try:
+            serve(args.host, args.port, open_browser=not args.no_browser, public_url=args.public_url,
+                  allow_ip=args.allow_ip, trust_proxy=args.trust_proxy)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        return 0
+
+    if args.cmd == "set-password":
+        import getpass
+        from .config import set_env_var
+        from .dashboard.auth import HASH_ENV, hash_password
+        pw = getpass.getpass("New dashboard password (10+ characters): ")
+        if pw != getpass.getpass("Again: "):
+            print("error: the two passwords differ", file=sys.stderr)
+            return 2
+        try:
+            set_env_var(HASH_ENV, hash_password(pw))
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        print(f"saved (as a PBKDF2 hash in .env, {HASH_ENV}); restart `babd dashboard` to use it")
         return 0
 
     cfg = load_config()
