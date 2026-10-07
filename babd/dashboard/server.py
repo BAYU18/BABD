@@ -749,7 +749,33 @@ class Dashboard:
 
     # -- task board ------------------------------------------------------------------------------
 
-    def board(self, history=30):
+    def search(self, q="", status="", project="", limit=100):
+        """Saved tasks matching words in the goal, id, documents, report or project (all words must match)."""
+        words = [w.lower() for w in (q or "").split() if w.strip()]
+        out = []
+        for s in self.saved_states(2000):
+            if status and s.get("status") != status:
+                continue
+            if project and (s.get("workspace") or {}).get("project") != project:
+                continue
+            hay = " ".join([s.get("goal") or "", s.get("id") or "", json.dumps(s.get("documents") or []),
+                            ((s.get("report") or {}).get("summary") or ""), json.dumps(s.get("workspace") or {})]).lower()
+            if all(w in hay for w in words):
+                out.append({k: s.get(k) for k in TASK_FIELDS} | {"steps": s.get("steps") or []})
+                if len(out) >= limit:
+                    break
+        return out
+
+    def report_md(self, run_id):
+        from .. import reports
+        d = os.path.join(flow.RUNS_DIR, os.path.basename(run_id))
+        if not os.path.exists(os.path.join(d, "state.json")):
+            raise ApiError(404, f"no run {run_id!r}")
+        state, messages = reports.load(d)
+        names = {a["id"]: a.get("short_name") or a["name"] for a in self.load()["agents"]}
+        return reports.markdown(state, messages, names)
+
+    def board(self, history=30, q=None):
         """Every task (queued, running, recent) and what each agent is doing, for the task board."""
         cfg = self.load()
         tasks = [{**q, "progress": 0, "stages": {}, "steps": [], "agents": {}} for q in self.queued()]
@@ -790,6 +816,9 @@ class Dashboard:
                 "stages": [{"key": k, "label": l, "owner": o} for k, l, o, _ in flow.STAGES]}
 
 
+_SENT = object()  # the handler already wrote the response
+
+
 def usage_sum(items):
     total = {"input": 0, "output": 0, "cost": 0.0}
     for u in items:
@@ -820,6 +849,18 @@ def make_handler(dash, token, allowed_hosts, security=None):
             pass
 
         # -- helpers -------------------------------------------------------------------------
+
+        def send_text(self, text, ctype, filename):
+            data = text.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", f"{ctype}; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Cache-Control", "no-store")
+            self.common_headers()
+            self.end_headers()
+            self.wfile.write(data)
+            return _SENT
 
         def common_headers(self):
             self.send_header("Referrer-Policy", "no-referrer")
@@ -958,7 +999,8 @@ def make_handler(dash, token, allowed_hosts, security=None):
                 if method == "GET" and path == "/api/events":
                     return self.events()
                 result = self.api(method, path.split("/")[2:])
-                self.send_json(200, result)
+                if result is not _SENT:
+                    self.send_json(200, result)
             except ApiError as e:
                 self.send_json(e.status, {"error": str(e)})
             except (ValueError, KeyError, TypeError) as e:
@@ -1001,7 +1043,12 @@ def make_handler(dash, token, allowed_hosts, security=None):
                     d.chats.pop(agent_id, None)
                     return {"ok": True}
             if method == "GET" and parts == ["board"]:
-                return d.board()
+                qs = parse_qs(urlparse(self.path).query)
+                return d.board(history=max(1, min(500, int((qs.get("history") or ["30"])[0]))))
+            if method == "GET" and parts == ["search"]:
+                qs = parse_qs(urlparse(self.path).query)
+                one = lambda k: (qs.get(k) or [""])[0]  # noqa: E731
+                return {"tasks": d.search(one("q"), one("status"), one("project"), max(1, min(500, int(one("limit") or 100))))}
             if method == "POST" and parts == ["tasks"]:
                 b = self.body()
                 goals = b.get("goals", [])
@@ -1022,6 +1069,9 @@ def make_handler(dash, token, allowed_hosts, security=None):
                                        b.get("project"))
                 if method == "GET" and len(parts) == 2:
                     return d.load_run(parts[1])
+                if method == "GET" and parts[2:] == ["report.md"]:
+                    return self.send_text(d.report_md(parts[1]), "text/markdown",
+                                          f"babd-{os.path.basename(parts[1])}.md")
                 if method == "GET" and parts[2:] == ["document"]:
                     path = os.path.join(flow.RUNS_DIR, os.path.basename(parts[1]), "00-task.md")
                     if not os.path.isfile(path):

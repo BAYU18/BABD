@@ -90,7 +90,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .section-title { display: flex; align-items: baseline; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
 
 /* command */
-textarea, input[type=text], input[type=url], input[type=number], input[type=password], select {
+textarea, input[type=text], input[type=url], input[type=search], input[type=number], input[type=password], select {
   width: 100%; background: var(--bg-2); border: 1px solid var(--stroke-2); border-radius: 10px;
   padding: 9px 11px; outline: none;
 }
@@ -543,3 +543,5 @@ button.chip { font-family: inherit; cursor: pointer; }
 .warn-text { color: var(--warn) !important; }
 .login { max-width: 380px; margin: 14vh auto; display: grid; gap: 14px; }
 .login .field { display: grid; gap: 6px; }
+.task-search { flex: 1 1 260px; max-width: 420px; padding: 6px 10px; font-size: 13px; }
+.more-row { display: flex; justify-content: center; margin-top: 10px; }

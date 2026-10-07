@@ -683,6 +683,16 @@ and **AGENT STATUS** are calculated from this file automatically.
 > do not commit `agents.json` to a public repository. The LLM status dot is green
 > only when `base_url`, `model` and a key are all set; a missing key shows `KEY not set` in red.
 
+## Task history and reports
+
+- **Search** (task board → Tasks): words in a task's goal, id, documents, CEO report or project; all
+  words must match. API: `GET /api/search?q=…&status=done&project=shop`.
+- **Show older tasks** loads more finished tasks (`GET /api/board?history=N`).
+- **Export** a finished task as Markdown: status, QA verdict and evidence, approval, project branch
+  and merge, tokens and cost, the CEO report, every step (time, tokens, retries), the project's test
+  output and the whole conversation between the agents. Task board → Export, run panel → Export
+  report, `GET /api/runs/<id>/report.md`, or `babd report <run id> -o report.md`.
+
 ## Tests
 
 ```bash

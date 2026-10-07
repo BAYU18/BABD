@@ -136,11 +136,13 @@
     <section class="card">
       <div class="card-head">
         <h2>Tasks</h2>
+        <input type="search" id="taskSearch" class="task-search" placeholder="Search tasks: words in the goal, id, document, report…" aria-label="Search tasks">
         <div class="seg" id="taskFilter" role="group" aria-label="Filter tasks">
           <button type="button" data-filter="all" class="on">All</button><button type="button" data-filter="active">Active</button><button type="button" data-filter="queued">Queued</button><button type="button" data-filter="done">Done</button><button type="button" data-filter="problem">Failed / stopped</button>
         </div>
       </div>
       <div class="task-list" id="taskList"></div>
+      <div class="more-row"><button type="button" class="btn small ghost" id="btnMoreTasks">Show older tasks</button></div>
     </section>
   </main>
   <div class="tip hidden" id="tip" role="tooltip"></div>

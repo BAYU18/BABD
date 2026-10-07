@@ -506,6 +506,7 @@ function renderRun() {
         <span class="muted small">${esc(r.id)} · ${r.progress ?? 0}%${r.qa_rounds ? ` · ${r.qa_rounds} QA fix round(s)` : ""}${usageText(r.usage) ? ` · ${esc(usageText(r.usage))}` : ""}</span></div>
       ${r.error ? `<div class="note warn" style="margin-top:8px">${esc(r.error)}</div>` : ""}
       ${RESUMABLE.includes(r.status) ? `<button type="button" class="btn small" style="margin-top:8px" data-resume-run="${esc(r.id)}">Resume from the last finished step</button>` : ""}
+      ${!isLive(r) && r.finished_at ? `<button type="button" class="btn small ghost" style="margin-top:8px" data-export-run="${esc(r.id)}">Export report (.md)</button>` : ""}
     </div>
     <div class="stepper">${stages}</div>
     ${approval}${report}
@@ -522,6 +523,8 @@ $("#runBody").addEventListener("click", async (e) => {
     renderRun();
     return;
   }
+  const ex = e.target.closest("[data-export-run]");
+  if (ex) { downloadReport(ex.dataset.exportRun); return; }
   const rs = e.target.closest("[data-resume-run]");
   if (rs) {
     try { const r = await api("POST", `runs/${rs.dataset.resumeRun}/resume`); toast(`Resuming: ${r.goal}`, "ok"); viewingHistory = false; pinnedRun = rs.dataset.resumeRun; refreshSoon(); }
@@ -988,6 +991,8 @@ let B = null;              // /api/board
 let boardOffset = 0;       // server clock minus browser clock (ms)
 let boardSpan = 0;         // seconds shown in the activity timeline (0 = fit the recent activity)
 let taskFilter = "all";
+let historyLimit = 30;     // finished tasks loaded on the board ("Show older tasks" adds more)
+let searchResults = null;  // tasks found by the search box (null: not searching)
 const openTasks = new Set();
 const KIND_LABELS = { plan: "Plan", design: "Design", code: "Build", test_plan: "Test plan", deploy_prep: "Deploy prep",
   test_report: "Test", fix: "Fix", deploy_report: "Deploy", report: "Report" };
@@ -996,6 +1001,29 @@ const TASK_LABELS = { running: "running", waiting_approval: "waiting for you", q
 const RESUMABLE = ["failed", "cancelled", "interrupted"];
 const ms = (iso) => (iso ? new Date(iso).getTime() : NaN);
 const serverNow = () => Date.now() + boardOffset;
+
+async function downloadReport(runId) {
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/report.md`, { headers: { "X-BABD-Token": token } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement("a"), { href: url, download: `babd-${runId}.md` });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+let searchTimer = null;
+$("#taskSearch").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  searchTimer = setTimeout(async () => {
+    if (!q) { searchResults = null; renderTasks(); return; }
+    try { searchResults = (await api("GET", `search?q=${encodeURIComponent(q)}&limit=200`)).tasks; renderTasks(); }
+    catch (err) { toast(err.message, "bad"); }
+  }, 300);
+});
+$("#btnMoreTasks").addEventListener("click", () => { historyLimit += 50; loadBoard(); });
 
 function fmtTok(n) {
   if (!n) return "0";
@@ -1035,7 +1063,7 @@ $("#views").addEventListener("click", (e) => { const b = e.target.closest("[data
 
 async function loadBoard() {
   try {
-    B = await api("GET", "board");
+    B = await api("GET", `board?history=${historyLimit}`);
     boardOffset = ms(B.now) - Date.now();
     renderBoard();
   } catch (err) { toast(err.message, "bad"); }
@@ -1153,14 +1181,15 @@ function stageTrack(t) {
 
 function renderTasks() {
   const order = { running: 0, waiting_approval: 0, queued: 1 };
-  const shownTasks = B.tasks.filter((t) => taskFilter === "all"
+  const shownTasks = (searchResults || B.tasks).filter((t) => taskFilter === "all"
     || (taskFilter === "active" && ["running", "waiting_approval"].includes(t.status))
     || (taskFilter === "queued" && t.status === "queued")
     || (taskFilter === "done" && t.status === "done")
     || (taskFilter === "problem" && RESUMABLE.includes(t.status)))
     .sort((a, b) => (order[a.status] ?? 2) - (order[b.status] ?? 2)
       || (a.status === "queued" ? (a.position || 0) - (b.position || 0) : (b.started_at || b.queued_at || "").localeCompare(a.started_at || a.queued_at || "")));
-  if (!shownTasks.length) { $("#taskList").innerHTML = `<div class="empty">No tasks here yet. Add some above.</div>`; return; }
+  $("#btnMoreTasks").classList.toggle("hidden", !!searchResults || B.tasks.filter((t) => !["running", "waiting_approval", "queued"].includes(t.status)).length < historyLimit);
+  if (!shownTasks.length) { $("#taskList").innerHTML = `<div class="empty">${searchResults ? "No task matches the search." : "No tasks here yet. Add some above."}</div>`; return; }
   $("#taskList").innerHTML = shownTasks.map((t) => {
     const live = ["running", "waiting_approval"].includes(t.status);
     const startedMs = ms(t.started_at), endMs = t.finished_at ? ms(t.finished_at) : serverNow();
@@ -1186,6 +1215,7 @@ function renderTasks() {
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
         <div class="task-actions">
           ${t.status !== "queued" ? `<button type="button" class="btn small" data-open="${esc(t.id)}">Open</button>` : ""}
+          ${t.status !== "queued" && !["running", "waiting_approval"].includes(t.status) ? `<button type="button" class="btn small ghost" data-export="${esc(t.id)}" title="Download the task as a Markdown report">Export</button>` : ""}
           ${t.waiting_ceo ? `<button type="button" class="btn small good" data-approve-task="${esc(t.id)}">Approve deploy</button><button type="button" class="btn small danger" data-reject-task="${esc(t.id)}">Reject</button>` : ""}
           ${live || t.status === "queued" ? `<button type="button" class="btn small ghost" data-cancel="${esc(t.id)}">${t.status === "queued" ? "Remove" : "Stop"}</button>` : ""}
           ${RESUMABLE.includes(t.status) ? `<button type="button" class="btn small" data-resume="${esc(t.id)}" title="Continue from the last finished step">Resume</button>` : ""}
@@ -1232,6 +1262,8 @@ $("#boardView").addEventListener("click", async (e) => {
     const id = (t("[data-approve-task]") || t("[data-reject-task]")).dataset[ok ? "approveTask" : "rejectTask"];
     try { await api("POST", `runs/${id}/approve`, { approved: ok }); toast(ok ? "Deploy approved" : "Deploy rejected", ok ? "ok" : ""); boardSoon(); }
     catch (err) { toast(err.message, "bad"); }
+  } else if (t("[data-export]")) {
+    downloadReport(t("[data-export]").dataset.export);
   } else if (t("[data-resume]")) {
     try { const r = await api("POST", `runs/${t("[data-resume]").dataset.resume}/resume`); toast(`Resuming: ${r.goal}`, "ok"); boardSoon(); refreshSoon(); }
     catch (err) { toast(err.message, "bad"); }

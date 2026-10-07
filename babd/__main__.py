@@ -17,6 +17,7 @@
                                                A goal can be a .md file or a link to one:
   python -m babd run specs/login.md https://github.com/o/r/blob/main/spec.md
   python -m babd run "Build what the spec says" --doc spec.md [--doc <link>]
+  python -m babd report <run id> [-o report.md]   a task as a Markdown report
   python -m babd resume <run id> [--approve]  continue a failed / stopped / interrupted task from its
                                                last finished step
 """
@@ -72,6 +73,9 @@ def main(argv=None):
     r.add_argument("--approve", action="store_true", help="approve the deploy without asking (CEO approval gate)")
     r.add_argument("--update-dashboard", action="store_true",
                    help="write the CEO report into agents.json and regenerate workspace.svg")
+    rp = sub.add_parser("report", help="a finished task as a Markdown report")
+    rp.add_argument("run_id")
+    rp.add_argument("-o", "--output", help="write to this file (default: print)")
     rs = sub.add_parser("resume", help="continue a failed, stopped or interrupted task from its last finished step")
     rs.add_argument("run_id")
     rs.add_argument("--approve", action="store_true", help="approve the deploy without asking")
@@ -199,6 +203,22 @@ def main(argv=None):
 
     if args.cmd == "run":
         return run_goals(args, cfg, team)
+
+    if args.cmd == "report":
+        from . import reports
+        from .flow import RUNS_DIR
+        d = os.path.join(RUNS_DIR, os.path.basename(args.run_id))
+        if not os.path.exists(os.path.join(d, "state.json")):
+            print(f"error: no run {args.run_id}", file=sys.stderr)
+            return 2
+        md = reports.markdown(*reports.load(d), names={a["id"]: a.get("short_name") or a["name"] for a in cfg["agents"]})
+        if args.output:
+            with open(args.output, "w") as f:
+                f.write(md)
+            print(f"wrote {args.output}")
+        else:
+            print(md)
+        return 0
 
     if args.cmd == "resume":
         from .flow import FlowError, Run
