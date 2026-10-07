@@ -53,6 +53,9 @@
         "api_key_env": "ANTHROPIC_API_KEY",
         "effort": "high"
       },
+      "harness": {
+        "type": "direct"
+      },
       "telegram": {
         "enabled": true,
         "bot_username": "@babd_lead_bot",
@@ -95,6 +98,16 @@
         "model": "claude-opus-5-5",
         "api_key_env": "ANTHROPIC_API_KEY",
         "effort": "high"
+      },
+      "harness": {
+        "type": "hermes_local",
+        "toolsets": [
+          "web",
+          "file"
+        ],
+        "max_turns": 30,
+        "timeout_sec": 900,
+        "yolo": false
       },
       "telegram": {
         "enabled": true,
@@ -139,6 +152,12 @@
         "api_key_env": "ANTHROPIC_API_KEY",
         "effort": "medium"
       },
+      "harness": {
+        "type": "claude_local",
+        "max_turns": 40,
+        "timeout_sec": 1800,
+        "dangerously_skip_permissions": false
+      },
       "telegram": {
         "enabled": true,
         "bot_username": "@babd_dev_bot",
@@ -182,6 +201,16 @@
         "api_key_env": "ANTHROPIC_API_KEY",
         "effort": "medium"
       },
+      "harness": {
+        "type": "hermes_local",
+        "toolsets": [
+          "terminal",
+          "file"
+        ],
+        "max_turns": 30,
+        "timeout_sec": 1200,
+        "yolo": false
+      },
       "telegram": {
         "enabled": true,
         "bot_username": "@babd_qa_bot",
@@ -223,6 +252,16 @@
         "base_url": "http://localhost:11434/v1",
         "model": "qwen2.5-coder:7b",
         "api_key_env": "LOCAL_LLM_API_KEY"
+      },
+      "harness": {
+        "type": "hermes_local",
+        "toolsets": [
+          "terminal",
+          "file"
+        ],
+        "max_turns": 30,
+        "timeout_sec": 1200,
+        "yolo": false
       },
       "telegram": {
         "enabled": false,

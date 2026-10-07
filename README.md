@@ -10,13 +10,13 @@ workspace illustration.
 
 | File | Description |
 | --- | --- |
-| `workspace.svg` | The illustration as a scalable vector (1920×1514) |
+| `workspace.svg` | The illustration as a scalable vector (1920×1566) |
 | `workspace.png` | The same image rendered as a PNG |
 | `agents.json` | **Configuration** for each agent (LLM, Telegram bot, skills, tasks, status) and for the CEO dashboard |
 | `generate_workspace.py` | Script that reads `agents.json` and writes `workspace.svg` |
-| `babd/` | The team runtime: LLM clients, agents, Team Lead orchestration and the command line |
+| `babd/` | The team runtime: LLM clients, harnesses (`babd/harness/`), agents, Team Lead orchestration and the command line |
 | `skills/` | Optional instruction files for skills (see `skills/README.md`) |
-| `tests/` | Tests that make real HTTP calls through both SDKs to a local mock LLM server |
+| `tests/` | Tests: real HTTP calls through both SDKs to a mock LLM server, and fake `hermes` / `claude` CLIs that record what each harness sends |
 
 ## Running the team
 
@@ -24,7 +24,8 @@ workspace illustration.
 pip install -r requirements.txt
 cp .env.example .env              # then fill in ANTHROPIC_API_KEY (and others you use)
 
-python -m babd check                              # ping every agent's LLM
+python -m babd check                              # ping every agent through its harness + LLM
+python -m babd harnesses                          # list harness types
 python -m babd ask developer "Write a function that validates email addresses"
 python -m babd chat architect                     # interactive multi-turn chat
 python -m babd run "Build a login page with email + password" --update-dashboard
@@ -41,7 +42,60 @@ Everything is saved under `runs/<timestamp>/` (`01-plan.md`, one file per agent,
 With `--update-dashboard`, the report is written into `project` in `agents.json` and `workspace.svg`
 is regenerated, so the CEO Dashboard shows the real result.
 
-Each agent uses its own LLM. Its system prompt is built from its main task, sub-tasks and skills.
+Each agent uses its own harness and its own LLM. Its system prompt is built from its main task,
+sub-tasks and skills.
+
+## Harnesses
+
+A harness is the program that runs an agent: a plain API call, or a full agent (Hermes, Claude Code)
+with tools such as a terminal, files and web. Each agent picks one with `"harness"` in `agents.json`
+(no `harness` means `direct`).
+Whatever the harness, the agent keeps **its own custom LLM** (`llm` block): the harness gets the
+agent's URL, key and model in the form it understands. The design follows the adapters in
+[Paperclip](https://github.com/paperclipai/paperclip) (`packages/adapters/*`,
+`server/src/services/ai-provider-routing.ts`).
+
+| `harness.type` | Runs | How the agent's `llm` reaches it |
+| --- | --- | --- |
+| `direct` | One API call (Anthropic SDK or OpenAI-compatible SDK). No tools | SDK client with `base_url`, key, `model` |
+| `hermes_local` | [Hermes Agent](https://github.com/NousResearch/hermes-agent) CLI: `hermes chat -q … -Q` | A private `HERMES_HOME` per agent (`.babd/hermes/<agent>/config.yaml`): `provider: custom` + `base_url` + `model` for OpenAI-compatible endpoints, `provider: anthropic` for Claude. The key stays in an env var; config.yaml only references `${OPENAI_API_KEY}` |
+| `hermes_gateway` | A running Hermes API server: `POST /v1/runs`, poll `GET /v1/runs/{id}` | The model is set on the Hermes server (`send_model: true` also sends `llm.model`) |
+| `claude_local` | Claude Code CLI: `claude --print --output-format json` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` + `--model`, `--effort`. Needs an Anthropic-compatible endpoint |
+| `process` | Any command: prompt on stdin, reply on stdout | Env vars `BABD_LLM_BASE_URL`, `BABD_LLM_MODEL`, `BABD_LLM_API_KEY` (+ `OPENAI_*` or `ANTHROPIC_*`) |
+
+Examples (the shipped `agents.json` uses `direct`, `hermes_local` and `claude_local`):
+
+```json
+"llm": {"provider": "Custom", "api": "openai", "base_url": "http://localhost:11434/v1",
+        "model": "qwen2.5-coder:7b", "api_key_env": "LOCAL_LLM_API_KEY"},
+"harness": {"type": "hermes_local", "toolsets": ["terminal", "file"], "max_turns": 30,
+            "timeout_sec": 1200, "yolo": false}
+```
+```json
+"harness": {"type": "claude_local", "max_turns": 40, "dangerously_skip_permissions": false}
+```
+```json
+"harness": {"type": "hermes_gateway", "api_base_url": "http://127.0.0.1:8642",
+            "api_key_env": "HERMES_GATEWAY_API_KEY"}
+```
+```json
+"harness": {"type": "process", "command": "my-agent", "args": ["--model", "{model}"]}
+```
+
+| Harness option | Applies to | Meaning |
+| --- | --- | --- |
+| `toolsets` | hermes_local | Hermes toolsets to enable (`-t`), e.g. `terminal`, `file`, `web` |
+| `skills` | hermes_local | Hermes-native skills to preload (`-s`) |
+| `max_turns` | hermes_local, claude_local | Limit on tool-calling iterations |
+| `timeout_sec` | CLI harnesses, gateway | Stop the run after this many seconds (default 1800) |
+| `cwd` | CLI harnesses | Working directory. Default `workspace/`, shared by the agents so QA sees the Developer's files |
+| `home` / `manage_config` | hermes_local | Use another `HERMES_HOME`; `manage_config: false` stops BABD from writing its config.yaml |
+| `yolo` | hermes_local | Skip Hermes' approval prompts for dangerous commands. **Off by default**: without a terminal those prompts can only deny, so turn it on only inside a sandbox (container/VM) |
+| `dangerously_skip_permissions` | claude_local | Same for Claude Code. **Off by default** |
+| `env`, `extra_args` | CLI harnesses | Extra environment variables / command-line arguments |
+
+Install the harnesses you use: `pip install hermes-agent` for Hermes; Claude Code from
+https://claude.com/claude-code. `python -m babd check` says which ones are missing.
 
 ## Structure
 

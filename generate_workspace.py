@@ -10,7 +10,7 @@ from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-W, H = 1920, 1514
+W, H = 1920, 1566
 
 BG = "#0d1628"
 PANEL = "#15223a"
@@ -151,12 +151,38 @@ def llm_key_text(llm):
 
 LLM_ROW_H = 76
 TG_ROW_H = 44
+HARNESS_ROW_H = 44
+
+HARNESS_LABELS = {"direct": "Direct API", "hermes_local": "Hermes Agent", "hermes_gateway": "Hermes Gateway",
+                  "claude_local": "Claude Code", "process": "Custom Process"}
+
+
+def harness_of(agent):
+    h = agent.get("harness") or {"type": "direct"}
+    return {"type": h} if isinstance(h, str) else h
+
+
+def harness_icon(cx, cy, color):
+    rect(cx - 10, cy - 8, 20, 16, PANEL_2, r=4, stroke=color, sw=2)
+    add(f'<path d="M{cx - 5} {cy - 3} l3 3 l-3 3 M{cx + 1} {cy + 4} h4" stroke="{color}" stroke-width="1.8" '
+        f'fill="none" stroke-linecap="round" stroke-linejoin="round"/>')
 
 
 def config_row(x, y, w, kind, agent):
-    """One config row: LLM connection (LLM_ROW_H) or Telegram gateway (TG_ROW_H)."""
+    """One config row: harness (HARNESS_ROW_H), LLM connection (LLM_ROW_H) or Telegram gateway (TG_ROW_H)."""
     color = agent["color"]
     tw = w - 40 - 30
+    if kind == "harness":
+        h = harness_of(agent)
+        rect(x, y, w, HARNESS_ROW_H, PANEL_2, r=10)
+        harness_icon(x + 20, y + 22, color)
+        text(x + 40, y + 18, fit(f"HARNESS · {h['type'].upper()}", w - 52, 10, 0.75), size=10, fill=MUTED,
+             weight=700, ls=1.4)
+        name = HARNESS_LABELS.get(h["type"], h["type"])
+        if h["type"] == "process":
+            name = h.get("command", name)
+        text(x + 40, y + 35, fit(name, w - 52, 14), size=14, fill=TEXT, weight=700)
+        return
     if kind == "llm":
         llm = agent["llm"]
         rect(x, y, w, LLM_ROW_H, PANEL_2, r=10)
@@ -236,8 +262,9 @@ def agent_card(x, y, w, h, num, agent):
     iw = w - 40
     rect(x + 12, cy, w - 24, h - (cy - y) - 12, BG, r=14, opacity=0.55)
     config_header(x + 20, cy + 24, iw, color)
-    config_row(x + 20, cy + 36, iw, "llm", agent)
-    ty = cy + 36 + LLM_ROW_H + 8
+    config_row(x + 20, cy + 36, iw, "harness", agent)
+    config_row(x + 20, cy + 36 + HARNESS_ROW_H + 8, iw, "llm", agent)
+    ty = cy + 36 + HARNESS_ROW_H + 8 + LLM_ROW_H + 8
     config_row(x + 20, ty, iw, "telegram", agent)
     label(x + 20, ty + TG_ROW_H + 22, "SKILLS")
     skill_chips(x + 20, ty + TG_ROW_H + 32, iw, agent["skills"], color)
@@ -265,7 +292,8 @@ def lead_card(x, y, w, h, agent):
     rect(x + 12, cy, w - 24, h - 238, BG, r=14, opacity=0.55)
     config_header(x + 24, cy + 24, w - 48, color)
     config_row(x + 24, cy + 36, 200, "llm", agent)
-    config_row(x + 236, cy + 36, 200, "telegram", agent)
+    config_row(x + 236, cy + 36, 200, "harness", agent)
+    config_row(x + 236, cy + 36 + HARNESS_ROW_H + 8, 200, "telegram", agent)
     label(x + 452, cy + 52, "SKILLS")
     skill_chips(x + 452, cy + 60, w - 452 - 24, agent["skills"], color)
 
@@ -346,9 +374,11 @@ def dashboard(x, y, w, h, project, agents):
     skills = sum(len(a["skills"]) for a in agents)
     rect(x + 24, sy, w - 48, 92, PANEL_2, r=14)
     label(x + 44, sy + 28, "TEAM SETUP")
-    cw = (w - 88) / 3
+    harness_types = len({harness_of(a)["type"] for a in agents})
+    cw = (w - 88) / 4
     for i, (val, sub, color, icon) in enumerate([(f"{llm_ok}/{n}", "LLM connected", GOOD if llm_ok == n else WARN, "llm"),
                                                  (f"{tg_ok}/{n}", "Telegram bots", GOOD if tg_ok == n else WARN, "tg"),
+                                                 (str(harness_types), "Harness types", CEO, None),
                                                  (str(skills), "Skills added", CEO, None)]):
         cx = x + 44 + i * cw
         text(cx, sy + 64, val, size=22, fill=TEXT, weight=800)
@@ -433,7 +463,7 @@ def build(cfg):
 
     # geometry
     agents_x0, card_w, gap = 40, 297, 24
-    agents_y, agents_h = 580, 714
+    agents_y, agents_h = 580, 766
     lead_x, lead_y, lead_w, lead_h = 330, 110, 680, 380
     dash_x, dash_y, dash_w, dash_h = 1360, 30, 520, agents_y + agents_h - 30
 

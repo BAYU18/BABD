@@ -5,7 +5,7 @@ import os
 import re
 
 from .config import ROOT, load_skill_text
-from .llm import LLMClient
+from .harness import create_harness
 
 RUNS_DIR = os.path.join(ROOT, "runs")
 
@@ -15,7 +15,7 @@ class Agent:
         self.cfg = cfg
         self.id = cfg["id"]
         self.name = cfg.get("short_name") or cfg["name"]
-        self.llm = LLMClient(cfg["llm"])
+        self.harness = create_harness(cfg)
         self.history = []
 
     @property
@@ -43,12 +43,12 @@ class Agent:
 
     def ask(self, message, **kwargs):
         """One-off request with no memory."""
-        return self.llm.complete(self.system_prompt(), [{"role": "user", "content": message}], **kwargs)
+        return self.harness.complete(self.system_prompt(), [{"role": "user", "content": message}], **kwargs)
 
     def chat(self, message):
         """Multi-turn conversation: keeps this agent's history."""
         self.history.append({"role": "user", "content": message})
-        reply = self.llm.complete(self.system_prompt(), self.history)
+        reply = self.harness.complete(self.system_prompt(), self.history)
         self.history.append({"role": "assistant", "content": reply})
         return reply
 

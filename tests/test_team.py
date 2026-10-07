@@ -85,6 +85,7 @@ class TeamTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
+        cls.server.server_close()
 
     def setUp(self):
         MockLLM.requests = []
@@ -95,6 +96,7 @@ class TeamTest(unittest.TestCase):
         # Point every agent at the mock: Anthropic agents keep the Anthropic API style,
         # custom ones keep the OpenAI-compatible style.
         for a in cfg["agents"]:
+            a["harness"] = {"type": "direct"}  # these tests cover the direct API path
             llm = a["llm"]
             if llm["api"] == "anthropic":
                 llm.update(base_url=self.url + "/v1", api_key_env="TEST_ANTHROPIC_KEY")
