@@ -1,0 +1,52 @@
+# ops/deploy/2d-car-game.service
+#
+# Serves the single-file 2D car game (/home/serverbot/aidev/index.html) as a
+# static site on 192.168.0.222:8080 using python3's http.server.
+#
+# Why python3 -m http.server (not nginx/caddy):
+#   * The deliverable is ONE static file with zero dependencies; python3 is
+#     already present (3.12.3), nginx/caddy are not installed.
+#   * --directory pins the document root so the server never exposes the repo,
+#     .env, .git, or .babd. It serves exactly /home/serverbot/aidev, whose
+#     index.html IS the game. Nothing else in that dir is secret (agents.json,
+#     README, tests) but the document root is still a single explicit path.
+#   * --bind 192.168.0.222 keeps it off 0.0.0.0 (not exposed on other ifaces).
+#
+# Managed by systemd: restarts on crash, starts on boot, journald logs.
+# Deploy/replace this file with ops/deploy/deploy.sh (idempotent).
+#
+# NOTE (security): this is a read-only static server for a LAN game. It has no
+# auth and no TLS — acceptable for a LAN address, not for the public internet.
+
+[Unit]
+Description=2D Car Game static file server (192.168.0.222:8080)
+Documentation=file:///home/serverbot/aidev/docs/superpowers/specs/2026-10-07-2d-car-game-design.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Bind explicitly to the LAN address the CEO was told to open.
+ExecStart=/usr/bin/python3 -m http.server 8080 --bind 192.168.0.222 --directory /home/serverbot/aidev
+# Run as an unprivileged user where possible; fall back to root (container).
+User=root
+Group=root
+WorkingDirectory=/home/serverbot/aidev
+Restart=on-failure
+RestartSec=2
+# Hardening: the server only needs to read the doc root, nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadOnlyPaths=/home/serverbot/aidev
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target
