@@ -317,6 +317,20 @@ and *View document* opens what the team received.
   still running are marked *interrupted* and, with `project.auto_resume` (default on), queued again
   to continue. A run still alive in another BABD process (e.g. `babd run`) is left alone.
 
+## QA evidence: no PASS without tests that ran
+
+A QA PASS has to rest on tests that really ran:
+
+- **The project's tests**: give a project a `test_command` (Team settings → Projects, e.g.
+  `python -m pytest -q` or `npm test`). BABD runs it itself in the task's worktree before each QA
+  round, hands QA the real output, and if it fails a QA PASS becomes FAIL (the Developer gets the fix
+  round). Passing tests mark the task **✓ verified**.
+- **QA's own evidence**: without a test command, a QA agent with tools must end its report with an
+  `EVIDENCE:` section of the commands it ran and their real output; a PASS without it is asked again
+  once. A QA agent without tools (direct API) writes `EVIDENCE: NOT RUN`.
+- A PASS without evidence stays a PASS but is marked **unverified** (run panel, task board, CEO
+  report, Telegram). `project.require_evidence: true` turns it into a FAIL instead.
+
 ## Retries and fallback models
 
 A temporary LLM error (time-out, rate limit, 5xx, lost connection, an empty answer) no longer fails

@@ -45,6 +45,19 @@ STAGES = [  # (key, label, owner, progress when the stage is finished)
 ]
 STAGE_PROGRESS = {k: p for k, _, _, p in STAGES}
 VERDICT_RE = re.compile(r"VERDICT:\s*\**\s*(PASS|FAIL)", re.I)
+EVIDENCE_RE = re.compile(r"EVIDENCE\s*:?\**\s*\n?(.*?)(?=\n\s*\**VERDICT:|\Z)", re.I | re.S)
+
+
+def evidence_of(report):
+    """QA's EVIDENCE section when it shows real runs (commands with output), else None."""
+    m = EVIDENCE_RE.search(report or "")
+    if not m:
+        return None
+    text = m.group(1).strip()
+    if not text or re.match(r"^\**\s*not run", text, re.I):
+        return None
+    shows_run = "```" in text or re.search(r"^\s*(\$|>|❯)\s*\S", text, re.M) or re.search(r"exit (code|status)", text, re.I)
+    return text if shows_run else None
 
 
 class FlowError(Exception):
@@ -578,13 +591,20 @@ class Run:
 
         # TEST, with the fix loop
         self.stage("test")
-        qa_instr = ("\n\nTest the work against the goal and the design. List every bug you find. "
-                    "End your answer with exactly one line: VERDICT: PASS or VERDICT: FAIL")
+        qa_tools = self.team.by_id["qa"].harness.has_tools and self.team.by_id["qa"].harness.permissions != "plan"
+        evidence_instr = ("\n\nRun the tests yourself in the workspace. Before the verdict, add a section EVIDENCE: with "
+                          "each command you ran and its real output (in ``` blocks) and exit code. Never claim a result "
+                          "you did not see." if qa_tools else
+                          "\n\nYou cannot run commands: before the verdict write EVIDENCE: NOT RUN and list the "
+                          "commands that should be run.")
+        qa_instr = ("\n\nTest the work against the goal and the design. List every bug you find." + evidence_instr +
+                    " End your answer with exactly one line: VERDICT: PASS or VERDICT: FAIL")
         plan_part = f"\n\n### Your test plan\n{test_plan}" if test_plan else ""
+        tests = self.run_project_tests(0)
         report = self.step("qa0", lambda: self.delegate("qa", "assign", task_for("qa"),
                            f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design\n{design}{plan_part}\n\n"
-                           f"### Code from {names['developer']}\n{code}{qa_instr}", "test_report"))
-        verdict = parse_verdict(report)
+                           f"### Code from {names['developer']}\n{code}{self.tests_part(tests)}{qa_instr}", "test_report"))
+        report, verdict = self.check_evidence(report, tests, qa_tools, context, qa_instr, 0)
         self.write("04-qa-round0.md", report)
         rounds = 0
         while verdict == "FAIL" and rounds < self.max_fix_rounds:
@@ -595,10 +615,12 @@ class Run:
                 "developer", "fix_request", fix_task, f"{context}\n\n{fix_task}\n\n### Your previous code\n{code}\n\n"
                 f"### QA report\n{report}\n\nReturn the complete fixed code.", "fix"))
             self.write(f"03-developer-fix{rounds}.md", code)
+            tests = self.run_project_tests(rounds)
             report = self.step(f"qa{rounds}", lambda: self.delegate(
                 "qa", "retest", f"Verify the fixes (round {rounds}).", f"{context}\n\nVerify the fixes for your earlier "
-                f"report.\n\n### Your earlier report\n{report}\n\n### Fixed code\n{code}{qa_instr}", "test_report"))
-            verdict = parse_verdict(report)
+                f"report.\n\n### Your earlier report\n{report}\n\n### Fixed code\n{code}{self.tests_part(tests)}{qa_instr}",
+                "test_report"))
+            report, verdict = self.check_evidence(report, tests, qa_tools, context, qa_instr, rounds)
             self.write(f"04-qa-round{rounds}.md", report)
         self.state["verdict"] = verdict
         if verdict == "FAIL":
@@ -636,7 +658,9 @@ class Run:
         # REPORT
         self.stage("report")
         self.agent("lead", "working", "Report to the CEO")
-        facts = (f"QA verdict: {verdict} after {rounds} fix round(s). "
+        ev = self.state.get("evidence") or {}
+        facts = (f"QA verdict: {verdict} after {rounds} fix round(s) "
+                 f"({'verified by ' + ev['source'] if ev.get('verified') else 'NOT verified: ' + (ev.get('note') or 'no evidence')}). "
                  f"Deployed: {'yes' if deploy else 'no'}. "
                  f"CEO approval: {self.state['approval']['result'] if self.state['approval'] else 'not requested'}.")
         outputs = f"### Design\n{design}\n\n### Code\n{code}\n\n### QA report\n{report}"
@@ -659,6 +683,61 @@ class Run:
         self.bus.send("lead", "ceo", "report", rep.get("summary") or report_text, report=rep)
         self.agent("lead", "done")
         self.finish_stage("report")
+
+    # -- evidence: a PASS must rest on tests that really ran ------------------------------------
+
+    def run_project_tests(self, round_no):
+        """BABD itself runs the project's test_command in the worktree (if the project has one)."""
+        cmd = (self.project or {}).get("test_command")
+        if not cmd or not self.workspace:
+            return None
+        self.emit("tests", {"round": round_no, "command": cmd, "status": "running"})
+        result = projects.run_tests(cmd, self.workspace["dir"])
+        with self.lock:
+            self.state.setdefault("tests", []).append({"round": round_no, **result})
+        self.write(f"04-tests-round{round_no}.txt", f"$ {cmd}\nexit code {result['exit']}\n\n{result['output']}\n")
+        self.emit("tests", {"round": round_no, "command": cmd, "exit": result["exit"]})
+        return result
+
+    @staticmethod
+    def tests_part(tests):
+        if not tests:
+            return ""
+        return (f"\n\n### BABD ran the project's tests in the workspace\n$ {tests['command']}\nexit code {tests['exit']} "
+                f"({tests['seconds']} s)\n```\n{tests['output'] or '(no output)'}\n```")
+
+    def check_evidence(self, report, tests, qa_tools, context, qa_instr, round_no):
+        """(report, verdict) after checking the PASS rests on evidence: the project's tests (when BABD
+        ran them) decide; else QA's EVIDENCE section (asked for once more when missing)."""
+        verdict = parse_verdict(report)
+        require = bool((self.team.cfg.get("project") or {}).get("require_evidence", False))
+        ev = {"round": round_no, "verified": False, "source": None, "note": ""}
+        if tests is not None:
+            ev.update(source="project tests", verified=tests["exit"] == 0,
+                      note=f"`{tests['command']}` exit code {tests['exit']}")
+            if verdict == "PASS" and tests["exit"] != 0:
+                verdict = "FAIL"
+                ev["note"] += ": QA said PASS but the project's tests fail, so the verdict is FAIL"
+        elif verdict == "PASS":
+            found = evidence_of(report)
+            if not found and qa_tools:
+                report = self.step(f"qa{round_no}e", lambda: self.delegate(
+                    "qa", "evidence_request", "Show the evidence for your PASS.",
+                    f"{context}\n\n### Your report\n{report}\n\nYou gave a PASS without evidence. Run the tests now "
+                    f"and show the real commands and outputs.{qa_instr}", "test_report"))
+                verdict, found = parse_verdict(report), evidence_of(report)
+            if found:
+                ev.update(source="QA evidence", verified=True, note="QA showed the commands it ran and their output")
+            else:
+                ev["note"] = ("QA has no tools to run tests (direct API)" if not qa_tools else
+                              "QA gave no evidence that tests ran")
+                if require and verdict == "PASS":
+                    verdict = "FAIL"
+                    ev["note"] += "; project.require_evidence turns the PASS into a FAIL"
+        with self.lock:
+            self.state["evidence"] = ev
+        self.emit("evidence", ev)
+        return report, verdict
 
     def finish_workspace(self):
         """Commit the task's work on its branch, and merge it per the project's merge policy."""
@@ -723,4 +802,5 @@ class Run:
         return {"status": status, "progress": 100 if deployed else self.state["progress"],
                 "approval_needed": 1 if pending else 0, "blockers": len(self.state["blockers"]),
                 "qa_verdict": verdict, "fix_rounds": self.state["qa_rounds"], "deployed": deployed,
+                "verified": bool((self.state.get("evidence") or {}).get("verified")),
                 "blocker_list": self.state["blockers"]}

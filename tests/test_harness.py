@@ -457,7 +457,10 @@ class HarnessTest(unittest.TestCase):
         self.assertTrue(out["developer"].startswith("claude did:"))
         self.assertEqual(state["report"]["next_action"], "Review")
         kinds = ["claude" if "stdin" in c else "hermes" for c in self.calls()]
-        self.assertEqual(kinds, ["hermes", "claude", "hermes", "hermes"])
+        # architect, developer, QA, QA again (its PASS showed no EVIDENCE, and QA has tools), devops
+        self.assertEqual(kinds, ["hermes", "claude", "hermes", "hermes", "hermes"])
+        self.assertIn("You gave a PASS without evidence", self.calls()[3]["argv"][2])
+        self.assertEqual(state["evidence"]["note"], "QA gave no evidence that tests ran")
         # Developer (Claude Code) got the Architect's design in its prompt
         self.assertIn("Design from Architect", self.calls()[1]["stdin"])
 

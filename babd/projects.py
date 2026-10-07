@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 
 from .config import ROOT
 
@@ -68,7 +69,7 @@ def normalize(p):
         raise ProjectError(f"project {pid}: merge must be one of {', '.join(MERGE_POLICIES)}")
     return {"id": pid, "name": p.get("name") or pid, "path": os.path.normpath(path), "repo": p.get("repo") or "",
             "branch": p.get("branch") or "", "merge": merge, "push": bool(p.get("push", False)),
-            "custom_path": bool(p.get("path"))}
+            "test_command": (p.get("test_command") or "").strip(), "custom_path": bool(p.get("path"))}
 
 
 def get(cfg, project_id=None):
@@ -189,6 +190,21 @@ def finish(project, ws, message, merge):
     except OSError:
         pass
     return out
+
+
+def run_tests(command, cwd, timeout=900):
+    """Run the project's own test command in the task's worktree: {"command", "exit", "output", "seconds"}."""
+    started = time.monotonic()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_DIR", "GIT_WORK_TREE"))}
+    try:
+        proc = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
+        code, out = proc.returncode, (proc.stdout + ("\n" + proc.stderr if proc.stderr else ""))
+    except subprocess.TimeoutExpired as e:
+        code, out = 124, f"{(e.stdout or b'').decode(errors='replace') if isinstance(e.stdout, bytes) else (e.stdout or '')}\n[timed out after {timeout}s]"
+    tail = out.strip()
+    if len(tail) > 6000:
+        tail = "[...]\n" + tail[-6000:]
+    return {"command": command, "exit": code, "output": tail, "seconds": round(time.monotonic() - started, 1)}
 
 
 FILE_BLOCK_RE = re.compile(r"^```[^\n`]*?\bfile=([^\s`]+)[^\n]*\n(.*?)^```[ \t]*$", re.S | re.M)

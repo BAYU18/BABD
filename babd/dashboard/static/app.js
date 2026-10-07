@@ -160,6 +160,7 @@ function projectRow(pr, isNew = false) {
   return `<div class="proj-row" data-id="${esc(isNew ? "" : pr.id || "")}">
     <div class="row2">${text("pr_name", pr.name, "Name, e.g. Web shop")}${text("pr_repo", pr.repo, "Git repository URL (optional)")}</div>
     <div class="row2">${text("pr_path", pr.custom_path ? pr.path : "", "Folder (optional, default workspace/projects/<id>)")}${text("pr_branch", pr.branch, "Branch (default: the repo's)")}</div>
+    ${text("pr_test", pr.test_command, "Test command, e.g. python -m pytest -q (BABD runs it in each task's worktree)")}
     <div class="row2">${select("pr_merge", pr.merge, merge)}
       <label class="check"><input type="checkbox" name="pr_push" ${pr.push ? "checked" : ""}> Push after merging</label></div>
     ${pr.id === "default" ? '<div class="help">Default project (always there).</div>' : `<button type="button" class="linkish" data-proj-rm>Remove</button>`}
@@ -486,7 +487,8 @@ function renderRun() {
       <div class="eyebrow">Report to the CEO</div>
       <div class="report-grid">
         <div><div class="l">Status</div><div class="v">${esc(rep.status)}</div></div>
-        <div><div class="l">QA</div><div class="v">${esc(rep.qa_verdict)}${rep.fix_rounds ? ` · ${rep.fix_rounds} fix` : ""}</div></div>
+        <div><div class="l">QA</div><div class="v">${esc(rep.qa_verdict)}${rep.fix_rounds ? ` · ${rep.fix_rounds} fix` : ""}
+          <span class="ev ${rep.verified ? "ok" : "no"}" title="${esc(r.evidence?.note || "")}">${rep.verified ? "✓ verified" : "unverified"}</span></div></div>
         <div><div class="l">Deployed</div><div class="v">${rep.deployed ? "Yes" : "No"}</div></div>
         <div><div class="l">Recent</div><div class="v">${esc(rep.recent_result || "—")}</div></div>
         <div><div class="l">Next</div><div class="v">${esc(rep.next_action || "—")}</div></div>
@@ -498,7 +500,7 @@ function renderRun() {
   body.innerHTML = `
     <div>
       <div class="run-goal">${esc(r.goal)}</div>
-      ${docChips(r.documents, r.id)}${workspaceLine(r.workspace)}
+      ${docChips(r.documents, r.id)}${workspaceLine(r.workspace)}${evidenceLine(r)}
       <div class="run-meta">${pill(r.status.replace("_", " "), statusColor, r.status === "running")}
         <span class="muted small">${esc(r.id)} · ${r.progress ?? 0}%${r.qa_rounds ? ` · ${r.qa_rounds} QA fix round(s)` : ""}${usageText(r.usage) ? ` · ${esc(usageText(r.usage))}` : ""}</span></div>
       ${r.error ? `<div class="note warn" style="margin-top:8px">${esc(r.error)}</div>` : ""}
@@ -908,6 +910,7 @@ $("#btnSettings").addEventListener("click", () => {
       <div class="row2">${field("Tokens per day", `<input type="number" id="b_td" min="0" step="100000" value="${esc(p.budget?.tokens_per_day || 0)}">`)}${field("USD per day", `<input type="number" id="b_cd" min="0" step="1" value="${esc(p.budget?.cost_per_day || 0)}">`)}</div>
       <div class="help">0 = no limit. A task over its budget stops before its next step (raise the budget, then Resume); over the daily budget, queued tasks wait. Costs need a price per agent (agents.json llm.price) unless the tool reports them (Claude Code). Hermes token counts are estimates (~4 characters a token).</div>
       ${field("Skill texts in prompts", select("p_skills_mode", p.skills_mode || "full", [["full", "Full text (most reliable, most tokens)"], ["lean", "Lean: the start of each skill (~70% fewer skill tokens)"]]))}</div>
+    <label class="check"><input type="checkbox" id="p_evidence" ${p.require_evidence ? "checked" : ""}> A QA PASS needs evidence (the project's tests passing, or QA's commands and outputs); without it the verdict is FAIL</label>
     ${field("QA fix rounds", `<input type="number" id="p_rounds" min="0" max="5" value="${esc(p.max_fix_rounds ?? 2)}">`, "How many times a failed QA report goes back to the Developer before the run is blocked.")}
     <div class="field"><label>Parallel work</label>
       ${field("Tasks at the same time", `<input type="number" id="p_tasks" min="1" max="10" value="${esc(p.max_parallel_tasks ?? 3)}">`, "More tasks wait in the queue. A task waiting for your approval does not count.")}
@@ -956,7 +959,7 @@ $("#btnSettings").addEventListener("click", () => {
     const list = rows.map((r) => {
       const v = (n) => r.querySelector(`[name="${n}"]`).value.trim();
       return { id: r.dataset.id || undefined, name: v("pr_name"), path: v("pr_path"), repo: v("pr_repo"), branch: v("pr_branch"),
-        merge: v("pr_merge"), push: r.querySelector('[name="pr_push"]').checked };
+        merge: v("pr_merge"), push: r.querySelector('[name="pr_push"]').checked, test_command: v("pr_test") };
     }).filter((p) => p.name || p.repo || p.path);
     try {
       await api("PUT", "projects", { projects: list, default_project: $("#projDefault").value });
@@ -967,7 +970,7 @@ $("#btnSettings").addEventListener("click", () => {
     try {
       await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
         max_parallel_tasks: Number($("#p_tasks").value), parallel_prep: $("#p_prep").checked,
-        retry: { attempts: Number($("#p_retries").value) },
+        retry: { attempts: Number($("#p_retries").value) }, require_evidence: $("#p_evidence").checked,
         budget: { tokens_per_task: Number($("#b_tt").value), cost_per_task: Number($("#b_ct").value), tokens_per_day: Number($("#b_td").value), cost_per_day: Number($("#b_cd").value) },
         skills_mode: $('[name="p_skills_mode"]').value,
         gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked },
@@ -1174,7 +1177,7 @@ function renderTasks() {
     return `<article class="task" data-task="${esc(t.id)}">
       <div class="task-row">
         <button type="button" class="task-toggle" data-toggle="${esc(t.id)}" aria-expanded="${open}" aria-label="Show steps">${open ? "▾" : "▸"}</button>
-        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
+        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${t.evidence ? ` · ${t.evidence.verified ? "✓ verified" : "unverified"}` : ""}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
         <div class="task-status">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")}</div>
         <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
@@ -1187,7 +1190,7 @@ function renderTasks() {
       </div>
       ${t.error ? `<div class="note warn">${esc(t.error)}</div>` : ""}
       ${open && t.documents?.length && t.status !== "queued" ? docChips(t.documents, t.id) : ""}
-      ${open ? workspaceLine(t.workspace) : ""}
+      ${open ? workspaceLine(t.workspace) + evidenceLine(t) : ""}
       ${open ? `<div class="task-steps">${stepRows ? `<table><thead><tr><th>Agent</th><th>Step</th><th>Status</th><th>Waited</th><th>Tokens</th><th>Took</th></tr></thead><tbody>${stepRows}</tbody></table>` : '<div class="muted small">No steps yet.</div>'}</div>` : ""}
     </article>`;
   }).join("");
@@ -1355,6 +1358,13 @@ async function viewDocument(runId) {
 }
 
 const projectName = (id) => (S.projects || []).find((p) => p.id === id)?.name || id;
+
+function evidenceLine(r) {
+  const ev = r.evidence;
+  const t = (r.tests || []).slice(-1)[0];
+  if (!ev && !t) return "";
+  return `<div class="ws-line">🧪 ${ev ? `<b class="${ev.verified ? "ok-text" : "warn-text"}">${ev.verified ? "verified" : "not verified"}</b> · ${esc(ev.note || "")}` : ""}${t && !ev ? `tests: <code>${esc(t.command)}</code> exit ${esc(t.exit)}` : ""}</div>`;
+}
 
 function workspaceLine(ws) {
   if (!ws?.name) return "";

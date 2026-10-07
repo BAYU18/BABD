@@ -30,7 +30,8 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram")
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
-               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage")
+               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage",
+               "evidence")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
@@ -263,6 +264,8 @@ class Dashboard:
                 for k in ("tokens_per_task", "cost_per_task", "tokens_per_day", "cost_per_day"):
                     if k in body["budget"]:
                         bd[k] = max(0.0, float(body["budget"][k] or 0))
+            if "require_evidence" in body:
+                p["require_evidence"] = bool(body["require_evidence"])
             if body.get("skills_mode") in ("full", "lean"):
                 p["skills_mode"] = body["skills_mode"]
             if "max_parallel_tasks" in body:
@@ -429,7 +432,7 @@ class Dashboard:
         return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
                                   "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
-                                  "usage", "messages")}
+                                  "usage", "evidence", "tests", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -542,7 +545,7 @@ class Dashboard:
                 for p in body["projects"]:
                     if not isinstance(p, dict):
                         raise ApiError(400, "each project needs at least a name")
-                    clean = {k: p[k] for k in ("id", "name", "path", "repo", "branch", "merge", "push")
+                    clean = {k: p[k] for k in ("id", "name", "path", "repo", "branch", "merge", "push", "test_command")
                              if p.get(k) not in (None, "")}
                     try:
                         n = projects.normalize(clean)
