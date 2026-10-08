@@ -3,12 +3,12 @@
     "name": "BABD AI Dev Team",
     "status": "DONE",
     "progress": 100,
-    "current_goal": "2D keyboard car game",
-    "active_task": "CEO status report",
+    "current_goal": "Create a file hello.txt with the text h…",
+    "active_task": "Quick task",
     "approval_needed": 0,
     "blockers": 0,
-    "recent_result": "Live on port 8080",
-    "next_action": "CEO opens the URL",
+    "recent_result": "Done by Developer",
+    "next_action": "Review the result",
     "require_approval": [
       "deploy"
     ],
@@ -49,15 +49,21 @@
     },
     "ceo_telegram": {
       "enabled": true,
-      "bot_username": "@babd_ceo_bot",
+      "bot_username": "@CEO_MAMAN_bot",
       "token_env": "TELEGRAM_CEO_BOT_TOKEN",
       "notify": [
         "Approvals",
         "Blockers",
         "Reports",
-        "Daily Report"
+        "Daily Report",
+        "Progress"
       ],
-      "allowed_users": []
+      "allowed_users": [
+        "@KelHuzad",
+        "489216868"
+      ],
+      "allow_groups": false,
+      "daily_report_hour": 18
     }
   },
   "projects": [],
@@ -424,7 +430,7 @@
     {
       "step": "DESIGN",
       "owner": "architect",
-      "state": "done"
+      "state": "todo"
     },
     {
       "step": "CODE",
@@ -434,17 +440,17 @@
     {
       "step": "TEST",
       "owner": "qa",
-      "state": "done"
+      "state": "todo"
     },
     {
       "step": "DEPLOY",
       "owner": "devops",
-      "state": "done"
+      "state": "todo"
     },
     {
       "step": "MONITOR",
       "owner": "devops",
-      "state": "done"
+      "state": "todo"
     }
   ]
 }

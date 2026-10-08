@@ -33,7 +33,8 @@ EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
                "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage",
-               "evidence", "task_options", "route", "paused", "packages", "question", "questions")
+               "evidence", "task_options", "route", "paused", "packages", "question", "questions",
+               "peer_questions")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
@@ -468,7 +469,7 @@ class Dashboard:
         return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
                                   "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
-                                  "usage", "evidence", "tests", "task_options", "route", "paused", "packages", "question", "questions", "messages")}
+                                  "usage", "evidence", "tests", "task_options", "route", "paused", "packages", "question", "questions", "peer_questions", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -1552,6 +1553,10 @@ def make_handler(dash, token, allowed_hosts, security=None):
 
 def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=None, public_url=None,
           allow_ip=None, trust_proxy=False):
+    # Load .env so agent API keys are in the environment even when serve() is used
+    # directly (the CLI does this in __main__.py, but a direct call would miss it).
+    from ..config import load_dotenv
+    load_dotenv()
     token = token or secrets.token_urlsafe(24)
     security = Security(allow=allow_ip, trust_proxy=trust_proxy, https=(public_url or "").startswith("https://"))
     dash = Dashboard(cfg_path)

@@ -537,13 +537,12 @@
 <rect x="1384.0" y="493.0" width="230.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
 <rect x="1384.0" y="509.0" width="4" height="44" rx="2" fill="#5b8cff" opacity="1" />
 <text x="1402.0" y="523.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">CURRENT GOAL</text>
-<text x="1402.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">2D</text>
-<text x="1402.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">keyboard car game</text>
+<text x="1402.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Create</text>
+<text x="1402.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">a file hello.txt with the text h…</text>
 <rect x="1626.0" y="493.0" width="230.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
 <rect x="1626.0" y="509.0" width="4" height="44" rx="2" fill="#fbbf24" opacity="1" />
 <text x="1644.0" y="523.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">ACTIVE TASK</text>
-<text x="1644.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">CEO</text>
-<text x="1644.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">status report</text>
+<text x="1644.0" y="551.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Quick task</text>
 <rect x="1384" y="652.5" width="472" height="72" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="680.5" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT STATUS</text>
 <text x="1404" y="708.5" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">0 Working / 5 Waiting</text>
@@ -580,16 +579,16 @@
 <circle cx="1412" cy="1187.0" r="12" fill="#34d399"/>
 <path d="M1406 1187.0 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1436" y="1183.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">RECENT RESULT</text>
-<text x="1436" y="1203.0" font-size="16" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Live on port 8080</text>
+<text x="1436" y="1203.0" font-size="16" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Done by Developer</text>
 <rect x="1384" y="1298.5" width="472" height="64" rx="14" fill="#5b8cff" opacity="1" />
 <text x="1404" y="1323.5" font-size="11" fill="#dbe6ff" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">NEXT ACTION</text>
-<text x="1404" y="1347.5" font-size="19" fill="#ffffff" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">CEO opens the URL</text>
+<text x="1404" y="1347.5" font-size="19" fill="#ffffff" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">Review the result</text>
 <path d="M1816 1330.5 h22 m-8 -8 l8 8 l-8 8" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <rect x="1384" y="1446.0" width="472" height="112" rx="14" fill="#1b2a45" opacity="1" />
 <circle cx="1414" cy="1480.0" r="10" fill="#2aabee"/>
 <path d="M1408.5 1479.5 L1419.5 1475.0 L1417.5 1485.5 L1414.5 1482.5 L1412.5 1484.5 L1412.5 1481.5 Z" fill="#ffffff"/>
 <text x="1436" y="1474.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">CEO TELEGRAM</text>
-<text x="1436" y="1494.0" font-size="16" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">@babd_ceo_bot</text>
+<text x="1436" y="1494.0" font-size="16" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">@CEO_MAMAN_bot</text>
 <rect x="1732.56" y="1468.0" width="103.44000000000001" height="24" rx="12" fill="#34d399" opacity="0.16" />
 <circle cx="1745.56" cy="1480.0" r="4" fill="#34d399"/>
 <text x="1755.56" y="1484.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">CONNECTED</text>
@@ -601,6 +600,8 @@
 <text x="1614.5" y="1533.5" font-size="12" fill="#2aabee" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Reports</text>
 <rect x="1656.0" y="1516.0" width="106.0" height="26" rx="13" fill="#2aabee" opacity="0.14" />
 <text x="1709.0" y="1533.5" font-size="12" fill="#2aabee" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Daily Report</text>
+<rect x="1768.0" y="1516.0" width="78.0" height="26" rx="13" fill="#2aabee" opacity="0.14" />
+<text x="1807.0" y="1533.5" font-size="12" fill="#2aabee" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Progress</text>
 <rect x="40" y="1612" width="1840" height="160" rx="18" fill="#15223a" stroke="#26385a" stroke-width="1" opacity="1" />
 <text x="64" y="1648" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">DEVELOPMENT WORKFLOW</text>
 <rect x="64.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
@@ -610,11 +611,11 @@
 <text x="134.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Team Lead · Done</text>
 <line x1="323.0" y1="1706" x2="359.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M353.0 1700 L361.0 1706 L353.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="373.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
-<circle cx="411.0" cy="1706" r="18" fill="#38bdf8" opacity="1"/>
+<rect x="373.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />
+<circle cx="411.0" cy="1706" r="18" fill="#38bdf8" opacity="0.35"/>
 <text x="411.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">2</text>
-<text x="443.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">DESIGN</text>
-<text x="443.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Architect · Done</text>
+<text x="443.0" y="1704" font-size="24" fill="#8597b4" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">DESIGN</text>
+<text x="443.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Architect · Up next</text>
 <line x1="632.0" y1="1706" x2="668.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M662.0 1700 L670.0 1706 L662.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <rect x="682.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
@@ -624,23 +625,23 @@
 <text x="752.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Developer · Done</text>
 <line x1="941.0" y1="1706" x2="977.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M971.0 1700 L979.0 1706 L971.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="991.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
-<circle cx="1029.0" cy="1706" r="18" fill="#fbbf24" opacity="1"/>
+<rect x="991.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />
+<circle cx="1029.0" cy="1706" r="18" fill="#fbbf24" opacity="0.35"/>
 <text x="1029.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">4</text>
-<text x="1061.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">TEST</text>
-<text x="1061.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">QA / Tester · Done</text>
+<text x="1061.0" y="1704" font-size="24" fill="#8597b4" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">TEST</text>
+<text x="1061.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">QA / Tester · Up next</text>
 <line x1="1250.0" y1="1706" x2="1286.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M1280.0 1700 L1288.0 1706 L1280.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="1300.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
-<circle cx="1338.0" cy="1706" r="18" fill="#f472b6" opacity="1"/>
+<rect x="1300.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />
+<circle cx="1338.0" cy="1706" r="18" fill="#f472b6" opacity="0.35"/>
 <text x="1338.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">5</text>
-<text x="1370.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">DEPLOY</text>
-<text x="1370.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">DevOps · Done</text>
+<text x="1370.0" y="1704" font-size="24" fill="#8597b4" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">DEPLOY</text>
+<text x="1370.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">DevOps · Up next</text>
 <line x1="1559.0" y1="1706" x2="1595.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M1589.0 1700 L1597.0 1706 L1589.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="1609.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
-<circle cx="1647.0" cy="1706" r="18" fill="#f472b6" opacity="1"/>
+<rect x="1609.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />
+<circle cx="1647.0" cy="1706" r="18" fill="#f472b6" opacity="0.35"/>
 <text x="1647.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">6</text>
-<text x="1679.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">MONITOR</text>
-<text x="1679.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">DevOps · Done</text>
+<text x="1679.0" y="1704" font-size="24" fill="#8597b4" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">MONITOR</text>
+<text x="1679.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">DevOps · Up next</text>
 </svg>

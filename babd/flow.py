@@ -41,7 +41,10 @@ from .gbrain import one_line, slugify
 RUNS_DIR = os.path.join(ROOT, "runs")
 ROLES = ("lead", "architect", "developer", "qa", "devops")
 
-ROUTES = {("ceo", "lead"), ("lead", "ceo")} | {(r, "lead") for r in ROLES[1:]} | {("lead", r) for r in ROLES[1:]}
+ROUTES = ({("ceo", "lead"), ("lead", "ceo")} | {(r, "lead") for r in ROLES[1:]} | {("lead", r) for r in ROLES[1:]}
+# teammates may ask each other directly (peer Q&A): the agent named on ASK: answers, so a
+# specialist never has to bother the CEO for something another specialist already knows.
+          | {(a, b) for a in ROLES for b in ROLES if a != b})
 
 STAGES = [  # (key, label, owner, progress when the stage is finished)
     ("plan", "PLAN", "lead", 10),
@@ -59,15 +62,20 @@ EVIDENCE_RE = re.compile(r"EVIDENCE\s*:?\**\s*\n?(.*?)(?=\n\s*\**VERDICT:|\Z)", 
 
 QUESTION_RE = re.compile(r"^\s*\**\s*QUESTION\s*\**\s*:\s*\**\s*(.+?)\s*$", re.M)
 OPTIONS_RE = re.compile(r"^\s*\**\s*OPTIONS\s*\**\s*:\s*\**\s*(.+?)\s*$", re.M)
-ASK_INSTRUCTION = ("If something essential is unclear and you cannot reasonably decide it yourself (a password you "
-                   "were not given, which server, a choice only the CEO can make), end your answer with a line "
-                   "`QUESTION: <your question>` and, when there are clear choices, a line `OPTIONS: <a> | <b> | <c>`. "
-                   "The CEO answers and you do the step again with the answer. Ask only when you must; otherwise "
+ASK_RE = re.compile(r"^\s*\**\s*ASK\s*\**\s*:\s*\**\s*(.+?)\s*$", re.M)
+ASK_INSTRUCTION = ("If something essential is unclear, ask the teammate who owns that part first, NOT the CEO. "
+                   "End your answer with a line `ASK: <agent id>` (architect, developer, qa, devops or lead) and a "
+                   "line `QUESTION: <your question>`; your teammate answers and you do the step again. Only when "
+                   "no teammate can know it (a password you were not given, which server, a choice only the CEO "
+                   "can make) ask the CEO with the same `QUESTION:` line and no `ASK:` line. Add a line "
+                   "`OPTIONS: <a> | <b> | <c>` when there are clear choices. Ask only when you must; otherwise "
                    "decide, and say what you assumed.")
 
 
 def parse_question(text):
-    """{"question", "options"} when an agent's answer ends with a QUESTION: line (in its last lines)."""
+    """{"question", "options", "ask"} when an agent's answer ends with a QUESTION: line (in its last lines).
+
+    `ask` is the list of teammate agent ids named on an `ASK:` line (empty = the CEO answers)."""
     tail = "\n".join((text or "").strip().splitlines()[-15:])
     found = QUESTION_RE.findall(tail)
     if not found:
@@ -77,7 +85,9 @@ def parse_question(text):
         return None
     opts = OPTIONS_RE.findall(tail)
     options = [o.strip().strip("`*").strip() for o in (opts[-1].split("|") if opts else []) if o.strip()][:6]
-    return {"question": question[:500], "options": [o[:60] for o in options]}
+    asks = ASK_RE.findall(tail)
+    targets = [t.strip().strip("`*").strip().lower() for t in (asks[-1].split("|") if asks else []) if t.strip()]
+    return {"question": question[:500], "options": [o[:60] for o in options], "ask": targets[:3]}
 
 
 def evidence_of(report):
@@ -363,7 +373,7 @@ class Run:
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
             "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [], "skills": [],
             "steps": [], "documents": [taskdocs.summary(d) for d in self.docs], "checkpoints": [], "resumes": 0,
-            "usage": {}, "questions": [], "question": None,
+            "usage": {}, "questions": [], "question": None, "peer_questions": [],
         }
         if self.docs:
             self.write("00-task.md", self.brief + "\n")
@@ -387,6 +397,7 @@ class Run:
         st.setdefault("checkpoints", [])
         st.setdefault("usage", {})
         st.setdefault("steps", [])
+        st.setdefault("peer_questions", [])
         st["stages"] = {k: "todo" for k, *_ in STAGES}
         for a in st["agents"].values():
             a.update(status="idle", task="")
@@ -619,7 +630,16 @@ class Run:
                 fact = (lambda o: f"QA verdict {parse_verdict(o)} for '{one_line(self.goal, 80)}': {one_line(o, 200)}")
             out = self.work(agent_id, prompt, task, reply_kind, fact=fact, **work_kw)
             q = parse_question(out)
-            while q and self.can_ask():
+            while q:
+                peer = self.ask_peer(agent_id, q) if q.get("ask") else None
+                if peer:
+                    out = self.work(agent_id, f"{prompt}\n\n### You asked your teammate {q['ask'][0]}\n"
+                                    f"{q['question']}\n\n### Your teammate answered\n{peer}\n\n"
+                                    "Now do your task again, using this answer.", task, reply_kind, fact=fact, **work_kw)
+                    q = parse_question(out)
+                    continue
+                if not self.can_ask():
+                    break
                 answer = self.ask_question(agent_id, q)
                 if not answer:
                     break
@@ -633,6 +653,63 @@ class Run:
         self.bus.send(agent_id, "lead", reply_kind, out, seconds=round(time.monotonic() - started, 1))
         self.agent(agent_id, "done")
         return out
+
+    # -- questions: an agent asks a teammate first, the CEO only when nobody else can answer -----
+
+    PEER_WHO = {
+        "architect": "the design, the system structure and the technical approach",
+        "developer": "the code, the implementation and the build",
+        "qa": "the tests, the acceptance criteria and the evidence",
+        "devops": "the deployment, the servers, the pipeline and the monitoring",
+        "lead": "the plan, the priorities and the scope of the task",
+    }
+
+    def ask_peer(self, agent_id, q):
+        """A teammate answers the question (the agent named on ASK:). Returns the answer text, or
+        None when there is no teammate to ask / it gave no usable answer (then the CEO is asked)."""
+        targets = [t for t in (q.get("ask") or []) if t in self.team.by_id and t != agent_id
+                   and not (t == "devops" and "devops" in getattr(self, "skip", ()))]
+        if not targets:
+            return None
+        asker_name = self.team.by_id[agent_id].name
+        answers = []
+        for target in targets:
+            peer = self.team.by_id[target]
+            with self.lock:
+                entry = {"n": len(self.state.setdefault("peer_questions", [])) + 1, "from": agent_id,
+                         "to": target, "question": q["question"], "asked_at": now(), "answer": None}
+                self.state["peer_questions"].append(entry)
+            self.agent(target, "working", f"Answering {asker_name}: {one_line(q['question'], 60)}")
+            self.bus.send(agent_id, target, "question", q["question"])
+            self.emit("peer_question", {**entry, "goal": self.goal, "from_name": asker_name,
+                                        "to_name": peer.name})
+            prompt = (f"{self.goal_block}\n\n{asker_name} (working on the same task) asks you:\n"
+                      f"{q['question']}\n\n"
+                      f"Answer as the {peer.name} of this team. You own {self.PEER_WHO.get(target, 'your area')}. "
+                      "Be concrete and short (a few sentences or a small code/config block). If the question is "
+                      "really about the CEO's business (a password, which server, a choice only the CEO can make), "
+                      "say exactly that in one line so the asker knows to ask the CEO. Do not refuse to help.")
+            try:
+                ans = self.work(target, prompt, f"Answer {asker_name}'s question", "peer_answer",
+                                light=True, memory=False)
+            except Exception as e:  # noqa: BLE001 - a peer that fails must not fail the task
+                ans = ""
+                self.emit("peer_answer", {**entry, "answer": None, "error": f"{type(e).__name__}: {e}",
+                                          "to_name": peer.name, "from_name": asker_name})
+            ans = (ans or "").strip()
+            with self.lock:
+                entry.update(answer=ans or None, answered_at=now())
+            if ans:
+                self.bus.send(target, agent_id, "answer", ans)
+                answers.append(f"{peer.name} answered:\n{ans}")
+                self.agent(target, "idle", "")
+            else:
+                self.agent(target, "idle", "")
+        if not answers:
+            return None
+        joined = "\n\n".join(answers)
+        self.emit("peer_answered", {"goal": self.goal, "agent": agent_id, "answer": joined[:500]})
+        return joined
 
     # -- questions: an agent asks the CEO and waits for the answer ----------------------------------
 
@@ -1099,15 +1176,18 @@ class Run:
         team_routes = ("" if self.mode == "quick" else
                        '- "team": real software work that needs building AND testing (a feature, an app, a bug fix '
                        'across files). List only the specialists it needs in "agents": developer and qa always; '
-                       'architect only for a new system or a large change; devops only when something must be '
-                       'deployed or set up on servers.\n')
+                       'architect for ANY new feature, new file, new page, new game or new component that does '
+                       'not exist yet (the Architect owns the design system and the spec); devops only when '
+                       'something must be deployed or set up on servers.\n')
         return (f"{self.goal_block}\n\nYou are the Team Lead. Decide who is needed for this request. Do NOT do the "
                 "work now and do not plan it in detail. Pick the fastest route that does the job properly:\n"
                 '- "answer": you can answer the CEO yourself from what you know (a question, an explanation, advice); '
                 'put the full answer in "answer".\n'
-                '- "direct": ONE specialist can do it in one go: a command or a few, an operational job (an SSH key, '
-                'installing a package, checking a server, a service restart, a git action), a config change, a small '
-                'script or a one-file fix. Name the agent in "agent" and its task in "task".\n'
+                '- "direct": ONE specialist can do it in one go WITHOUT design: a command or a few, an operational '
+                'job (an SSH key, installing a package, checking a server, a service restart, a git action), a config '
+                'change, or fixing a tiny bug in an EXISTING file. NEVER use "direct" to create a new file, page, '
+                'game, feature or component that does not exist yet - those need a design, so use "team" with '
+                'architect. Name the agent in "agent" and its task in "task".\n'
                 + team_routes +
                 f"\nYour team:\n" + "\n".join(lines) + self.servers_note() + "\n\nAnswer with only a JSON object:\n"
                 '{"route": "answer|direct' + ("" if self.mode == "quick" else "|team") + '", "agent": "<for direct>", '
