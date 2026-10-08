@@ -56,6 +56,7 @@ CEO_COMMANDS = [
     ("templates", "Task templates to fill in"),
     ("notify", "The notifications this bot sends"),
     ("questions", "Questions the agents are waiting on"),
+    ("servers", "Servers the agents can reach: test, public key"),
 ]
 
 
@@ -73,7 +74,8 @@ CEO_KEYBOARD = [
     [("📜 Live log", "log"), ("📄 Report", "report"), ("🔔 Notifications", "notify")],
     [("⚡ Quick task", "quick"), ("👥 Full team task", "full"), ("📁 Project", "project")],
     [("⏸ Pause", "pause"), ("▶️ Resume", "resume"), ("⏹ Stop task", "cancel")],
-    [("🧩 Templates", "templates"), ("💬 Questions", "questions"), ("❓ Help", "help")],
+    [("🧩 Templates", "templates"), ("💬 Questions", "questions"), ("🖥 Servers", "servers")],
+    [("❓ Help", "help")],
 ]
 AGENT_KEYBOARD = [
     [("📊 Status", "status"), ("📜 Live log", "log")],
@@ -554,6 +556,17 @@ class CeoBot(Bot):
             for q in qs:
                 self.api.send(chat, self.question_text(q), self.question_buttons(q))
             return None
+        if cmd == "/servers":
+            svs = self.dash.server_list(self.dash.load())
+            if not svs:
+                return self.api.send(chat, "No servers yet: add them in the dashboard (Team settings → Servers).",
+                                     keyboard=self.keyboard())
+            text = "<b>Servers</b>\n" + "\n".join(
+                f"🖥 <b>{html.escape(x['id'])}</b> {html.escape(x['name'])}\n    {html.escape(x['user'])}@{html.escape(x['host'])}:{x['port']}"
+                f" · agents: {html.escape(', '.join(x['agents']))}" + ("" if x["key_exists"] else " · ⚠️ no key yet") for x in svs)
+            return self.api.send_html(chat, text, [[{"text": f"🔌 Test {x['id']}", "callback_data": f"srvtest:{x['id']}"[:64]},
+                                                    {"text": f"🔑 Key {x['id']}", "callback_data": f"srvkey:{x['id']}"[:64]}]
+                                                   for x in svs])
         if cmd == "/notify":
             return self.api.send(chat, "This bot sends: " + (", ".join(n for n in NOTIFY if n in self.notify) or "nothing")
                                  + ".\nProgress = a live card per task: who works on what now, what comes next, what is done."
@@ -697,6 +710,19 @@ class CeoBot(Bot):
                                                 text=(m.get("text") or "") + f"\n\n→ answered: {opts[int(idx)]}"))
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"],
                                  text="Answer sent" if result == "done" else result[:190])
+        if action in ("srvtest", "srvkey") and chat is not None:
+            def go():
+                try:
+                    r = self.dash.server_action(run_id, "test" if action == "srvtest" else "keygen")
+                    if action == "srvtest":
+                        text = f"{'✅ Connected to' if r['ok'] else '❌ Could not connect to'} {html.escape(run_id)}\n<pre>{html.escape(r['output'])}</pre>"
+                    else:
+                        text = f"{html.escape(r['hint'])}:\n<code>{html.escape(r['public_key'])}</code>"
+                except Exception as e:  # noqa: BLE001
+                    text = f"Could not do that: {html.escape(str(e))}"
+                self.api.send_html(chat, text)
+            threading.Thread(target=go, daemon=True).start()  # an SSH test can take a while
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Working on it…")
         if action == "proj" and chat is not None:
             self.on_command(chat, f"/project {run_id}")
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Project set")

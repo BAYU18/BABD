@@ -35,7 +35,7 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .config import ROOT
-from . import projects, skillpacks, taskdocs
+from . import projects, servers, skillpacks, taskdocs
 from .gbrain import one_line, slugify
 
 RUNS_DIR = os.path.join(ROOT, "runs")
@@ -530,6 +530,12 @@ class Run:
         if reason:
             raise BudgetExceeded(f"task budget reached: {reason} (raise project.budget, then Resume)")
         agent = self.team.by_id[agent_id]
+        try:
+            reach = servers.prompt_block(self.team.cfg, agent_id)
+        except servers.ServerError:
+            reach = ""
+        if reach:
+            prompt = f"{prompt}\n\n{reach}"
         skills = [] if light else skillpacks.for_step(agent.skill_packs, skills_for or kind)
 
         def on_skills(entry):
@@ -688,6 +694,8 @@ class Run:
 
     def execute(self):
         try:
+            if self.team.cfg.get("servers"):
+                servers.write_config(self.team.cfg)
             if self.project:
                 self.prepare_workspace()
             self._flow()
@@ -1101,10 +1109,18 @@ class Run:
                 'installing a package, checking a server, a service restart, a git action), a config change, a small '
                 'script or a one-file fix. Name the agent in "agent" and its task in "task".\n'
                 + team_routes +
-                f"\nYour team:\n" + "\n".join(lines) + "\n\nAnswer with only a JSON object:\n"
+                f"\nYour team:\n" + "\n".join(lines) + self.servers_note() + "\n\nAnswer with only a JSON object:\n"
                 '{"route": "answer|direct' + ("" if self.mode == "quick" else "|team") + '", "agent": "<for direct>", '
                 '"agents": ["<for team>"], "task": "<for direct: the exact task>", "reason": "<one short sentence>", '
                 '"answer": "<for answer>"}')
+
+    def servers_note(self):
+        try:
+            rows = servers.overview(self.team.cfg)
+        except servers.ServerError:
+            return ""
+        return (f"\n\nServers the team can reach over SSH (a task about one of them goes to an agent that can "
+                f"reach it):\n{rows}") if rows else ""
 
     def parse_route(self, data):
         route = str(data.get("route") or "").strip().lower()

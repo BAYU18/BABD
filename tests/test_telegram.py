@@ -356,6 +356,17 @@ class TelegramFeaturesTest(TelegramTest):
         r = self.dash.load_run(runs[0]["id"])
         self.assertEqual(r["questions"][0]["answer"], "4000")
 
+    def test_servers_button(self):
+        import test_servers as ts
+        ts.use_tmp(self)
+        self.fake.message(CEO_TOKEN, "🖥 Servers")
+        self.wait(lambda: any(t.startswith("No servers yet") for t in self.fake.texts()))
+        self.call("PUT", "/api/servers", {"servers": [{"id": "lpnotif", "name": "Server lpnotif", "host": "203.0.113.7"}]})
+        self.fake.message(CEO_TOKEN, "🖥 Servers")
+        msg = self.wait(lambda: [p for p in self.html_msgs() if "lpnotif" in p["text"]])
+        datas = [b["callback_data"] for row in msg[0]["reply_markup"]["inline_keyboard"] for b in row]
+        self.assertEqual(datas, ["srvtest:lpnotif", "srvkey:lpnotif"])
+
     def test_agents_and_report_commands(self):
         self.call("PUT", "/api/project", {"require_approval": False})
         self.fake.message(CEO_TOKEN, "/agents")

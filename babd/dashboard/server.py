@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, resolve_env, save_config, set_env_var
-from .. import permissions, projects, skillpacks, taskdocs, telegram
+from .. import permissions, projects, servers, skillpacks, taskdocs, telegram
 from .auth import Security, verify_password
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
@@ -152,6 +152,7 @@ class Dashboard:
             "general_skills": skillpacks.GENERAL_RECOMMENDED,
             "telegram": self.telegram_state(cfg),
             "projects": projects.projects(cfg),
+            "servers": self.server_list(cfg),
             "permissions": {"profiles": permissions.PROFILES, "sandboxes": list(permissions.SANDBOXES),
                             "defaults": permissions.DEFAULT_PROFILE},
             "default_project": cfg["project"].get("default_project") or projects.DEFAULT_ID,
@@ -609,6 +610,53 @@ class Dashboard:
         log(f"telegram {target}: initialized as @{result.get('username')}", "telegram")
         return {**result, "target": target, "buttons": sum(len(r) for r in keyboard),
                 "telegram": self.telegram_state(self.load())}
+
+    def server_list(self, cfg):
+        try:
+            out = servers.servers(cfg)
+        except servers.ServerError:
+            return []
+        return [{**s, "key_exists": os.path.exists(servers.key_path(s))} for s in out]
+
+    def update_servers(self, body):
+        """Replace the server list; rewrite the SSH config."""
+        items = body.get("servers")
+        if not isinstance(items, list):
+            raise ApiError(400, "servers must be a list")
+        ids = {a["id"] for a in self.load()["agents"]}
+        out, seen = [], set()
+        for item in items:
+            if not isinstance(item, dict):
+                raise ApiError(400, "each server is an object")
+            try:
+                n = servers.normalize(item)
+            except servers.ServerError as e:
+                raise ApiError(400, str(e))
+            if n["id"] in seen:
+                raise ApiError(400, f"two servers with the id {n['id']!r}")
+            bad = [a for a in n["agents"] if a not in ids]
+            if bad:
+                raise ApiError(400, f"server {n['id']}: no agent {', '.join(bad)}")
+            seen.add(n["id"])
+            out.append(n)
+        with self.cfg_lock:
+            cfg = self.load()
+            cfg["servers"] = out
+            self.save(cfg)
+        servers.write_config(cfg)
+        return {"servers": self.server_list(cfg)}
+
+    def server_action(self, sid, action):
+        cfg = self.load()
+        try:
+            server = servers.get(cfg, sid)
+            if action == "keygen":
+                servers.write_config(cfg)
+                return {"public_key": servers.keygen(server), "key": server["key"],
+                        "hint": f"Add this line to {server['user']}@{server['host']}:~/.ssh/authorized_keys"}
+            return servers.test(cfg, sid)
+        except servers.ServerError as e:
+            raise ApiError(400, str(e))
 
     def update_projects(self, body):
         """Replace the project list (and the default project)."""
@@ -1241,6 +1289,10 @@ def make_handler(dash, token, allowed_hosts, security=None):
                 return d.update_telegram(self.body())
             if method == "POST" and parts == ["telegram", "init"]:
                 return d.init_telegram(self.body())
+            if method == "PUT" and parts == ["servers"]:
+                return d.update_servers(self.body())
+            if method == "POST" and len(parts) == 3 and parts[0] == "servers" and parts[2] in ("keygen", "test"):
+                return d.server_action(parts[1], parts[2])
             if method == "PUT" and parts == ["projects"]:
                 return d.update_projects(self.body())
             if parts[:1] == ["runs"]:

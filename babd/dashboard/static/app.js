@@ -254,6 +254,19 @@ function projectRow(pr, isNew = false) {
   </div>`;
 }
 
+function serverRow(sv, isNew = false) {
+  const agents = (sv.agents || ["devops"]).join(", ");
+  return `<div class="proj-row srv-row" data-id="${esc(isNew ? "" : sv.id || "")}">
+    <div class="row2">${text("sv_id", sv.id, "Id, e.g. lpnotif")}${text("sv_name", sv.name, "Name, e.g. Server lpnotif")}</div>
+    <div class="row2">${text("sv_host", sv.host, "Host or IP")}${text("sv_user", sv.user || "root", "User")}</div>
+    <div class="row2">${text("sv_port", String(sv.port || 22), "Port")}${text("sv_key", sv.key, "Key path (default ~/.ssh/babd_<id>)")}</div>
+    <div class="row2">${text("sv_agents", agents, "Agents that may use it, e.g. devops, developer")}${text("sv_notes", sv.notes, "Notes for the agents (OS, services…)")}</div>
+    ${isNew ? "" : `<div class="row"><button type="button" class="btn small" data-srv-keygen="${esc(sv.id)}">🔑 ${sv.key_exists ? "Show public key" : "Generate key"}</button>
+      <button type="button" class="btn small" data-srv-test="${esc(sv.id)}">🔌 Test connection</button></div><pre class="log-detail hidden" data-srv-out="${esc(sv.id)}"></pre>`}
+    <button type="button" class="linkish" data-srv-rm>Remove</button>
+  </div>`;
+}
+
 function brainPill() {
   const b = S.brain || {};
   if (!b.enabled) return pill("off", "var(--dim)");
@@ -1054,6 +1067,11 @@ $("#btnSettings").addEventListener("click", () => {
       <div class="row"><button type="button" class="btn small" id="projAdd">+ Add project</button>
         <label class="project-pick">Default <select id="projDefault">${(S.projects || []).map((pr) => `<option value="${esc(pr.id)}" ${pr.id === S.default_project ? "selected" : ""}>${esc(pr.name)}</option>`).join("")}</select></label>
         <button type="button" class="btn small primary" id="projSave">Save projects</button></div></div>
+    <div class="field"><label>Servers (SSH)</label>
+      <div class="help">Servers the agents may reach: a task can just say "server lpnotif". Only the key's path is stored; Generate key makes an ed25519 key on this machine and shows the public key to put in the server's ~/.ssh/authorized_keys. Save first, then Generate key / Test.</div>
+      <div class="proj-list" id="srvList">${(S.servers || []).map((sv) => serverRow(sv)).join("")}</div>
+      <div class="row"><button type="button" class="btn small" id="srvAdd">+ Add server</button>
+        <button type="button" class="btn small primary" id="srvSave">Save servers</button></div></div>
     ${!token ? `<div class="row"><button type="button" class="btn small ghost" id="btnLogout">Sign out</button></div>` : ""}
     <div class="note">Flow: ${S.flow.stages.map((s) => esc(s.label)).join(" → ")}. Specialists only talk to the Team Lead; only the Team Lead reports to the CEO.</div>
     <div style="display:flex;justify-content:flex-end"><button class="btn primary" id="p_save">Save</button></div>`, true);
@@ -1067,6 +1085,34 @@ $("#btnSettings").addEventListener("click", () => {
         allow_groups: $("#tg_groups").checked });
       toast("Telegram saved", "ok"); await refresh(); setTimeout(async () => { await refresh(); }, 2500);
     } catch (err) { toast(err.message, "bad"); }
+  };
+  $("#srvAdd").onclick = () => $("#srvList").insertAdjacentHTML("beforeend", serverRow({}, true));
+  $("#srvList").onclick = async (e) => {
+    const rm = e.target.closest("[data-srv-rm]");
+    if (rm) { rm.closest(".srv-row").remove(); return; }
+    const b = e.target.closest("[data-srv-keygen], [data-srv-test]");
+    if (!b) return;
+    const id = b.dataset.srvKeygen || b.dataset.srvTest;
+    const out = document.querySelector(`[data-srv-out="${CSS.escape(id)}"]`);
+    out.classList.remove("hidden"); out.textContent = "…";
+    try {
+      if (b.dataset.srvKeygen) {
+        const r = await api("POST", `servers/${id}/keygen`);
+        out.textContent = `${r.hint}:\n\n${r.public_key}`;
+      } else {
+        const r = await api("POST", `servers/${id}/test`);
+        out.textContent = `${r.ok ? "✅ Connected" : "❌ Could not connect"}\n${r.output}`;
+      }
+    } catch (err) { out.textContent = err.message; }
+  };
+  $("#srvSave").onclick = async () => {
+    const list = [...document.querySelectorAll("#srvList .srv-row")].map((r) => {
+      const v = (n) => r.querySelector(`[name="${n}"]`).value.trim();
+      return { id: v("sv_id"), name: v("sv_name"), host: v("sv_host"), user: v("sv_user"), port: Number(v("sv_port") || 22),
+        key: v("sv_key") || undefined, agents: v("sv_agents").split(/[,\s]+/).filter(Boolean), notes: v("sv_notes") };
+    });
+    try { await api("PUT", "servers", { servers: list }); toast("Servers saved", "ok"); await refresh(); $("#btnSettings").click(); }
+    catch (err) { toast(err.message, "bad"); }
   };
   $("#projAdd").onclick = () => $("#projList").insertAdjacentHTML("beforeend", projectRow({ merge: "on_approval" }, true));
   $("#projList").onclick = (e) => { const rm = e.target.closest("[data-proj-rm]"); if (rm) rm.closest(".proj-row").remove(); };

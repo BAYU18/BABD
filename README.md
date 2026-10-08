@@ -273,6 +273,22 @@ A direct job uses a short system prompt and no skill texts, so the model has far
 - A direct task that changed files keeps them on its branch `babd/<task id>` for review (it had no
   QA round, so it is never merged on its own).
 
+## Servers: tell the team which machines it may reach
+
+Team settings → **Servers (SSH)** lists the servers the agents may use (agents.json `servers`): id,
+name, host, user, port, key path, which agents may use it (default DevOps) and notes for the agents.
+A task can then just say *"cek disk server lpnotif"*:
+
+- BABD writes an SSH config (`workspace/.babd-ssh/config`: one `Host <id>` per server, the key file,
+  `BatchMode`, `StrictHostKeyChecking accept-new`) and tells the allowed agents how to connect
+  (`ssh -F <config> lpnotif '<command>'`); the Team Lead's triage knows which agent reaches which server.
+- **🔑 Generate key** makes an ed25519 key pair on this machine (`~/.ssh/babd_<id>`) and shows the
+  public key to add to the server's `~/.ssh/authorized_keys`; **🔌 Test connection** connects once.
+  Only the key's path is stored, never the key. Needs `ssh` / `ssh-keygen` (`apt install openssh-client`).
+- Telegram: keyboard button **🖥 Servers** lists them, with Test and Key buttons.
+- Fields are validated so nothing can be smuggled into the SSH config (no options in the host, no
+  spaces or shell characters in the key path).
+
 ## Agents ask you when something is unclear
 
 An agent that cannot decide something itself (a password it was not given, which server, a choice
