@@ -200,5 +200,105 @@ class TelegramTest(unittest.TestCase):
         self.assertIn("TELEGRAM_CEO_BOT_TOKEN=333:new", td.read(os.path.join(self.tmp, ".env")))
 
 
+class TelegramFeaturesTest(TelegramTest):
+    """Initialize, command menus, progress cards, live logs and agent notifications."""
+
+    def bot(self, key):
+        return self.manager.bots[key][1]
+
+    def html_msgs(self, token=CEO_TOKEN):
+        with self.fake.lock:
+            return [p for t, m, p in self.fake.sent if t == token and p.get("parse_mode") == "HTML"]
+
+    def test_bots_set_their_command_menu_at_start(self):
+        cmds = {t: [c["command"] for c in p["commands"]] for t, m, p in self.fake.sent if m == "setMyCommands"}
+        self.assertEqual(cmds[CEO_TOKEN], [c for c, _ in telegram.CEO_COMMANDS])
+        self.assertEqual(cmds[DEV_TOKEN], ["help", "status", "log", "tasks", "reset"])
+
+    def test_initialize_a_bot(self):
+        self.dash.telegram = self.manager  # the dashboard's own manager, on the fake Bot API
+        status, out = self.call("POST", "/api/telegram/init", {"target": "ceo", "chat_id": "5555", "token": CEO_TOKEN})
+        self.assertEqual(status, 200, out)
+        self.assertEqual((out["username"], out["welcome_sent"]), ("ceo_bot", True))
+        welcome = [p for t, m, p in self.fake.sent if m == "sendMessage" and p.get("chat_id") == 5555]
+        self.assertIn("BABD CEO bot is ready", welcome[0]["text"])
+        ceo = json.loads(td.read(self.cfg_path))["project"]["ceo_telegram"]
+        self.assertIn("5555", ceo["allowed_users"])
+        self.assertIn("Progress", ceo["notify"])
+        self.assertEqual(ceo["bot_username"], "@ceo_bot")
+        self.assertIn(f"TELEGRAM_CEO_BOT_TOKEN={CEO_TOKEN}", td.read(os.path.join(self.tmp, ".env")))
+        self.assertNotIn(CEO_TOKEN, json.dumps(out))
+        self.assertIn("5555", json.load(open(telegram.STATE_PATH))["ceo_chats"])
+        # an agent's own bot
+        status, out = self.call("POST", "/api/telegram/init", {"target": "developer", "chat_id": "5555", "token": DEV_TOKEN})
+        self.assertEqual(status, 200, out)
+        self.assertIn("5555", json.load(open(telegram.STATE_PATH))["agent_chats"]["developer"])
+        # refusals
+        self.assertEqual(self.call("POST", "/api/telegram/init", {"chat_id": "abc", "token": CEO_TOKEN})[0], 400)
+        self.assertEqual(self.call("POST", "/api/telegram/init", {"chat_id": "1", "token": "not a token"})[0], 400)
+        status, out = self.call("POST", "/api/telegram/init", {"chat_id": "1", "token": "999:wrong"})
+        self.assertEqual(status, 400)
+        self.assertIn("Telegram refused", out["error"])
+
+    def test_progress_card_follows_the_task(self):
+        self.call("PUT", "/api/project", {"require_approval": False})
+        self.call("PUT", "/api/telegram", {"notify": list(telegram.NOTIFY)})
+        self.manager.reconcile()
+        self.wait(lambda: "ceo" in self.manager.bots and self.bot("ceo").status.get("ok"))
+        self.bot("ceo").card_every = 0
+        self.fake.message(CEO_TOKEN, "/help")  # this chat gets notifications
+        self.wait(lambda: any("All commands" in t for t in self.fake.texts()))
+        self.fake.message(CEO_TOKEN, "Build a login page")
+        self.wait(self.idle, timeout=20)
+        self.wait(lambda: any("✅ Task done" in t for t in self.fake.texts()))
+        cards = [p for p in self.html_msgs() if "Build a login page" in p.get("text", "")]
+        self.assertTrue(cards)
+        self.wait(lambda: any("✅" in p["text"] and "<b>Done</b>" in p["text"] for p in self.fake.calls("editMessageText")
+                              if p.get("parse_mode") == "HTML"))
+        final = [p for p in self.fake.calls("editMessageText") if p.get("parse_mode") == "HTML"][-1]["text"]
+        self.assertIn("✅REPORT", final)
+
+    def test_live_log_in_a_code_block(self):
+        self.call("PUT", "/api/project", {"require_approval": False})
+        self.manager.reconcile()
+        self.wait(lambda: "ceo" in self.manager.bots and self.bot("ceo").status.get("ok"))
+        self.bot("ceo").log_every = 0.2
+        self.fake.message(CEO_TOKEN, "/log developer")
+        self.wait(lambda: any("<pre>" in p["text"] and "Developer" in p["text"] for p in self.html_msgs()))
+        first = [p for p in self.html_msgs() if "<pre>" in p["text"]][0]
+        self.assertEqual(first["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "logstop")
+        self.fake.message(CEO_TOKEN, "Build a login page")  # the log fills as the developer works
+        self.wait(self.idle, timeout=20)
+        self.wait(lambda: any("started code" in p["text"] for p in self.fake.calls("editMessageText") if p.get("parse_mode")))
+        self.fake.push(CEO_TOKEN, callback_query={"id": "cb5", "from": {"id": 7, "username": "boss"}, "data": "logstop",
+                                                  "message": {"message_id": 9, "chat": {"id": 1007}}})
+        self.wait(lambda: any("stopped" in p["text"] for p in self.fake.calls("editMessageText") if p.get("parse_mode")))
+        self.fake.message(CEO_TOKEN, "/log")  # without a name: buttons to pick the agent
+        self.wait(lambda: any(p.get("reply_markup") and any(b["callback_data"] == "log:developer" for row in p["reply_markup"]["inline_keyboard"] for b in row)
+                              for p in self.fake.calls("sendMessage")))
+
+    def test_agent_bot_status_log_and_notifications(self):
+        self.call("PUT", "/api/project", {"require_approval": False})
+        self.fake.message(DEV_TOKEN, "/status")
+        self.wait(lambda: any("Idle" in t or "slots busy" in t for t in self.fake.texts(DEV_TOKEN)))
+        self.fake.message(CEO_TOKEN, "Build a login page")
+        self.wait(self.idle, timeout=20)
+        self.wait(lambda: any(t.startswith("🔨 Starting: started code") for t in self.fake.texts(DEV_TOKEN)))
+        self.wait(lambda: any(t.startswith("✅ Done: finished code") for t in self.fake.texts(DEV_TOKEN)))
+        self.fake.message(DEV_TOKEN, "/tasks")
+        self.wait(lambda: any("Build a login page" in t and "finished code" in t for t in self.fake.texts(DEV_TOKEN)))
+
+    def test_agents_and_report_commands(self):
+        self.call("PUT", "/api/project", {"require_approval": False})
+        self.fake.message(CEO_TOKEN, "/agents")
+        self.wait(lambda: any("<b>Agents</b>" in p["text"] for p in self.html_msgs()))
+        self.fake.message(CEO_TOKEN, "Build a login page")
+        self.wait(lambda: any(t.startswith("Task started") for t in self.fake.texts()))
+        run_id = [t for t in self.fake.texts() if t.startswith("Task started")][0].split("id: ")[1]
+        self.wait(self.idle, timeout=20)
+        self.fake.message(CEO_TOKEN, f"/report {run_id}")
+        self.wait(lambda: any("<b>Report</b>" in p["text"] and run_id in p["text"] for p in self.html_msgs()))
+
+
 if __name__ == "__main__":
     unittest.main()

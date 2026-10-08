@@ -563,17 +563,37 @@ The dashboard runs real Telegram bots (long polling: no public address or webhoo
 bots with [@BotFather](https://t.me/BotFather) and paste their tokens in the dashboard; tokens go to
 `.env`, never to `agents.json` or the browser.
 
-**CEO bot** (Team settings → Telegram):
+**Set a bot up in one click: ⚡ Initialize.** Paste the bot token and your chat id (your Telegram user
+id; [@userinfobot](https://t.me/userinfobot) tells you; a group id starts with `-`) and press
+**Initialize bot** (Team settings → Telegram for the CEO bot, Configure → Telegram for an agent's
+bot). BABD checks the token, saves it to `.env`, sets the bot's **command menu** and description,
+adds your chat to Allowed users and to the notification chats, sends a welcome message and starts the
+bot. If Telegram says the bot cannot write to you, open the bot, press **Start**, and Initialize again.
+The menus are set again every time a bot starts, so they always match this version.
 
-- send a goal as a message → a new task; send a `.md` / `.txt` file → a task from that document (the
-  caption, if any, is the goal); send links to `.md` files → one task per link
-- approvals arrive with **Approve deploy / Reject** buttons
-- notifications (`notify`): `Approvals`, `Blockers` (failed, stopped or blocked tasks), `Reports`
-  (finished tasks), `Daily Report` (once a day at `daily_report_hour`, default 18:00)
-- `/status`, `/tasks`, `/project <id>` (where this chat's tasks go), `/cancel <task id>`
+**CEO bot** (Team settings → Telegram), its menu covers the dashboard:
 
-**Agent bots** (Configure → Telegram, per agent): chat with that agent, like the dashboard's Chat
-(`/reset` starts a new conversation).
+| Command | |
+| --- | --- |
+| *(a message, a .md file, links)* | a new task (the Team Lead decides who is needed) |
+| `/status`, `/tasks` | what the team does now, recent tasks |
+| `/agents` | every agent: slots, what it works on now, buttons to its live log |
+| `/log [agent]` | an agent's **live log** in a code block, updated every 3 s for 10 min (⏹ Stop button) |
+| `/report <task id>` | the task's progress, report and git result |
+| `/quick`, `/full <goal>` | fast lane / whole team |
+| `/pause`, `/resume`, `/cancel <task id>` | pause, continue, stop |
+| `/project <id>`, `/templates`, `/notify`, `/help` | where tasks go, templates, notifications, help |
+
+Notifications (`notify`): **`Progress`**: one live card per task, edited every few seconds while it
+runs: who works on what now (and for how long), what comes next (the next work packages and stages,
+with their agents) and what is done (with the time each step took); `Approvals` (with Approve /
+Reject buttons), `Blockers` (failed, stopped or blocked tasks), `Reports` (finished tasks),
+`Daily Report` (once a day at `daily_report_hour`, default 18:00).
+
+**Agent bots** (Configure → Telegram, per agent): chat with that agent (answers never block the
+buttons), `/status` (what it works on now), `/log` (its live log), `/tasks` (its recent steps),
+`/reset`. The chats that use the bot (or were set up with Initialize) get a message when the agent
+**starts** a step (🔨 with the task) and when it is **done** (✅ with the time and tokens) or failed (❌).
 
 Only users in **Allowed users** (numeric ids or @usernames) are served, for every bot and every button.
 Anyone else gets a reply with their Telegram id, so you can add it. The bots run while

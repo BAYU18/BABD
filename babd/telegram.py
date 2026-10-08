@@ -19,6 +19,7 @@ only that account is served under it. The bots answer in private chats only, unl
 `ceo_telegram.allow_groups` is on (in a group, everyone in it reads the replies and reports). Bot tokens live in .env, never in
 agents.json. Chats that may receive notifications are kept in .babd/telegram.json.
 """
+import html
 import json
 import os
 import threading
@@ -32,7 +33,142 @@ from .log import log
 API_BASE = os.environ.get("BABD_TELEGRAM_API", "https://api.telegram.org")
 STATE_PATH = os.path.join(ROOT, ".babd", "telegram.json")
 MAX_TEXT = 4000
-NOTIFY = ("Approvals", "Blockers", "Reports", "Daily Report")
+NOTIFY = ("Progress", "Approvals", "Blockers", "Reports", "Daily Report")
+LOG_EVERY = 3          # seconds between live-log updates
+LOG_MINUTES = 10       # a live log follows the agent this long, then stops (send /log again)
+CARD_EVERY = 3         # seconds between updates of a task's progress card
+LOG_LINES = 30
+
+# The bots' command menus (Telegram shows them under the "/" button and the menu button).
+CEO_COMMANDS = [
+    ("help", "All commands"),
+    ("status", "What the team is doing now"),
+    ("agents", "Every agent and what it works on"),
+    ("log", "Live log of an agent (updates every 3 s)"),
+    ("tasks", "Recent tasks"),
+    ("report", "Report of a task: /report <task id>"),
+    ("quick", "Fast lane: /quick <goal>"),
+    ("full", "Whole team: /full <goal>"),
+    ("pause", "Pause a task: /pause <task id>"),
+    ("resume", "Continue a task: /resume <task id>"),
+    ("cancel", "Stop a task: /cancel <task id>"),
+    ("project", "Where new tasks go: /project <id>"),
+    ("templates", "Task templates to fill in"),
+    ("notify", "The notifications this bot sends"),
+]
+
+
+def agent_commands(name):
+    return [("help", "All commands"), ("status", f"What {name} is doing now"),
+            ("log", f"Live log of {name} (updates every 3 s)"), ("tasks", f"Recent work of {name}"),
+            ("reset", "Start a new conversation")]
+
+
+def initialize(token, chat_id, commands, description, welcome, base=None):
+    """Set a bot up: check the token, set its command menu and description, greet the chat.
+    Returns {"username", "welcome_sent", "note"}; raises TelegramError for a bad token."""
+    api = API(token, base)
+    me = api.call("getMe", http_timeout=20)
+    api.call("setMyCommands", commands=[{"command": c, "description": d} for c, d in commands])
+    for method, key, text in (("setMyDescription", "description", description),
+                              ("setMyShortDescription", "short_description", description[:120])):
+        try:
+            api.call(method, **{key: text})
+        except TelegramError:
+            pass  # optional
+    out = {"username": me.get("username"), "welcome_sent": False, "note": ""}
+    try:
+        api.send(chat_id, welcome)
+        out["welcome_sent"] = True
+    except TelegramError as e:
+        out["note"] = (f"The menu is set, but the bot could not write to chat {chat_id} ({e}). Open "
+                       f"@{me.get('username')} in Telegram, press Start, then Initialize again.")
+    return out
+
+
+def _clip(text, n):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
+def _dur(sec):
+    sec = int(max(0, sec or 0))
+    return f"{sec // 3600}h{sec // 60 % 60:02d}m" if sec >= 3600 else f"{sec // 60}m{sec % 60:02d}s" if sec >= 60 else f"{sec}s"
+
+
+def _ago(iso):
+    import datetime
+    try:
+        return (datetime.datetime.now() - datetime.datetime.fromisoformat(iso)).total_seconds()
+    except (TypeError, ValueError):
+        return 0
+
+
+def log_text(agent_id, name, live=True, limit=LOG_LINES):
+    """An agent's recent activity as Telegram HTML: a header and the lines in a code block."""
+    from . import agentlog
+    entries = list(reversed(agentlog.read(agent_id, limit=limit)))
+    lines = []
+    for e in entries:
+        t = (e.get("at") or "")[11:19]
+        kind = {"retry": "error"}.get(e.get("type"), e.get("type") or "")
+        lines.append(f"{t} {kind[:7]:<7} {_clip(e.get('text'), 70)}")
+        if e.get("type") == "step" and e.get("status") == "working":
+            lines.append(f"{'':16}task: {_clip(e.get('goal'), 54)}")
+    body = "\n".join(lines) or "(nothing logged yet)"
+    while len(body) > 3300 and "\n" in body:  # Telegram messages hold 4096 characters
+        body = body.split("\n", 1)[1]
+    state = (f"live · updates every {LOG_EVERY} s · stops after {LOG_MINUTES} min" if live else "stopped · /log to follow again")
+    changed = (entries[-1].get("at") or "")[11:19] if entries else "-"
+    return (f"<b>📜 {html.escape(name)} · log</b>\n<pre>{html.escape(body)}</pre>\n"
+            f"<i>{state} · last change {changed}</i>")
+
+
+def card_text(s, names):
+    """A task's progress card: what is being done, what comes next, what is done (Telegram HTML)."""
+    from . import flow
+    esc = html.escape
+    who = lambda a: names.get(a, "CEO" if a == "ceo" else a)  # noqa: E731
+    status = s.get("status") or "?"
+    icon = {"done": "✅", "failed": "❌", "cancelled": "⏹", "paused": "⏸", "waiting_approval": "🟡"}.get(status, "🛠")
+    lines = [f"{icon} <b>{esc(_clip(s.get('goal'), 120))}</b>",
+             f"<code>{esc(s.get('id') or '')}</code> · {esc(status.replace('_', ' '))} · {s.get('progress') or 0}%"]
+    r = s.get("route") or {}
+    if r:
+        team = (who("lead") if r.get("route") == "answer" else who(r.get("agent")) if r.get("route") == "direct"
+                else ", ".join(who(a) for a in r.get("agents") or []))
+        lines.append(f"{'⚡' if r.get('route') != 'team' else '👥'} {esc(team)}" + (f" — {esc(_clip(r.get('reason'), 80))}" if r.get("reason") else ""))
+    st = s.get("stages") or {}
+    mark = {"done": "✅", "active": "▶️", "failed": "❌", "skipped": "➖", "rejected": "⛔"}
+    lines.append(" ".join(f"{mark.get(st.get(k), '⬜')}{label}" for k, label, _, _ in flow.STAGES))
+    steps = s.get("steps") or []
+    working = [x for x in steps if x.get("status") in ("working", "queued")]
+    if working:
+        lines.append("\n<b>Working now</b>")
+        for x in working:
+            wait = " (waiting for a free slot)" if x.get("status") == "queued" else f" · {_dur(_ago(x.get('started_at')))}"
+            lines.append(f"🔄 {esc(who(x.get('agent')))} · {esc(x.get('kind'))}: {esc(_clip(x.get('task'), 70))}{wait}")
+    nxt = [f"⏳ {esc(p['id'])} {esc(_clip(p.get('title'), 50))} · {esc(who(p.get('agent')))}"
+           + (f" (after {esc(', '.join(p.get('depends_on') or []))})" if p.get("depends_on") else "")
+           for p in s.get("packages") or [] if p.get("status") == "todo"]
+    if status in ("running", "paused"):
+        nxt += [f"⏳ {label} · {esc(who(owner))}" for k, label, owner, _ in flow.STAGES
+                if st.get(k, "todo") == "todo" and k not in ("plan",)][:4]
+    if nxt:
+        lines.append("\n<b>Next</b>")
+        lines += nxt[:8]
+    done = [x for x in steps if x.get("status") in ("done", "failed", "interrupted")][-6:]
+    if done:
+        lines.append("\n<b>Done</b>")
+        for x in done:
+            ok = {"done": "✅", "failed": "❌"}.get(x.get("status"), "⏹")
+            took = f" · {_dur(x.get('seconds'))}" if x.get("seconds") is not None else ""
+            lines.append(f"{ok} {esc(who(x.get('agent')))} · {esc(x.get('kind'))}: {esc(_clip(x.get('task'), 60))}{took}")
+    if s.get("error"):
+        lines.append(f"\n⚠️ {esc(_clip(s['error'], 300))}")
+    text = "\n".join(lines)
+    return text if len(text) < 4000 else text[:3990] + "…"
+
 
 
 class TelegramError(Exception):
@@ -83,6 +219,19 @@ class API:
                             reply_markup={"inline_keyboard": buttons} if (buttons and last) else None)
         return msg
 
+    def send_html(self, chat_id, text, buttons=None):
+        return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True,
+                         reply_markup={"inline_keyboard": buttons} if buttons else None)
+
+    def edit_html(self, chat_id, message_id, text, buttons=None):
+        try:
+            return self.call("editMessageText", chat_id=chat_id, message_id=message_id, text=text, parse_mode="HTML",
+                             disable_web_page_preview=True, reply_markup={"inline_keyboard": buttons} if buttons else None)
+        except TelegramError as e:
+            if "not modified" in str(e):
+                return None
+            raise
+
 
 class Bot(threading.Thread):
     """Long-polling loop; subclasses handle updates."""
@@ -97,6 +246,60 @@ class Bot(threading.Thread):
         self.status = {"ok": False, "detail": "starting"}
         self.offset = None
         self.poll_timeout = 25  # seconds Telegram holds a getUpdates call open (long polling)
+        self.live_logs = {}     # chat -> Event that stops its live log
+        self.log_every = LOG_EVERY
+
+    def commands(self):
+        return []
+
+    def set_commands(self):
+        """The command menu is set again at every start, so it always matches this version."""
+        cmds = self.commands()
+        if cmds:
+            try:
+                self.api.call("setMyCommands", commands=[{"command": c, "description": d} for c, d in cmds])
+            except TelegramError as e:
+                log(f"telegram {self.label}: could not set the command menu: {e}", "telegram")
+
+    # -- live log: an agent's activity in a code block, updated every few seconds -------------------
+
+    def start_live_log(self, chat, agent_id, name):
+        old = self.live_logs.pop(str(chat), None)
+        if old:
+            old.set()
+        stop = threading.Event()
+        self.live_logs[str(chat)] = stop
+        threading.Thread(target=self._live_log, args=(chat, agent_id, name, stop), daemon=True,
+                         name=f"telegram-log-{agent_id}").start()
+
+    def stop_live_log(self, chat):
+        ev = self.live_logs.pop(str(chat), None)
+        if ev:
+            ev.set()
+        return bool(ev)
+
+    def _live_log(self, chat, agent_id, name, stop):
+        stop_btn = [[{"text": "⏹ Stop", "callback_data": "logstop"}]]
+        again = [[{"text": "▶ Follow again", "callback_data": f"log:{agent_id}"}]]
+        end = time.time() + LOG_MINUTES * 60
+        msg, last = None, None
+        try:
+            while not stop.is_set() and not self.stopping.is_set() and time.time() < end:
+                text = log_text(agent_id, name)
+                if text != last:
+                    if msg is None:
+                        msg = self.api.send_html(chat, text, stop_btn)
+                    else:
+                        self.api.edit_html(chat, msg["message_id"], text, stop_btn)
+                    last = text
+                stop.wait(self.log_every)
+            if msg:
+                self.api.edit_html(chat, msg["message_id"], log_text(agent_id, name, live=False), again)
+        except TelegramError as e:
+            log(f"telegram {self.label}: live log stopped: {e}", "telegram")
+        finally:
+            if self.live_logs.get(str(chat)) is stop:
+                self.live_logs.pop(str(chat), None)
 
     def is_allowed(self, user):
         if not user or user.get("is_bot"):
@@ -131,6 +334,7 @@ class Bot(threading.Thread):
             me = self.api.call("getMe", http_timeout=20)
             self.status = {"ok": True, "detail": f"connected as @{me.get('username')}", "username": me.get("username")}
             log(f"telegram {self.label}: connected as @{me.get('username')}", "telegram")
+            self.set_commands()
         except TelegramError as e:
             self.status = {"ok": False, "detail": str(e)}
             log(f"telegram {self.label}: {e}", "telegram")
@@ -157,6 +361,8 @@ class Bot(threading.Thread):
 
     def stop(self):
         self.stopping.set()
+        for ev in list(self.live_logs.values()):
+            ev.set()
 
     def handle(self, update):
         raise NotImplementedError
@@ -196,6 +402,17 @@ class CeoBot(Bot):
         self.last_daily = st.get("last_daily", "")
         self.events = dash.hub.subscribe()
         self.notifier = threading.Thread(target=self.notify_loop, daemon=True, name="telegram-ceo-notify")
+        self.cards = {}  # task id -> {"msgs": {chat: message id}, "summary", "dirty", "last"}
+        self.card_every = CARD_EVERY
+
+    def commands(self):
+        return CEO_COMMANDS
+
+    def names(self):
+        try:
+            return {a["id"]: a.get("short_name") or a["name"] for a in self.dash.load()["agents"]}
+        except Exception:  # noqa: BLE001
+            return {}
 
     def start(self):
         super().start()
@@ -243,13 +460,30 @@ class CeoBot(Bot):
         arg = arg.strip()
         if cmd in ("/start", "/help"):
             return self.api.send(chat, "BABD CEO bot.\n\nSend a goal as a message, or a .md file, or a link to one: "
-                                       "it becomes a task for the team.\n\n/status - what the team is doing\n"
-                                       "/tasks - recent tasks\n/project <id> - where new tasks go\n"
-                                       "/cancel <task id> - stop or unqueue a task\n/pause <task id> - pause a running task\n"
-                                       "/resume <task id> - continue a paused, failed or interrupted task\n"
-                                       "/templates - task templates to fill in\n/quick <goal> - fast lane: the Team Lead answers or one agent does it\n"
-                                       "/full <goal> - always the whole team flow\n\n"
-                                       "Plain messages: the Team Lead decides who is needed.")
+                                       "it becomes a task for the team (the Team Lead decides who is needed).\n\n"
+                                       + "\n".join(f"/{c} - {d}" for c, d in CEO_COMMANDS))
+        if cmd == "/agents":
+            return self.api.send_html(chat, self.agents_text(), [
+                [{"text": f"📜 {n}", "callback_data": f"log:{a}"} for a, n in list(self.names().items())[i:i + 3]]
+                for i in range(0, len(self.names()), 3)])
+        if cmd == "/log":
+            names = self.names()
+            if arg:
+                aid = next((a for a, n in names.items() if arg.lower() in (a.lower(), n.lower())), None)
+                if not aid:
+                    return self.api.send(chat, f"No agent {arg}. Agents: " + ", ".join(names))
+                return self.start_live_log(chat, aid, names[aid])
+            return self.api.send(chat, "Whose log? (it updates every 3 s)", [
+                [{"text": n, "callback_data": f"log:{a}"} for a, n in list(names.items())[i:i + 3]]
+                for i in range(0, len(names), 3)])
+        if cmd == "/report":
+            if not arg:
+                return self.api.send(chat, "Usage: /report <task id> (see /tasks)")
+            return self.api.send_html(chat, self.safe(lambda: self.report_text(arg)))
+        if cmd == "/notify":
+            return self.api.send(chat, "This bot sends: " + (", ".join(n for n in NOTIFY if n in self.notify) or "nothing")
+                                 + ".\nProgress = a live card per task: who works on what now, what comes next, what is done."
+                                 "\nChange it in the dashboard: Team settings → Telegram.")
         if cmd == "/status":
             return self.api.send(chat, self.status_text())
         if cmd == "/tasks":
@@ -332,6 +566,16 @@ class CeoBot(Bot):
         if not self.is_allowed(user):
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Not allowed")
         action, _, run_id = data.partition(":")
+        chat = ((q.get("message") or {}).get("chat") or {}).get("id")
+        if action in ("log", "logstop") and chat is not None:
+            if action == "logstop":
+                self.stop_live_log(chat)
+            else:
+                names = self.names()
+                if run_id in names:
+                    self.start_live_log(chat, run_id, names[run_id])
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"],
+                                 text="Stopped" if action == "logstop" else "Following the log")
         if action in ("approve", "reject"):
             ok = action == "approve"
             note = f"{'approved' if ok else 'rejected'} on Telegram by @{user.get('username') or user.get('id')}"
@@ -356,15 +600,85 @@ class CeoBot(Bot):
         import queue
         while not self.stopping.is_set():
             try:
-                kind, data = self.events.get(timeout=5)
+                kind, data = self.events.get(timeout=1)
+                try:
+                    self.on_event(kind, data)
+                except Exception as e:
+                    log(f"telegram ceo: {type(e).__name__}: {e}", "telegram")
             except queue.Empty:
-                continue
+                pass
             try:
-                self.on_event(kind, data)
-            except Exception as e:
-                log(f"telegram ceo: {type(e).__name__}: {e}", "telegram")
+                self.flush_cards()
+            except Exception as e:  # noqa: BLE001
+                log(f"telegram ceo: progress card: {type(e).__name__}: {e}", "telegram")
+
+    # -- progress cards: one live message per task --------------------------------------------------
+
+    def track(self, s, final=False):
+        """Keep the task's card up to date: created on the task's first event, edited at most every
+        few seconds while it runs, and once more when it ends."""
+        rid = s.get("id")
+        if not rid or "Progress" not in self.notify or not self.chats:
+            return
+        card = self.cards.get(rid)
+        if card is None:
+            if final:
+                return
+            card = self.cards[rid] = {"msgs": {}, "summary": s, "dirty": False, "last": time.time(), "text": ""}
+            text = card_text(s, self.names())
+            for chat in list(self.chats):
+                try:
+                    card["msgs"][chat] = self.api.send_html(chat, text)["message_id"]
+                except (TelegramError, TypeError, KeyError) as e:
+                    log(f"telegram ceo: could not send the progress card to {chat}: {e}", "telegram")
+            card["text"] = text
+            return
+        card["summary"], card["dirty"] = s, True
+        if final:
+            self.flush_card(rid, card)
+            self.cards.pop(rid, None)
+
+    def flush_cards(self):
+        for rid, card in list(self.cards.items()):
+            if card["dirty"] and time.time() - card["last"] >= self.card_every:
+                self.flush_card(rid, card)
+
+    def flush_card(self, rid, card):
+        text = card_text(card["summary"], self.names())
+        card["dirty"], card["last"] = False, time.time()
+        if text == card["text"]:
+            return
+        card["text"] = text
+        for chat, mid in list(card["msgs"].items()):
+            try:
+                self.api.edit_html(chat, mid, text)
+            except TelegramError as e:
+                log(f"telegram ceo: could not update the progress card in {chat}: {e}", "telegram")
+
+    def agents_text(self):
+        b = self.dash.board(history=5)
+        out = ["<b>Agents</b>"]
+        for a in b["agents"]:
+            now = "; ".join(f"{st.get('kind')}: {_clip(st.get('goal'), 40)}" for st in a.get("working") or [])
+            out.append(f"{'🔄' if now else '💤'} <b>{html.escape(a['name'])}</b> {a.get('active', 0)}/{a.get('capacity')} slots"
+                       f" · {a.get('done', 0)} done" + (f"\n    {html.escape(now)}" if now else ""))
+        return "\n".join(out)
+
+    def report_text(self, run_id):
+        r = self.dash.load_run(os.path.basename(run_id.strip()))
+        rep = r.get("report") or {}
+        text = card_text(r, self.names())
+        if rep.get("summary"):
+            text += f"\n\n<b>Report</b>\n{html.escape(_clip(rep['summary'], 1500))}"
+        ws = (r.get("workspace") or {}).get("result") or {}
+        if ws.get("branch"):
+            text += f"\n\n🌿 <code>{html.escape(ws['branch'])}</code>" + (" · merged" if ws.get("merged") else "") + (
+                f" · {html.escape(ws['note'])}" if ws.get("note") else "")
+        return text[:4000]
 
     def on_event(self, kind, data):
+        if kind == "run" and data.get("summary"):
+            self.track(data["summary"], final=data.get("event") == "finished")
         if kind == "approval" and "Approvals" in self.notify:
             self.broadcast(f"Approval needed\n{data.get('goal', '')}\n\n{data.get('question', '')}\ntask {data.get('run')}",
                            [[{"text": "✅ Approve deploy", "callback_data": f"approve:{data.get('run')}"},
@@ -415,13 +729,95 @@ class CeoBot(Bot):
 
 
 class AgentBot(Bot):
-    """Chat with one agent."""
+    """One agent's own bot: chat with it, follow its live log, and get a message when it starts and
+    finishes a step (in the chats that talked to it or were set up with Initialize)."""
 
     def __init__(self, dash, agent_id, token, allowed, base=None, allow_groups=False):
         super().__init__(agent_id, token, allowed, base, allow_groups)
         self.dash, self.agent_id = dash, agent_id
+        self.chats = set(str(c) for c in (_state().get("agent_chats") or {}).get(agent_id, []))
+        self.events = dash.hub.subscribe() if hasattr(dash, "hub") else None
+        self.notifier = threading.Thread(target=self.notify_loop, daemon=True, name=f"telegram-{agent_id}-notify")
+
+    @property
+    def name(self):
+        try:
+            a = next(a for a in self.dash.load()["agents"] if a["id"] == self.agent_id)
+            return a.get("short_name") or a["name"]
+        except (StopIteration, KeyError, OSError, ValueError):
+            return self.agent_id
+
+    def commands(self):
+        return agent_commands(self.name)
+
+    def start(self):
+        super().start()
+        if self.events is not None:
+            self.notifier.start()
+
+    def stop(self):
+        super().stop()
+        if self.events is not None:
+            self.dash.hub.unsubscribe(self.events)
+
+    def remember_chat(self, chat):
+        if str(chat) not in self.chats:
+            self.chats.add(str(chat))
+            add_chat(self.agent_id, chat)
+
+    def notify_loop(self):
+        import queue
+        while not self.stopping.is_set():
+            try:
+                kind, data = self.events.get(timeout=1)
+            except queue.Empty:
+                continue
+            if kind != "agentlog" or data.get("agent") != self.agent_id or data.get("type") != "step":
+                continue
+            text = {"working": "🔨 Starting", "done": "✅ Done", "failed": "❌ Failed"}.get(data.get("status"))
+            if not text:
+                continue
+            msg = (f"{text}: {data.get('text')}\n📌 {data.get('goal')} ({data.get('run')})")
+            for chat in list(self.chats):
+                try:
+                    self.api.send(chat, msg)
+                except TelegramError as e:
+                    log(f"telegram {self.agent_id}: could not notify {chat}: {e}", "telegram")
+
+    def status_text(self):
+        b = self.dash.board(history=10)
+        a = next((x for x in b["agents"] if x["id"] == self.agent_id), None)
+        if not a:
+            return "No such agent."
+        lines = [f"<b>{html.escape(a['name'])}</b> · {a.get('active', 0)}/{a.get('capacity')} slots busy · "
+                 f"{a.get('done', 0)} steps done"]
+        for st in a.get("working") or []:
+            lines.append(f"🔄 {html.escape(st.get('kind') or '')}: {html.escape(_clip(st.get('task'), 80))}\n"
+                         f"    📌 {html.escape(_clip(st.get('goal'), 60))} · {_dur(_ago(st.get('started_at')))}")
+        for st in a.get("queued") or []:
+            lines.append(f"⏳ waiting for a slot: {html.escape(_clip(st.get('task'), 80))}")
+        if len(lines) == 1:
+            lines.append("💤 Idle: ready for the next step")
+        return "\n".join(lines)
+
+    def tasks_text(self):
+        from . import agentlog
+        done = [e for e in agentlog.read(self.agent_id, limit=200, type_="step") if e.get("status") in ("done", "failed")][:12]
+        rows = [f"{'✅' if e.get('status') == 'done' else '❌'} {(e.get('at') or '')[5:16]} {e.get('text')}\n    📌 {e.get('goal')}"
+                for e in done]
+        return "\n".join(rows) or "No finished steps yet."
 
     def handle(self, update):
+        if "callback_query" in update:
+            q = update["callback_query"]
+            chat = ((q.get("message") or {}).get("chat") or {}).get("id")
+            if not self.is_allowed(q.get("from")) or chat is None:
+                return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Not allowed")
+            if (q.get("data") or "") == "logstop":
+                self.stop_live_log(chat)
+            elif (q.get("data") or "").startswith("log:"):
+                self.start_live_log(chat, self.agent_id, self.name)
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="OK")
         msg = update.get("message") or {}
         chat, user, text = msg.get("chat", {}).get("id"), msg.get("from"), (msg.get("text") or "").strip()
         if chat is None or not text:
@@ -430,11 +826,25 @@ class AgentBot(Bot):
             return self.api.send(chat, "I only work in a private chat.")
         if not self.is_allowed(user):
             return self.deny(chat, user)
-        if text in ("/start", "/help"):
-            return self.api.send(chat, f"Chat with the {self.agent_id} agent. /reset starts a new conversation.")
-        if text == "/reset":
+        self.remember_chat(chat)
+        cmd = text.split()[0].split("@")[0].lower() if text.startswith("/") else ""
+        if cmd in ("/start", "/help"):
+            return self.api.send(chat, f"{self.name} bot. Write to chat with {self.name}; you also get a message when "
+                                       f"{self.name} starts and finishes work.\n\n"
+                                       + "\n".join(f"/{c} - {d}" for c, d in self.commands()))
+        if cmd == "/reset":
             self.dash.chats.pop(self.agent_id, None)
             return self.api.send(chat, "New conversation.")
+        if cmd == "/status":
+            return self.api.send_html(chat, self.status_text())
+        if cmd == "/log":
+            return self.start_live_log(chat, self.agent_id, self.name)
+        if cmd == "/tasks":
+            return self.api.send(chat, self.tasks_text())
+        threading.Thread(target=self.reply, args=(chat, text), daemon=True,
+                         name=f"telegram-{self.agent_id}-chat").start()  # a long answer never blocks the buttons
+
+    def reply(self, chat, text):
         try:
             self.api.call("sendChatAction", chat_id=chat, action="typing")
         except TelegramError:
@@ -443,7 +853,24 @@ class AgentBot(Bot):
             reply = self.dash.chat(self.agent_id, text)["reply"]
         except Exception as e:
             reply = f"Error: {e}"
-        self.api.send(chat, reply)
+        try:
+            self.api.send(chat, reply)
+        except TelegramError as e:
+            log(f"telegram {self.agent_id}: {e}", "telegram")
+
+
+def add_chat(target, chat):
+    """Remember a chat that gets this bot's notifications ("ceo" or an agent id)."""
+    with _pins_lock:
+        st = _state()
+        if target == "ceo":
+            chats = set(st.get("ceo_chats") or [])
+            chats.add(str(chat))
+            st["ceo_chats"] = sorted(chats)
+        else:
+            per = st.setdefault("agent_chats", {})
+            per[target] = sorted(set(per.get(target) or []) | {str(chat)})
+        _save_state(st)
 
 
 class Manager:
@@ -486,6 +913,13 @@ class Manager:
     def status(self):
         with self.lock:
             return {k: dict(bot.status) for k, (_, bot) in self.bots.items()}
+
+    def add_chat(self, target, chat):
+        add_chat(target, chat)
+        with self.lock:
+            bot = self.bots.get(target, (None, None))[1]
+        if bot is not None:
+            bot.remember_chat(chat)
 
     def stop(self):
         with self.lock:

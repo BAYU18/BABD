@@ -9,6 +9,7 @@ import json
 import mimetypes
 import os
 import queue
+import re
 import secrets
 import sys
 import threading
@@ -546,6 +547,66 @@ class Dashboard:
                 set_env_var(ceo["token_env"], str(body["token"]).strip())
             self.save(cfg)
             return self.telegram_state(cfg)
+
+    def init_telegram(self, body):
+        """Initialize a bot from its token and a chat id: check the token, save it to .env, set the bot's
+        command menu and description, allow and greet the chat, turn the bot on and start it.
+        target "ceo" = the CEO bot, else an agent id = that agent's own bot."""
+        target = str(body.get("target") or "ceo")
+        chat = str(body.get("chat_id") or "").strip()
+        if not re.fullmatch(r"-?\d{1,20}", chat):
+            raise ApiError(400, "chat id must be a number: your Telegram user id (message @userinfobot), "
+                                "or a group id starting with -")
+        with self.cfg_lock:
+            cfg = self.load()
+            if target == "ceo":
+                block, default_env, name = (cfg["project"].get("ceo_telegram") or {}), "TELEGRAM_CEO_BOT_TOKEN", "CEO"
+            else:
+                a = self.agent_cfg(cfg, target)
+                block, default_env = (a.get("telegram") or {}), f"TELEGRAM_{target.upper()}_BOT_TOKEN"
+                name = a.get("short_name") or a["name"]
+            env_name = block.get("token_env") or default_env
+            token = str(body.get("token") or "").strip() or resolve_env(env_name) or ""
+        if not token:
+            raise ApiError(400, "paste the bot token from @BotFather")
+        if not re.fullmatch(r"\d{3,20}:[A-Za-z0-9_-]{3,100}", token):
+            raise ApiError(400, "that is not a bot token (it looks like 123456789:AAF...)")
+        if target == "ceo":
+            commands = telegram.CEO_COMMANDS
+            about = "BABD CEO bot: give the AI team tasks, follow their progress, approve deploys, read the agents' logs."
+            welcome = ("✅ BABD CEO bot is ready.\n\nSend a goal as a message, a .md file or a link: it becomes a task. "
+                       "You get a live progress card for every task (who works on what, what comes next, what is "
+                       "done), approvals with buttons, and reports.\n\n" + "\n".join(f"/{c} - {d}" for c, d in commands))
+        else:
+            commands = telegram.agent_commands(name)
+            about = f"BABD {name}: chat with {name}, follow its live log, get told when it starts and finishes work."
+            welcome = (f"✅ {name} bot is ready.\n\nWrite to chat with {name}. You get a message when {name} starts and "
+                       f"finishes a step.\n\n" + "\n".join(f"/{c} - {d}" for c, d in commands))
+        try:
+            result = telegram.initialize(token, int(chat), commands, about, welcome, base=self.telegram.base)
+        except telegram.TelegramError as e:
+            raise ApiError(400, f"Telegram refused: {e}")
+        with self.cfg_lock:
+            cfg = self.load()
+            set_env_var(env_name, token)
+            ceo = cfg["project"].setdefault("ceo_telegram", {})
+            if target == "ceo":
+                block = ceo
+                block["notify"] = list(dict.fromkeys(list(block.get("notify") or telegram.NOTIFY) + ["Progress"]))
+            else:
+                block = self.agent_cfg(cfg, target).setdefault("telegram", {})
+            block.update(enabled=True, token_env=env_name, bot_username="@" + (result.get("username") or ""))
+            users = [str(u) for u in ceo.get("allowed_users") or []]
+            if int(chat) > 0 and chat not in users:
+                ceo["allowed_users"] = users + [chat]  # a private chat's id is the user's id
+            if int(chat) < 0:
+                ceo["allow_groups"] = True  # a group was given on purpose
+            self.save(cfg)
+        self.telegram.add_chat(target, chat)
+        if self.telegram_on:
+            self.telegram.reconcile()
+        log(f"telegram {target}: initialized as @{result.get('username')}", "telegram")
+        return {**result, "target": target, "commands": len(commands), "telegram": self.telegram_state(self.load())}
 
     def update_projects(self, body):
         """Replace the project list (and the default project)."""
@@ -1144,6 +1205,8 @@ def make_handler(dash, token, allowed_hosts, security=None):
                                      b.get("project"), b.get("options"))
             if method == "PUT" and parts == ["telegram"]:
                 return d.update_telegram(self.body())
+            if method == "POST" and parts == ["telegram", "init"]:
+                return d.init_telegram(self.body())
             if method == "PUT" and parts == ["projects"]:
                 return d.update_projects(self.body())
             if parts[:1] == ["runs"]:

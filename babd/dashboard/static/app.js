@@ -195,6 +195,24 @@ function renderRunButtons() {
 }
 
 // ---- top bar -----------------------------------------------------------------------------
+// Initialize a bot: token + chat id -> token saved, command menu set, chat allowed and greeted, bot on.
+function tgInitBlock(key) {
+  return `<div class="tg-init">
+      <div class="row2"><input type="text" id="tgChat_${esc(key)}" inputmode="numeric" placeholder="Your chat id, e.g. 123456789 (ask @userinfobot)">
+        <button type="button" class="btn small primary" data-tg-init="${esc(key)}">⚡ Initialize bot</button></div>
+      <div class="help">Paste the bot token above and your chat id, then Initialize: BABD checks the token, saves it to .env, sets the bot's command menu (${key === "ceo" ? "every dashboard feature: tasks, status, agents, live logs, reports, pause / resume / stop…" : "chat, status, live log, recent work"}), allows your chat, sends a welcome message and starts the bot. Press Start in the bot first if Telegram says it cannot write to you.</div></div>`;
+}
+
+async function tgInit(key, token) {
+  const chat = ($(`#tgChat_${key}`)?.value || "").trim();
+  if (!chat) { toast("Type your chat id first", "bad"); return; }
+  try {
+    const r = await api("POST", "telegram/init", { target: key, chat_id: chat, token: token || undefined });
+    toast(r.welcome_sent ? `@${r.username} is ready: ${r.commands} commands in its menu, welcome message sent` : r.note, r.welcome_sent ? "ok" : "bad");
+    await refresh(); setTimeout(() => refresh(), 2500);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
 function tgStatus(key) {
   const tg = S.telegram || {};
   const bot = tg.bots?.[key];
@@ -769,6 +787,7 @@ function renderConfig() {
       ${field("Bot username", text("tg_bot_username", t.bot_username, "@my_agent_bot"))}
       ${field("Token variable", text("tg_token_env", t.token_env, "TELEGRAM_DEV_BOT_TOKEN"), "Environment variable holding the BotFather token.")}
       ${field("Bot token", `<input type="password" name="tg_token" placeholder="${S.telegram?.agents?.[f.id] ? "•••••••• set — type to replace" : "paste the token from @BotFather"}" autocomplete="new-password">`, "Saved to .env under the variable above, never to agents.json.")}
+      ${tgInitBlock(f.id)}
       ${tgStatus(f.id)}
       <div class="note">Talk to this agent from Telegram: send the bot a message, it answers like the dashboard's Chat. Only the users allowed in Team settings → Telegram can use it.</div>`;
   } else if (drawer.tab === "skills") {
@@ -819,6 +838,8 @@ $("#drawerBody").addEventListener("change", (e) => {
 });
 
 $("#drawerBody").addEventListener("click", (e) => {
+  const ti = e.target.closest("[data-tg-init]");
+  if (ti) { tgInit(ti.dataset.tgInit, ($('[name="tg_token"]')?.value || "").trim()); return; }
   if (e.target.id === "addSkill") {
     const v = $("#newSkill").value.trim();
     if (v && !form.skills.includes(v)) form.skills.push(v);
@@ -999,8 +1020,9 @@ $("#btnSettings").addEventListener("click", () => {
       <label class="check"><input type="checkbox" id="tg_groups" ${S.telegram?.ceo?.allow_groups ? "checked" : ""}> Also answer in group chats (everyone in the group reads the replies and reports)</label>
       <div class="tg-notify">${(S.telegram?.notify_options || []).map((n) => `<label class="check"><input type="checkbox" name="tg_notify" value="${esc(n)}" ${(S.telegram?.ceo?.notify || S.telegram?.notify_options || []).includes(n) ? "checked" : ""}> ${esc(n)}</label>`).join("")}
         <label class="project-pick">Daily report at <input type="number" id="tg_hour" min="0" max="23" value="${esc(S.telegram?.ceo?.daily_report_hour ?? 18)}" style="width:64px">:00</label></div>
+      ${tgInitBlock("ceo")}
       ${tgStatus("ceo")}
-      <div class="row"><button type="button" class="btn small primary" id="tgSave">Save Telegram</button></div></div>
+      <div class="row"><button type="button" class="btn small" id="tgSave">Save Telegram</button></div></div>
     <div class="field"><label>Projects (where the agents work)</label>
       <div class="help">Each task works in its own git branch of the chosen project, outside the BABD installation. When the task ends BABD commits the work and merges it (by the merge rule) into the project's branch.</div>
       <div class="proj-list" id="projList">${(S.projects || []).map((pr) => projectRow(pr)).join("")}</div>
@@ -1011,6 +1033,7 @@ $("#btnSettings").addEventListener("click", () => {
     <div class="note">Flow: ${S.flow.stages.map((s) => esc(s.label)).join(" → ")}. Specialists only talk to the Team Lead; only the Team Lead reports to the CEO.</div>
     <div style="display:flex;justify-content:flex-end"><button class="btn primary" id="p_save">Save</button></div>`, true);
   if ($("#btnLogout")) $("#btnLogout").onclick = async () => { await fetch("/api/logout", { method: "POST" }); location.reload(); };
+  $("[data-tg-init='ceo']").onclick = () => tgInit("ceo", $("#tg_token").value.trim());
   $("#tgSave").onclick = async () => {
     try {
       await api("PUT", "telegram", { enabled: $("#tg_enabled").checked, bot_username: $("#tg_username").value.trim(),
