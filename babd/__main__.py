@@ -324,6 +324,13 @@ def run_goals(args, cfg, team):
             answer = input(f"\nCEO approval needed: {request['question']} [y/N] ").strip().lower()
         return answer in ("y", "yes"), "" if answer in ("y", "yes") else "rejected in the terminal"
 
+    def asker(request):  # an agent's question to the CEO, answered in the terminal
+        if not sys.stdin.isatty():
+            return None
+        opts = f" [{' | '.join(request['options'])}]" if request.get("options") else ""
+        with out_lock:
+            return input(f"\n{request.get('agent_name')} asks: {request['question']}{opts}\n> ").strip() or None
+
     slots = AgentSlots(cfg)
     limit = threading.BoundedSemaphore(max(1, int(cfg["project"].get("max_parallel_tasks", 3))))
     states = [None] * len(goals)
@@ -331,7 +338,7 @@ def run_goals(args, cfg, team):
     def one(i, goal, docs):
         with limit:  # a Team per task: each task's agents work in that task's own workspace
             states[i] = Run(Team(apply_models(cfg, options["models"]), log=lambda m: None, brain=team.brain), goal,
-                            approver=approver, on_event=show(i + 1), slots=slots, docs=docs, project_id=args.project,
+                            approver=approver, asker=asker, on_event=show(i + 1), slots=slots, docs=docs, project_id=args.project,
                             options=options).execute()
 
     for goal, docs in tasks:

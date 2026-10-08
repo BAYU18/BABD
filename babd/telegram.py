@@ -55,6 +55,7 @@ CEO_COMMANDS = [
     ("project", "Where new tasks go: /project <id>"),
     ("templates", "Task templates to fill in"),
     ("notify", "The notifications this bot sends"),
+    ("questions", "Questions the agents are waiting on"),
 ]
 
 
@@ -72,7 +73,7 @@ CEO_KEYBOARD = [
     [("📜 Live log", "log"), ("📄 Report", "report"), ("🔔 Notifications", "notify")],
     [("⚡ Quick task", "quick"), ("👥 Full team task", "full"), ("📁 Project", "project")],
     [("⏸ Pause", "pause"), ("▶️ Resume", "resume"), ("⏹ Stop task", "cancel")],
-    [("🧩 Templates", "templates"), ("❓ Help", "help")],
+    [("🧩 Templates", "templates"), ("💬 Questions", "questions"), ("❓ Help", "help")],
 ]
 AGENT_KEYBOARD = [
     [("📊 Status", "status"), ("📜 Live log", "log")],
@@ -170,7 +171,8 @@ def card_text(s, names):
     esc = html.escape
     who = lambda a: names.get(a, "CEO" if a == "ceo" else a)  # noqa: E731
     status = s.get("status") or "?"
-    icon = {"done": "✅", "failed": "❌", "cancelled": "⏹", "paused": "⏸", "waiting_approval": "🟡"}.get(status, "🛠")
+    icon = {"done": "✅", "failed": "❌", "cancelled": "⏹", "paused": "⏸", "waiting_approval": "🟡",
+            "waiting_answer": "❓"}.get(status, "🛠")
     lines = [f"{icon} <b>{esc(_clip(s.get('goal'), 120))}</b>",
              f"<code>{esc(s.get('id') or '')}</code> · {esc(status.replace('_', ' '))} · {s.get('progress') or 0}%"]
     r = s.get("route") or {}
@@ -449,6 +451,7 @@ class CeoBot(Bot):
         self.notifier = threading.Thread(target=self.notify_loop, daemon=True, name="telegram-ceo-notify")
         self.cards = {}  # task id -> {"msgs": {chat: message id}, "summary", "dirty", "last"}
         self.pending = {}  # chat -> "quick" / "full": the next message is that task's goal
+        self.pending_answer = {}  # chat -> task id: the next message answers that task's question
         self.card_every = CARD_EVERY
 
     keyboard_rows = CEO_KEYBOARD
@@ -501,7 +504,12 @@ class CeoBot(Bot):
         cmd = button_command(CEO_KEYBOARD, text)
         if cmd:
             self.pending.pop(str(chat), None)
+            self.pending_answer.pop(str(chat), None)
             return self.on_command(chat, "/" + cmd)
+        rid = self.pending_answer.pop(str(chat), None)
+        if text and rid and not text.startswith("/"):
+            return self.api.send(chat, self.safe(lambda: f"✅ Answer sent: {self.dash.answer_question(rid, text)['question']}"),
+                                 keyboard=self.keyboard())
         if text.startswith("/"):
             self.pending.pop(str(chat), None)
             return self.on_command(chat, text)
@@ -539,6 +547,13 @@ class CeoBot(Bot):
             return self.pick_task(chat, cmd[1:])
         if cmd == "/report":
             return self.api.send_html(chat, self.safe(lambda: self.report_text(arg)))
+        if cmd == "/questions":
+            qs = self.dash.open_questions()
+            if not qs:
+                return self.api.send(chat, "No agent is waiting for an answer.", keyboard=self.keyboard())
+            for q in qs:
+                self.api.send(chat, self.question_text(q), self.question_buttons(q))
+            return None
         if cmd == "/notify":
             return self.api.send(chat, "This bot sends: " + (", ".join(n for n in NOTIFY if n in self.notify) or "nothing")
                                  + ".\nProgress = a live card per task: who works on what now, what comes next, what is done."
@@ -592,7 +607,7 @@ class CeoBot(Bot):
     PICK = {"report": ("Which task's report?", None),
             "pause": ("Pause which task?", ("running",)),
             "resume": ("Continue which task?", ("paused", "failed", "cancelled", "interrupted")),
-            "cancel": ("Stop which task?", ("running", "waiting_approval", "paused", "queued"))}
+            "cancel": ("Stop which task?", ("running", "waiting_approval", "waiting_answer", "paused", "queued"))}
 
     def pick_task(self, chat, what):
         question, statuses = self.PICK[what]
@@ -601,7 +616,7 @@ class CeoBot(Bot):
         if not tasks:
             return self.api.send(chat, "No task to pick for that right now.", keyboard=self.keyboard())
         icon = {"running": "🔄", "paused": "⏸", "queued": "⏳", "done": "✅", "failed": "❌", "cancelled": "⏹",
-                "interrupted": "⚠️", "waiting_approval": "🟡"}
+                "interrupted": "⚠️", "waiting_approval": "🟡", "waiting_answer": "❓"}
         return self.api.send(chat, question, self.rows(
             [(f"{icon.get(t.get('status'), '•')} {t.get('goal')}", f"do:{what}:{t['id']}") for t in tasks], per_row=1))
 
@@ -665,6 +680,23 @@ class CeoBot(Bot):
             if done:
                 done()
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="OK")
+        if action in ("ans", "ansfree") and chat is not None:
+            rid, _, idx = run_id.partition(":")
+            if action == "ansfree":
+                self.pending_answer[str(chat)] = rid
+                self.api.send(chat, "Send your answer as your next message.")
+                return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Type your answer")
+            q_open = next((x for x in self.dash.open_questions() if x.get("run") == rid), None)
+            opts = (q_open or {}).get("options") or []
+            if not q_open or not idx.isdigit() or int(idx) >= len(opts):
+                return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="That question is closed")
+            result = self.safe(lambda: (self.dash.answer_question(rid, opts[int(idx)]), "done")[1])
+            m = q.get("message") or {}
+            if result == "done" and m:
+                self.safe(lambda: self.api.call("editMessageText", chat_id=chat, message_id=m["message_id"],
+                                                text=(m.get("text") or "") + f"\n\n→ answered: {opts[int(idx)]}"))
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"],
+                                 text="Answer sent" if result == "done" else result[:190])
         if action == "proj" and chat is not None:
             self.on_command(chat, f"/project {run_id}")
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Project set")
@@ -750,6 +782,16 @@ class CeoBot(Bot):
             except TelegramError as e:
                 log(f"telegram ceo: could not update the progress card in {chat}: {e}", "telegram")
 
+    @staticmethod
+    def question_text(q):
+        return (f"❓ {q.get('agent_name') or q.get('agent')} asks:\n{q.get('question')}\n\n📌 {_clip(q.get('goal'), 80)}\n"
+                f"task {q.get('run')}" + ("\n\nPick an answer or type your own." if q.get("options") else ""))
+
+    def question_buttons(self, q):
+        rid = q.get("run")
+        rows = [[{"text": _clip(o, 40), "callback_data": f"ans:{rid}:{i}"[:64]}] for i, o in enumerate(q.get("options") or [])]
+        return rows + [[{"text": "✍️ Type an answer", "callback_data": f"ansfree:{rid}"[:64]}]]
+
     def agents_text(self):
         b = self.dash.board(history=5)
         out = ["<b>Agents</b>"]
@@ -774,6 +816,12 @@ class CeoBot(Bot):
     def on_event(self, kind, data):
         if kind == "run" and data.get("summary"):
             self.track(data["summary"], final=data.get("event") == "finished")
+        if kind == "question" and "Approvals" in self.notify:  # questions go where approvals go
+            for chat in list(self.chats):
+                try:
+                    self.api.send(chat, self.question_text(data), self.question_buttons(data))
+                except TelegramError as e:
+                    log(f"telegram ceo: could not ask {chat}: {e}", "telegram")
         if kind == "approval" and "Approvals" in self.notify:
             self.broadcast(f"Approval needed\n{data.get('goal', '')}\n\n{data.get('question', '')}\ntask {data.get('run')}",
                            [[{"text": "✅ Approve deploy", "callback_data": f"approve:{data.get('run')}"},
@@ -805,7 +853,7 @@ class CeoBot(Bot):
         lines = [f"Running {c.get('running', 0)} · waiting for you {c.get('waiting_approval', 0)} · "
                  f"queued {c.get('queued', 0)} · done {c.get('done', 0)} · failed {c.get('failed', 0)}"]
         for t in b["tasks"]:
-            if t["status"] in ("running", "waiting_approval"):
+            if t["status"] in ("running", "waiting_approval", "waiting_answer", "paused"):
                 now = ", ".join(f"{st['agent']} {st['kind']}" for st in (t.get("steps") or []) if st.get("status") == "working")
                 lines.append(f"• {t['goal'][:60]} — {t.get('progress', 0)}% {t.get('stage') or ''}"
                              + (f" ({now})" if now else "") + f"\n  {t['id']}")

@@ -334,6 +334,28 @@ class TelegramFeaturesTest(TelegramTest):
         self.fake.message(DEV_TOKEN, "/tasks")
         self.wait(lambda: any("Build a login page" in t and "finished code" in t for t in self.fake.texts(DEV_TOKEN)))
 
+    def test_questions_are_answered_from_telegram(self):
+        import test_questions as tq
+        self.call("PUT", "/api/project", {"require_approval": False})
+        with mock.patch.object(Agent, "ask", tq.asking_ask):
+            self.fake.message(CEO_TOKEN, "Build an app")
+            msg = self.wait(lambda: [p for p in self.fake.calls("sendMessage") if "asks:" in p.get("text", "")], timeout=20)
+            buttons = [b for row in msg[0]["reply_markup"]["inline_keyboard"] for b in row]
+            self.assertEqual([b["text"] for b in buttons], ["8080", "3000", "✍️ Type an answer"])
+            self.fake.message(CEO_TOKEN, "💬 Questions")  # the keyboard button lists open questions
+            self.wait(lambda: len([p for p in self.fake.calls("sendMessage") if "asks:" in p.get("text", "")]) >= 2)
+            # type the answer instead of a button
+            self.fake.push(CEO_TOKEN, callback_query={"id": "q1", "from": {"id": 7, "username": "boss"},
+                                                      "data": buttons[2]["callback_data"],
+                                                      "message": {"message_id": 4, "chat": {"id": 1007}, "text": "asks"}})
+            self.wait(lambda: any(t == "Send your answer as your next message." for t in self.fake.texts()))
+            self.fake.message(CEO_TOKEN, "4000")
+            self.wait(lambda: any(t.startswith("✅ Answer sent") for t in self.fake.texts()))
+            self.wait(self.idle, timeout=20)
+        runs = self.dash.search("Build an app")
+        r = self.dash.load_run(runs[0]["id"])
+        self.assertEqual(r["questions"][0]["answer"], "4000")
+
     def test_agents_and_report_commands(self):
         self.call("PUT", "/api/project", {"require_approval": False})
         self.fake.message(CEO_TOKEN, "/agents")

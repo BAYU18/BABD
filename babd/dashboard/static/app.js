@@ -104,7 +104,7 @@ let drawer = null;        // {mode: "config"|"chat", agentId, tab}
 const agentById = (id) => S.agents.find((a) => a.id === id);
 const colorOf = (id) => (id === "ceo" ? "var(--ceo)" : agentById(id)?.color || "var(--muted)");
 const nameOf = (id) => (id === "ceo" ? "CEO" : agentById(id)?.short_name || id);
-const LIVE = ["running", "waiting_approval", "paused"];
+const LIVE = ["running", "waiting_approval", "waiting_answer", "paused"];
 const isLive = (r) => r && LIVE.includes(r.status);
 const runActive = () => Object.values(liveRuns).some(isLive);
 const liveList = () => Object.values(liveRuns).filter(isLive).sort((a, b) => (a.started_at || "").localeCompare(b.started_at || ""));
@@ -155,6 +155,27 @@ function renderTaskOptions() {
       <datalist id="modelList">${models.map((m) => `<option value="${esc(m)}">`).join("")}</datalist>`;
   }
 }
+
+function questionCard(runId, q) {
+  return `<div class="approval question" data-question="${esc(runId)}">
+      <div class="eyebrow" style="color:#f0abfc">${esc(nameOf(q.agent))} asks you</div>
+      <div class="q">${esc(q.question)}</div>
+      ${(q.options || []).length ? `<div class="row">${q.options.map((o) => `<button type="button" class="btn small" data-answer="${esc(o)}">${esc(o)}</button>`).join("")}</div>` : ""}
+      <div class="row"><input type="text" class="answer-input" placeholder="Your answer"><button type="button" class="btn small primary" data-answer-send>Send answer</button></div>
+    </div>`;
+}
+
+document.addEventListener("click", async (e) => {  // answer an agent's question (task panel or board)
+  const box = e.target.closest("[data-question]");
+  if (!box) return;
+  const opt = e.target.closest("[data-answer]");
+  const send = e.target.closest("[data-answer-send]");
+  if (!opt && !send) return;
+  const answer = opt ? opt.dataset.answer : box.querySelector(".answer-input").value.trim();
+  if (!answer) { toast("Type an answer first", "bad"); return; }
+  try { await api("POST", `runs/${box.dataset.question}/answer`, { answer }); toast("Answer sent: the agent continues", "ok"); refreshSoon(); boardSoon(); }
+  catch (err) { toast(err.message, "bad"); }
+});
 
 function packagesBlock(r) {
   const ps = r.packages || [];
@@ -533,7 +554,10 @@ function timelineItems(r) {
   return out.join("");
 }
 
+const typingAnswer = () => document.activeElement?.classList?.contains("answer-input");
+
 function renderRun() {
+  if (typingAnswer()) { setTimeout(renderRun, 1500); return; }  // never wipe an answer being typed
   const r = viewRun;
   const body = $("#runBody");
   if (!r) {
@@ -541,7 +565,7 @@ function renderRun() {
     return;
   }
   const stages = S.flow.stages.map((s) => `<div class="step ${esc(r.stages?.[s.key] || "todo")}" title="${esc(nameOf(s.owner))}"><i></i>${esc(s.label)}</div>`).join("");
-  const statusColor = { paused: "#c4b5fd", running: "var(--good)", waiting_approval: "var(--warn)", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" }[r.status];
+  const statusColor = { waiting_answer: "#f0abfc", paused: "#c4b5fd", running: "var(--good)", waiting_approval: "var(--warn)", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" }[r.status];
   const approval = r.approval?.result === "pending" && !viewingHistory ? `
     <div class="approval">
       <div class="eyebrow" style="color:var(--warn)">CEO approval needed</div>
@@ -549,6 +573,7 @@ function renderRun() {
       <input type="text" id="approvalNote" placeholder="Note for the team (optional)">
       <div class="row"><button class="btn good" data-approve="1">Approve deploy</button><button class="btn danger" data-approve="0">Reject</button></div>
     </div>` : "";
+  const qn = r.question && !viewingHistory ? questionCard(r.id, r.question) : "";
   const rep = r.report;
   const report = rep ? `
     <div class="report">
@@ -579,7 +604,7 @@ function renderRun() {
     </div>
     <div class="stepper">${stages}</div>
     ${packagesBlock(r)}
-    ${approval}${report}
+    ${qn}${approval}${report}
     <ol class="timeline" id="timeline">${timelineItems(r)}</ol>`;
   const tl = $("#timeline");
   if (r.status === "running" || r.status === "waiting_approval") tl.scrollTop = tl.scrollHeight;
@@ -1081,8 +1106,8 @@ let searchResults = null;  // tasks found by the search box (null: not searching
 const openTasks = new Set();
 const KIND_LABELS = { plan: "Plan", design: "Design", code: "Build", test_plan: "Test plan", deploy_prep: "Deploy prep",
   test_report: "Test", fix: "Fix", deploy_report: "Deploy", report: "Report" };
-const TASK_COLORS = { paused: "#c4b5fd", running: "var(--good)", waiting_approval: "var(--warn)", queued: "#7dd3fc", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" };
-const TASK_LABELS = { paused: "paused", running: "running", waiting_approval: "waiting for you", queued: "queued", done: "done", failed: "failed", cancelled: "stopped", interrupted: "interrupted" };
+const TASK_COLORS = { waiting_answer: "#f0abfc", paused: "#c4b5fd", running: "var(--good)", waiting_approval: "var(--warn)", queued: "#7dd3fc", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" };
+const TASK_LABELS = { waiting_answer: "question for you", paused: "paused", running: "running", waiting_approval: "waiting for you", queued: "queued", done: "done", failed: "failed", cancelled: "stopped", interrupted: "interrupted" };
 const RESUMABLE = ["failed", "cancelled", "interrupted"];
 const ms = (iso) => (iso ? new Date(iso).getTime() : NaN);
 const serverNow = () => Date.now() + boardOffset;
@@ -1284,6 +1309,7 @@ function stageTrack(t) {
 }
 
 function renderTasks() {
+  if (typingAnswer()) { setTimeout(renderTasks, 1500); return; }
   const order = { running: 0, waiting_approval: 0, queued: 1 };
   const shownTasks = (searchResults || B.tasks).filter((t) => taskFilter === "all"
     || (taskFilter === "active" && LIVE.includes(t.status))
@@ -1316,6 +1342,7 @@ function renderTasks() {
         <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${routeLabel(t)}${t.task_options?.skip?.length ? ` · no ${t.task_options.skip.map(esc).join(", no ")}` : ""}${Object.keys(t.task_options?.models || {}).length ? ` · ${Object.entries(t.task_options.models).map(([a, m]) => `${esc(nameOf(a))}: ${esc(m)}`).join(", ")}` : ""}${t.evidence ? ` · ${t.evidence.verified ? "✓ verified" : "unverified"}` : ""}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
         <div class="task-status">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")}</div>
         <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
+        ${t.question ? questionCard(t.id, t.question) : ""}
         <div class="task-now">${now || (t.waiting_ceo ? '<span class="muted small">QA passed · waiting for your approval to deploy</span>' : live ? '<span class="muted small">between steps</span>' : "")}</div>
         <div class="task-actions">
           ${t.status !== "queued" ? `<button type="button" class="btn small" data-open="${esc(t.id)}">Open</button><button type="button" class="btn small ghost" data-report="${esc(t.id)}" title="The full report of this task">Report</button>` : ""}
@@ -1591,6 +1618,7 @@ function connect() {
     if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`);
     if (d.event === "memory") flashMemory(d.data.agent, d.data.op);
     if (d.event === "route") logLine("route", `${d.data.route === "answer" ? "Team Lead answers directly" : d.data.route === "direct" ? "⚡ fast lane → " + nameOf(d.data.agent) : "team: " + (d.data.agents || []).map(nameOf).join(", ")}${d.data.reason ? " (" + d.data.reason + ")" : ""}`, "ok");
+    if (d.event === "question") { toast(`${nameOf(d.data.agent)} asks: ${d.data.question}`); logLine("question", `${nameOf(d.data.agent)} asks: ${d.data.question}`, "bad"); boardSoon(); }
     if (d.event === "package") logLine("package", `${d.data.id} ${d.data.title} · ${nameOf(d.data.agent)}: ${d.data.status}`, d.data.status === "failed" ? "bad" : "ok");
     if (d.event === "paused" || d.event === "unpaused") { logLine("task", d.event === "paused" ? "paused" : "continuing"); refreshSoon(); boardSoon(); }
     if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok");

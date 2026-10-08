@@ -273,6 +273,21 @@ A direct job uses a short system prompt and no skill texts, so the model has far
 - A direct task that changed files keeps them on its branch `babd/<task id>` for review (it had no
   QA round, so it is never merged on its own).
 
+## Agents ask you when something is unclear
+
+An agent that cannot decide something itself (a password it was not given, which server, a choice
+only you can make) ends its answer with `QUESTION: …` (and `OPTIONS: a | b | c` when there are clear
+choices). The task then waits (status *question for you*) and asks you:
+
+- **Dashboard**: a question card on the task panel and the task board: pick an option or type an answer.
+- **Telegram**: the question arrives with a button per option and **✍️ Type an answer**; the
+  keyboard button **💬 Questions** lists every open question.
+- **Terminal** (`babd run`): asked at the prompt.
+
+The agent then does its step again with your answer, and every later agent of the task sees your
+answers too. At most `project.max_questions` (default 3) questions per task; `project.ask_ceo: false`
+turns asking off. Stop works while a task waits. API: `POST /api/runs/<id>/answer {"answer": "…"}`.
+
 ## Agent logs and task reports
 
 - **Agent logs** (top menu, or **Log** on an agent card): everything one agent did, newest first and

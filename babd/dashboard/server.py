@@ -33,7 +33,7 @@ EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks
 DEFAULT_PARALLEL_TASKS = 3
 TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
                "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage",
-               "evidence", "task_options", "route", "paused", "packages")
+               "evidence", "task_options", "route", "paused", "packages", "question", "questions")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
@@ -368,7 +368,7 @@ class Dashboard:
         auto = self.load()["project"].get("auto_resume", True)
         resumed = []
         for s in self.saved_states(200):
-            if s.get("status") not in ("running", "waiting_approval", "paused"):
+            if s.get("status") not in LIVE_STATUSES:
                 continue
             was_paused = s.get("status") == "paused" or s.get("paused")
             pid = s.get("pid")
@@ -444,7 +444,7 @@ class Dashboard:
         return {k: s.get(k) for k in ("id", "goal", "status", "stage", "progress", "started_at", "finished_at",
                                   "error", "agents", "stages", "qa_rounds", "verdict", "approval", "deployed",
                                   "blockers", "report", "memory", "skills", "steps", "documents", "workspace",
-                                  "usage", "evidence", "tests", "task_options", "route", "paused", "packages", "messages")}
+                                  "usage", "evidence", "tests", "task_options", "route", "paused", "packages", "question", "questions", "messages")}
 
     def run_summary(self):
         return self.summary(self.last_run) if self.last_run else None
@@ -758,7 +758,19 @@ class Dashboard:
     def _launch(self, entry):
         opts = entry.get("options") or {}
         team = Team(flow.apply_models(self.load(), opts.get("models") or {}), log=lambda m: None)
-        ctx = {"approval": None, "options": entry}
+        ctx = {"approval": None, "question": None, "options": entry}
+
+        def asker(request):
+            ev, result = threading.Event(), {}
+            ctx["question"] = (ev, result, request)
+            self.hub.publish("question", request)
+            self._pump()  # waiting for the CEO: the slot goes to the next task
+            while not ev.wait(1):
+                if run.cancelled.is_set():
+                    ctx["question"] = None
+                    return None
+            ctx["question"] = None
+            return result.get("answer")
 
         def approver(request):
             if entry["auto_approve"]:
@@ -781,7 +793,7 @@ class Dashboard:
 
         run = flow.Run(team, entry["goal"], approver=approver, on_event=on_event, run_id=entry["id"], slots=self.slots,
                        docs=entry.get("docs"), project_id=entry.get("project"), resume=entry.get("resume", False),
-                       options=None if entry.get("resume") else opts)
+                       options=None if entry.get("resume") else opts, asker=asker)
         run.state["options"] = {"auto_approve": entry["auto_approve"], "update_dashboard": entry["update_dashboard"]}
         ctx["run"] = run
         self.active[run.id] = ctx
@@ -812,6 +824,24 @@ class Dashboard:
         ev.set()
         return {"ok": True}
 
+    def answer_question(self, run_id, answer):
+        """The CEO's answer to the question an agent of this task is waiting on."""
+        answer = str(answer or "").strip()
+        if not answer:
+            raise ApiError(400, "the answer is empty")
+        with self.tasks_lock:
+            ctx = self.active.get(os.path.basename(run_id))
+        if not ctx or not ctx.get("question"):
+            raise ApiError(409, "this task is not waiting for an answer")
+        ev, result, request = ctx["question"]
+        result["answer"] = answer[:2000]
+        ev.set()
+        return {"ok": True, "question": request.get("question")}
+
+    def open_questions(self):
+        with self.tasks_lock:
+            return [{**c["question"][2]} for c in self.active.values() if c.get("question")]
+
     def cancel_run(self, run_id):
         with self.tasks_lock:
             for i, q in enumerate(self.queue):
@@ -828,6 +858,8 @@ class Dashboard:
         ctx["run"].paused.clear()
         if ctx["approval"]:
             ctx["approval"][0].set()
+        if ctx.get("question"):
+            ctx["question"][0].set()
         return {"ok": True, "note": "stopping: the agent's running program is stopped now"}
 
     def pause_run(self, run_id, paused=True):
@@ -882,7 +914,7 @@ class Dashboard:
         for ctx in self.active_list():
             s = ctx["run"].snapshot()
             seen.add(s["id"])
-            tasks.append({k: s.get(k) for k in TASK_FIELDS} | {"waiting_ceo": bool(ctx["approval"])})
+            tasks.append({k: s.get(k) for k in TASK_FIELDS} | {"waiting_ceo": bool(ctx["approval"]), "waiting_answer": bool(ctx.get("question"))})
         for s in self.saved_states(history):
             if s.get("id") not in seen:
                 seen.add(s.get("id"))
@@ -917,7 +949,7 @@ class Dashboard:
                 "stages": [{"key": k, "label": l, "owner": o} for k, l, o, _ in flow.STAGES]}
 
 
-LIVE_STATUSES = ("running", "waiting_approval", "paused")
+LIVE_STATUSES = ("running", "waiting_approval", "waiting_answer", "paused")
 
 
 def settle(s, active=()):
@@ -1233,6 +1265,8 @@ def make_handler(dash, token, allowed_hosts, security=None):
                     return d.resolve_approval(parts[1], b.get("approved"), b.get("note", ""))
                 if method == "POST" and parts[2:] == ["cancel"]:
                     return d.cancel_run(parts[1])
+                if method == "POST" and parts[2:] == ["answer"]:
+                    return d.answer_question(parts[1], self.body().get("answer"))
                 if method == "POST" and parts[2:] == ["pause"]:
                     return d.pause_run(parts[1], True)
                 if method == "POST" and parts[2:] == ["resume"]:

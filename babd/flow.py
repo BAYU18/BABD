@@ -57,6 +57,29 @@ VERDICT_RE = re.compile(r"VERDICT:\s*\**\s*(PASS|FAIL)", re.I)
 EVIDENCE_RE = re.compile(r"EVIDENCE\s*:?\**\s*\n?(.*?)(?=\n\s*\**VERDICT:|\Z)", re.I | re.S)
 
 
+QUESTION_RE = re.compile(r"^\s*\**\s*QUESTION\s*\**\s*:\s*\**\s*(.+?)\s*$", re.M)
+OPTIONS_RE = re.compile(r"^\s*\**\s*OPTIONS\s*\**\s*:\s*\**\s*(.+?)\s*$", re.M)
+ASK_INSTRUCTION = ("If something essential is unclear and you cannot reasonably decide it yourself (a password you "
+                   "were not given, which server, a choice only the CEO can make), end your answer with a line "
+                   "`QUESTION: <your question>` and, when there are clear choices, a line `OPTIONS: <a> | <b> | <c>`. "
+                   "The CEO answers and you do the step again with the answer. Ask only when you must; otherwise "
+                   "decide, and say what you assumed.")
+
+
+def parse_question(text):
+    """{"question", "options"} when an agent's answer ends with a QUESTION: line (in its last lines)."""
+    tail = "\n".join((text or "").strip().splitlines()[-15:])
+    found = QUESTION_RE.findall(tail)
+    if not found:
+        return None
+    question = found[-1].strip().strip("`*").strip()
+    if not question or question.lower().startswith("<"):
+        return None
+    opts = OPTIONS_RE.findall(tail)
+    options = [o.strip().strip("`*").strip() for o in (opts[-1].split("|") if opts else []) if o.strip()][:6]
+    return {"question": question[:500], "options": [o[:60] for o in options]}
+
+
 def evidence_of(report):
     """QA's EVIDENCE section when it shows real runs (commands with output), else None."""
     m = EVIDENCE_RE.search(report or "")
@@ -67,6 +90,18 @@ def evidence_of(report):
         return None
     shows_run = "```" in text or re.search(r"^\s*(\$|>|❯)\s*\S", text, re.M) or re.search(r"exit (code|status)", text, re.I)
     return text if shows_run else None
+
+
+class Live:
+    """Text built again each time it is used in an f-string (so a later prompt sees new answers)."""
+
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __format__(self, spec):
+        return format(self.fn(), spec)
+
+    __str__ = lambda self: self.fn()  # noqa: E731
 
 
 class FlowError(Exception):
@@ -262,9 +297,10 @@ class Run:
     """One team run on a goal. State is plain JSON so the dashboard can show it as-is."""
 
     def __init__(self, team, goal, approver=None, on_event=None, run_id=None, slots=None, docs=None,
-                 project_id=None, resume=False, options=None):
+                 project_id=None, resume=False, options=None, asker=None):
         self.team = team
         self.goal = goal
+        self.asker = asker                 # fn(question_dict) -> answer text (None = no answer); None = never ask
         self.docs = list(docs or [])       # task documents (babd/taskdocs.py): the brief every agent gets
         self.approver = approver           # fn(request_dict) -> (approved: bool, note: str); None = no approver
         self.on_event = on_event or (lambda kind, data: None)
@@ -274,6 +310,7 @@ class Run:
         self.lock = threading.RLock()      # steps of one run can run at the same time
         project = team.cfg.get("project", {})
         self.require_approval = project.get("require_approval", ["deploy"])
+        self.max_questions = int(project.get("max_questions", 3)) if project.get("ask_ceo", True) else 0
         self.max_fix_rounds = int(project.get("max_fix_rounds", 2))
         self.parallel_prep = bool(project.get("parallel_prep", True))
         self.budget = budget_of(project)
@@ -326,7 +363,7 @@ class Run:
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
             "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [], "skills": [],
             "steps": [], "documents": [taskdocs.summary(d) for d in self.docs], "checkpoints": [], "resumes": 0,
-            "usage": {},
+            "usage": {}, "questions": [], "question": None,
         }
         if self.docs:
             self.write("00-task.md", self.brief + "\n")
@@ -345,7 +382,8 @@ class Run:
         self.brief = open(brief_path).read().strip() if os.path.exists(brief_path) else ""
         st = self.state
         st.update(status="running", error=None, finished_at=None, report=None, blockers=[], stage=None, progress=0,
-                  verdict=None, deployed=False, resumes=st.get("resumes", 0) + 1, paused=False)
+                  verdict=None, deployed=False, resumes=st.get("resumes", 0) + 1, paused=False, question=None)
+        st["questions"] = [q for q in st.get("questions") or [] if q.get("answer") is not None]
         st.setdefault("checkpoints", [])
         st.setdefault("usage", {})
         st.setdefault("steps", [])
@@ -403,6 +441,12 @@ class Run:
         if self.brief:
             text += (f"\n\nThe CEO gave the task as document(s); follow them. (Agents with file tools can also read "
                      f"them at {os.path.join(self.dir, '00-task.md')}.)\n\n{self.brief}")
+        answered = [q for q in self.state.get("questions") or [] if q.get("answer")]
+        if answered:
+            text += "\n\n## The CEO's answers to the team's questions\n" + "\n".join(
+                f"- Q ({q['agent']}): {q['question']}\n  A: {q['answer']}" for q in answered)
+        if self.asker and self.max_questions:
+            text += "\n\n" + ASK_INSTRUCTION
         if self.workspace:
             ws = self.workspace
             text += (f"\n\n## Workspace\nProject: {ws['name']}. Work ONLY in this folder: {ws['dir']} (git branch "
@@ -568,6 +612,14 @@ class Run:
             if reply_kind == "test_report":
                 fact = (lambda o: f"QA verdict {parse_verdict(o)} for '{one_line(self.goal, 80)}': {one_line(o, 200)}")
             out = self.work(agent_id, prompt, task, reply_kind, fact=fact, **work_kw)
+            q = parse_question(out)
+            while q and self.can_ask():
+                answer = self.ask_question(agent_id, q)
+                if not answer:
+                    break
+                out = self.work(agent_id, f"{prompt}\n\n### You asked the CEO\n{q['question']}\n\n### The CEO answered\n"
+                                f"{answer}\n\nNow do your task again, using this answer.", task, reply_kind, fact=fact, **work_kw)
+                q = parse_question(out)
         except Exception:
             self.agent(agent_id, "blocked")
             raise
@@ -575,6 +627,42 @@ class Run:
         self.bus.send(agent_id, "lead", reply_kind, out, seconds=round(time.monotonic() - started, 1))
         self.agent(agent_id, "done")
         return out
+
+    # -- questions: an agent asks the CEO and waits for the answer ----------------------------------
+
+    def can_ask(self):
+        return bool(self.asker) and len(self.state.get("questions") or []) < self.max_questions
+
+    def ask_question(self, agent_id, q):
+        """Ask the CEO (dashboard / Telegram), wait for the answer, return it (None: no answer)."""
+        name = self.team.by_id[agent_id].name
+        with self.lock:
+            entry = {"n": len(self.state["questions"]) + 1, "agent": agent_id, "question": q["question"],
+                     "options": q.get("options") or [], "asked_at": now(), "answer": None}
+            self.state["questions"].append(entry)
+            self.state["question"] = entry
+            before = self.state["status"]
+            self.state["status"] = "waiting_answer"
+        self.agent(agent_id, "waiting", "Waiting for the CEO's answer")
+        self.bus.send("lead", "ceo", "question", f"{name} asks: {q['question']}"
+                      + (f"\nOptions: {' | '.join(entry['options'])}" if entry["options"] else ""), agent=agent_id)
+        self.emit("question", {**entry, "goal": self.goal, "agent_name": name})
+        try:
+            answer = self.asker({**entry, "run": self.id, "goal": self.goal, "agent_name": name})
+        finally:
+            with self.lock:
+                self.state["question"] = None
+                if self.state["status"] == "waiting_answer":
+                    self.state["status"] = before
+        self.check_cancel()
+        answer = str(answer or "").strip()[:2000]
+        with self.lock:
+            entry.update(answer=answer or None, answered_at=now())
+        if answer:
+            self.bus.send("ceo", "lead", "answer", answer, agent=agent_id)
+        self.agent(agent_id, "working", "Continuing with the CEO's answer")
+        self.emit("answered", dict(entry))
+        return answer or None
 
     def write_files(self, agent_id, out, kind):
         """An agent without file tools gives its files as ```lang file=path blocks: write them."""
@@ -678,7 +766,7 @@ class Run:
         def task_for(role):
             return str(assignments.get(role) or "") or f"Do your part ({team.by_id[role].main_task}) for the goal."
 
-        context = f"{self.goal_block}\n\nTeam Lead plan:\n{summary}"
+        context = Live(lambda: f"{self.goal_block}\n\nTeam Lead plan:\n{summary}")  # picks up the CEO's answers
 
         packages = self.packages_of(plan)
         if packages:  # a complex task split into work packages: each starts as soon as what it needs is done

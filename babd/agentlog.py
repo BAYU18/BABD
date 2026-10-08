@@ -91,6 +91,11 @@ def entries_for(kind, data, names=None):
     elif kind == "package" and d.get("agent"):
         out.append((d["agent"], {"type": "package", "status": d.get("status"),
                                  "text": f"work package {d.get('id')} {d.get('title')}: {d.get('status')}"}))
+    elif kind == "question" and d.get("agent"):
+        out.append((d["agent"], {"type": "question", "status": "waiting", "text": f"asks the CEO: {d.get('question')}",
+                                 "detail": " | ".join(d.get("options") or [])}))
+    elif kind == "answered" and d.get("agent"):
+        out.append((d["agent"], {"type": "question", "text": f"the CEO answered: {d.get('answer') or '(no answer)'}"}))
     elif kind == "route":
         target = d.get("agent") if d.get("route") == "direct" else None
         text = {"answer": "answers the CEO directly", "direct": f"gives the task straight to {who(target)}",
