@@ -57,6 +57,9 @@ class ClaudeCode(Harness):
         d = self.cfg.get("config_dir") or os.path.join(".babd", "claude", self.agent_id)
         return d if os.path.isabs(d) else os.path.join(ROOT, d)
 
+    def private_dirs(self):
+        return [self.config_dir] if self.config_dir else []
+
     def configure(self):
         claude_code_routing(self.llm)  # fails early on a non-Anthropic endpoint
         if not self.config_dir:

@@ -9,11 +9,17 @@
                the BABD installation (its code, agents.json, .env, .git, .babd). For Developer, QA, DevOps.
     full       runs anything without asking. Only inside a sandbox.
 
-`sandbox: "docker"` (agents.json, per agent) runs a Hermes agent's commands in a Docker container
-that only sees the task's worktree (Hermes' docker terminal backend; needs Docker on the machine).
+Isolation (`sandbox` per agent, or `project.isolation` for every agent that does not set one):
 
-The deny list is a guardrail, not a sandbox: a determined command can get around a pattern. For real
-isolation use the Docker sandbox.
+    bwrap   the agent's program runs in its own Linux namespaces (bubblewrap): the whole system and the
+            BABD installation are read-only, only the task's worktree, the agent's own home, its tool
+            caches and /tmp can be written; .env, runs/, logs/, the secrets backup and the other agents'
+            homes are hidden; BABD's processes are invisible (own PID namespace). No root needed:
+            `apt install bubblewrap`. Extra writable folders: harness option `writable: ["/var/www"]`.
+    docker  a Hermes agent's commands run in a Docker container that only sees the task's worktree.
+
+The deny list is a guardrail, not a sandbox: a determined command can get around a pattern. The
+bwrap sandbox is enforced by the kernel.
 """
 import json
 import os
@@ -29,7 +35,7 @@ PROFILES = {
 }
 DEFAULT_PROFILE = {"lead": "plan", "architect": "plan", "developer": "workspace", "qa": "workspace",
                    "devops": "workspace"}
-SANDBOXES = ("none", "docker")
+SANDBOXES = ("none", "bwrap", "docker")
 
 DANGEROUS = [
     "sudo *", "* sudo *", "su -*", "*rm -rf /", "*rm -rf / *", "*rm -rf /\\**", "*rm -rf ~*", "*rm -rf $HOME*",
@@ -66,8 +72,8 @@ def profile_of(agent_cfg):
     return p
 
 
-def sandbox_of(agent_cfg):
-    s = agent_cfg.get("sandbox") or "none"
+def sandbox_of(agent_cfg, project=None):
+    s = agent_cfg.get("sandbox") or (project or {}).get("isolation") or "none"
     if s not in SANDBOXES:
         raise PermissionsError(f"agent {agent_cfg.get('id')}: sandbox must be one of {', '.join(SANDBOXES)}")
     return s
@@ -99,6 +105,58 @@ def hermes_config(profile, sandbox, root=ROOT):
 def check_sandbox(sandbox):
     if sandbox == "docker" and not shutil.which("docker"):
         raise PermissionsError("sandbox \"docker\" needs Docker on this machine (docker not found on PATH)")
+    if sandbox == "bwrap":
+        bwrap_check()
+
+
+_bwrap_ok = {}
+
+
+def bwrap_check():
+    """Raise PermissionsError unless bubblewrap can make a sandbox on this machine (checked once)."""
+    if "ok" in _bwrap_ok:
+        if _bwrap_ok["ok"] is not True:
+            raise PermissionsError(_bwrap_ok["ok"])
+        return
+    import subprocess
+    path = shutil.which("bwrap")
+    if not path:
+        _bwrap_ok["ok"] = ("sandbox \"bwrap\" needs bubblewrap on this machine (Debian/Ubuntu: apt install bubblewrap)")
+    else:
+        try:
+            proc = subprocess.run([path, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--unshare-pid",
+                                   "--die-with-parent", "true"], capture_output=True, text=True, timeout=20)
+            _bwrap_ok["ok"] = True if proc.returncode == 0 else (
+                "bubblewrap cannot create a sandbox here: " + (proc.stderr.strip()[:300] or f"exit {proc.returncode}")
+                + " (unprivileged user namespaces may be off: sysctl kernel.unprivileged_userns_clone=1, or the "
+                  "AppArmor profile of the bubblewrap package on Ubuntu 24.04)")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            _bwrap_ok["ok"] = f"bubblewrap failed: {e}"
+    bwrap_check()
+
+
+def bwrap_argv(argv, cwd, writable=(), root=ROOT, hide_dirs=(), hide_files=()):
+    """argv wrapped in a bubblewrap sandbox: everything read-only, `writable` folders (and cwd) writable,
+    BABD's secrets and data hidden, own PID namespace."""
+    from .config import ENV_PATH, SECRETS_BACKUP
+    home = os.path.expanduser("~")
+    r = os.path.realpath(root)
+    out = [shutil.which("bwrap") or "bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+           "--tmpfs", "/tmp", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--die-with-parent",
+           "--new-session"]
+    if os.path.isdir(home):
+        out += ["--bind", home, home]  # tool caches (npm, pip, ~/.ssh known hosts) keep working
+    out += ["--ro-bind", r, r]  # the installation: read-only, also when it is inside the home folder
+    for d in dict.fromkeys(p for p in [cwd, *writable] if p and os.path.isdir(p)):
+        out += ["--bind", d, d]  # ...except the task's folders and the agent's own home under it
+    hidden_dirs = [os.path.join(r, "runs"), os.path.join(r, "logs"), os.path.dirname(SECRETS_BACKUP), *hide_dirs]
+    for d in dict.fromkeys(hidden_dirs):
+        if os.path.isdir(d) and not any(os.path.realpath(w).startswith(os.path.realpath(d)) for w in [cwd, *writable] if w):
+            out += ["--tmpfs", d]
+    for f in dict.fromkeys([ENV_PATH, os.path.join(r, ".babd", "telegram.json"), *hide_files]):
+        if os.path.isfile(f):
+            out += ["--ro-bind", "/dev/null", f]
+    return out + ["--chdir", cwd, "--", *argv]
 
 
 CLAUDE_DENY = ["Bash(sudo:*)", "Bash(git push --force:*)", "Bash(git push -f:*)", "Bash(rm -rf /:*)",

@@ -87,7 +87,9 @@ def public_agent(a):
         a[sp.key] = sp.assigned(a)
     a["skill_status"] = skillpacks.recommendation_status(a)
     try:
-        a["permissions"], a["sandbox"] = permissions.profile_of(a), permissions.sandbox_of(a)
+        a["permissions"] = permissions.profile_of(a)
+        permissions.sandbox_of(a)
+        a["sandbox"] = a.get("sandbox") or ""  # "" = the project's isolation
     except permissions.PermissionsError:
         pass
     return a
@@ -189,6 +191,9 @@ class Dashboard:
                     a[k] = body[k]
             if "parallel" in body:
                 a["parallel"] = max(1, min(8, int(body["parallel"])))
+            if body.get("sandbox") == "":
+                a.pop("sandbox", None)
+                body = {k: v for k, v in body.items() if k != "sandbox"}
             for k, allowed in (("permissions", permissions.PROFILES), ("sandbox", permissions.SANDBOXES)):
                 if k in body:
                     if body[k] not in allowed:
@@ -271,6 +276,16 @@ class Dashboard:
                 p["require_evidence"] = bool(body["require_evidence"])
             if body.get("skills_mode") in ("full", "lean"):
                 p["skills_mode"] = body["skills_mode"]
+            if "isolation" in body:
+                iso = body["isolation"] or "none"
+                if iso not in permissions.SANDBOXES:
+                    raise ApiError(400, f"isolation must be one of {', '.join(permissions.SANDBOXES)}")
+                if iso != "none":
+                    try:
+                        permissions.check_sandbox(iso)
+                    except permissions.PermissionsError as e:
+                        raise ApiError(400, str(e))
+                p["isolation"] = iso
             if "max_parallel_tasks" in body:
                 p["max_parallel_tasks"] = max(1, min(10, int(body["max_parallel_tasks"])))
             if "parallel_prep" in body:

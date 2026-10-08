@@ -98,6 +98,9 @@ class HermesLocal(Harness):
     def home(self):
         return _abs(self.cfg.get("home") or os.path.join(".babd", "hermes", self.agent_id))
 
+    def private_dirs(self):
+        return [self.home]
+
     def describe(self):
         tools = ",".join(self.cfg.get("toolsets") or []) or "default tools"
         return f"hermes chat · {tools}"

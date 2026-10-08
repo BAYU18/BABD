@@ -457,6 +457,15 @@ What BABD protects, and what it cannot:
   removed from the environment of agent programs and of the project's `test_command`; the LLM routing
   then adds back only that agent's own key. A tool an agent needs (e.g. `GH_TOKEN` for DevOps) is
   passed on purpose with the harness option `"pass_env": ["GH_TOKEN"]`.
+- **Agent isolation (bubblewrap).** Team settings → **Agent isolation: bwrap** (`project.isolation`,
+  or `sandbox` per agent) runs every agent program in its own Linux namespaces: the system and the
+  BABD installation are read-only, only the task's worktree, the agent's own home (Hermes / Claude
+  config), the home folder's tool caches and `/tmp` can be written; `.env`, `runs/`, `logs/`, the
+  secrets backup, `.babd/telegram.json` and the other agents' homes are hidden; BABD's processes are
+  invisible (own PID namespace). This is enforced by the kernel, not by command patterns, and needs no
+  root: `apt install bubblewrap` (on Ubuntu 24.04 the package's AppArmor profile allows it). A folder
+  an agent must write outside its task (e.g. a web root it deploys to) goes in its harness option
+  `"writable": ["/var/www/app"]`. Turning bwrap on checks that it works on this machine first.
 - **Agents stay out of BABD.** Terminal commands that touch the installation, its `.env`, `.babd`,
   `logs`, the secrets backup or `/proc/*/environ` are denied, and Claude Code agents' file tools may
   not read `.env`, `.babd` or the backup nor edit BABD's code, agents.json, runs or logs. These are

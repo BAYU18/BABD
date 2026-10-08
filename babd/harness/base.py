@@ -38,7 +38,7 @@ class Harness:
         self.cfg = harness_config(agent_cfg)
         from .. import permissions
         self.permissions = permissions.profile_of(agent_cfg)   # plan / ask / workspace / full
-        self.sandbox = permissions.sandbox_of(agent_cfg)       # none / docker
+        self.sandbox = permissions.sandbox_of(agent_cfg)       # none / bwrap / docker
 
     def complete(self, system, messages, max_tokens=None, effort=None):
         raise NotImplementedError
@@ -89,6 +89,28 @@ class Harness:
         os.makedirs(cwd, exist_ok=True)
         return cwd
 
+    def private_dirs(self):
+        """Folders this harness writes besides the task's worktree (its own home, config)."""
+        return []
+
+    def sandboxed(self, argv):
+        """argv inside the bubblewrap sandbox (see permissions.py)."""
+        from .. import permissions
+        permissions.bwrap_check()
+        mine = [d for d in self.private_dirs() if d]
+        for d in mine:
+            os.makedirs(d, exist_ok=True)
+        others = []  # the other agents' homes stay hidden
+        for base in {os.path.dirname(d) for d in mine}:
+            if os.path.isdir(base):
+                others += [os.path.join(base, n) for n in os.listdir(base)
+                           if os.path.join(base, n) not in mine and os.path.isdir(os.path.join(base, n))]
+        writable = mine + [os.path.expanduser(w) for w in self.cfg.get("writable") or []]
+        gbrain_home = (self.extra_env or {}).get("GBRAIN_HOME")
+        if gbrain_home:
+            writable.append(gbrain_home)
+        return permissions.bwrap_argv(argv, self.cwd, writable, hide_dirs=others)
+
     def child_env(self, env_overrides):
         """Environment for the harness's program: ours + team extras + harness `env` + LLM routing."""
         from .tools import extra_path  # tools imports this module
@@ -107,6 +129,8 @@ class Harness:
         program and everything it started are killed at once instead of running to the end."""
         env = self.child_env(env_overrides)
         cancel = getattr(self, "cancel_event", None)
+        if self.sandbox == "bwrap":
+            argv = self.sandboxed(argv)
         try:
             proc = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=self.cwd,

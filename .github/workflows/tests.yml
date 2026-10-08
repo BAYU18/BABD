@@ -21,7 +21,9 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - name: Install
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          sudo apt-get install -y -q bubblewrap openssh-client  # sandbox + server tests (skipped when unusable)
       - name: Git identity (the project tests make commits)
         run: |
           git config --global user.email "ci@babd.local"

@@ -815,7 +815,7 @@ function renderConfig() {
       }).join("")}
       <div class="row2">${field("Permissions", select("permissions", f.permissions, Object.entries(S.permissions.profiles).map(([k]) => [k, k + (S.permissions.defaults[f.id] === k ? " (recommended)" : "")])),
           esc(S.permissions.profiles[f.permissions] || ""))}
-        ${field("Sandbox", select("sandbox", f.sandbox || "none", [["none", "None"], ["docker", "Docker (needs Docker)"]]), "Docker: a Hermes agent's commands run in a container that only sees the task's worktree.")}</div>
+        ${field("Sandbox", select("sandbox", f.sandbox || "", [["", `Project default (${S.project?.isolation || "none"})`], ["none", "None"], ["bwrap", "bwrap: isolated (recommended)"], ["docker", "Docker (needs Docker)"]]), "bwrap: the agent's program runs isolated: system and BABD read-only, only the task's folder writable, BABD's secrets hidden. Docker: a Hermes agent's commands run in a container.")}</div>
       <div class="note">Installed and configured automatically: <b>Save & set up</b> installs the program if needed and writes this agent's config, using the LLM from the LLM tab.</div>
       <div class="note">${esc(agentById(drawer.agentId).harness_summary)}</div>`;
   } else if (drawer.tab === "telegram") {
@@ -1031,6 +1031,7 @@ $("#btnSettings").addEventListener("click", () => {
       <div class="row2">${field("Tokens per task", `<input type="number" id="b_tt" min="0" step="10000" value="${esc(p.budget?.tokens_per_task || 0)}">`)}${field("USD per task", `<input type="number" id="b_ct" min="0" step="0.5" value="${esc(p.budget?.cost_per_task || 0)}">`)}</div>
       <div class="row2">${field("Tokens per day", `<input type="number" id="b_td" min="0" step="100000" value="${esc(p.budget?.tokens_per_day || 0)}">`)}${field("USD per day", `<input type="number" id="b_cd" min="0" step="1" value="${esc(p.budget?.cost_per_day || 0)}">`)}</div>
       <div class="help">0 = no limit. A task over its budget stops before its next step (raise the budget, then Resume); over the daily budget, queued tasks wait. Costs need a price per agent (agents.json llm.price) unless the tool reports them (Claude Code). Hermes token counts are estimates (~4 characters a token).</div>
+      ${field("Agent isolation", select("p_isolation", p.isolation || "none", [["none", "None: agents run as BABD's user (guard rules only)"], ["bwrap", "bwrap: each agent isolated (recommended; apt install bubblewrap)"], ["docker", "Docker (Hermes agents' commands)"]]), "For every agent that does not set its own sandbox. bwrap: system and BABD read-only, only the task's folder writable, .env / runs / logs / secrets hidden, BABD's processes invisible.")}
       ${field("Skill texts in prompts", select("p_skills_mode", p.skills_mode || "full", [["full", "Full text (most reliable, most tokens)"], ["lean", "Lean: the start of each skill (~70% fewer skill tokens)"]]))}</div>
     <label class="check"><input type="checkbox" id="p_evidence" ${p.require_evidence ? "checked" : ""}> A QA PASS needs evidence (the project's tests passing, or QA's commands and outputs); without it the verdict is FAIL</label>
     ${field("QA fix rounds", `<input type="number" id="p_rounds" min="0" max="5" value="${esc(p.max_fix_rounds ?? 2)}">`, "How many times a failed QA report goes back to the Developer before the run is blocked.")}
@@ -1134,7 +1135,7 @@ $("#btnSettings").addEventListener("click", () => {
         max_parallel_tasks: Number($("#p_tasks").value), parallel_prep: $("#p_prep").checked, fast_lane: $("#p_fast").checked,
         retry: { attempts: Number($("#p_retries").value) }, require_evidence: $("#p_evidence").checked,
         budget: { tokens_per_task: Number($("#b_tt").value), cost_per_task: Number($("#b_ct").value), tokens_per_day: Number($("#b_td").value), cost_per_day: Number($("#b_cd").value) },
-        skills_mode: $('[name="p_skills_mode"]').value,
+        skills_mode: $('[name="p_skills_mode"]').value, isolation: $('[name="p_isolation"]').value,
         gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked },
         ...Object.fromEntries(PACKS().map((k) => [k.key, { enabled: $(`#pk_en_${k.key}`).checked, enforce: $(`#pk_enf_${k.key}`).checked }])) });
       toast("Settings saved", "ok"); closeModal(); refresh();

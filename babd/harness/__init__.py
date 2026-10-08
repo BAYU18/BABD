@@ -26,6 +26,9 @@ def create_harness(agent_cfg, project=None):
     if not cls:
         raise HarnessError(f"agent {agent_cfg['id']}: unknown harness {kind!r} (known: {', '.join(HARNESSES)})")
     h = cls(agent_cfg)
+    if project is not None and not agent_cfg.get("sandbox") and project.get("isolation"):
+        from .. import permissions
+        h.sandbox = permissions.sandbox_of(agent_cfg, project)  # the project's isolation for every agent
     if project is not None:
         from .. import skillpacks
         h.skill_packs = skillpacks.agent_skills(agent_cfg, project)
