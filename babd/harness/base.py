@@ -9,12 +9,70 @@ import signal
 import subprocess
 import threading
 import time
+import weakref
 
 from ..config import ROOT
 from ..llm import LLMError
 
 DEFAULT_TIMEOUT_SEC = 1800
 DEFAULT_WORKSPACE = os.path.join(ROOT, "workspace")
+
+# Every harness child process currently running, so a Stop can kill all of them even when a
+# step is between two calls (otherwise the program becomes an orphan and keeps holding its slot).
+_RUNNING_PROCS = weakref.WeakSet()
+_RUNNING_LOCK = threading.Lock()
+
+
+def _register_proc(proc):
+    with _RUNNING_LOCK:
+        _RUNNING_PROCS.add(proc)
+
+
+def _unregister_proc(proc):
+    with _RUNNING_LOCK:
+        _RUNNING_PROCS.discard(proc)
+
+
+def kill_all_running():
+    """Kill every harness child process still running (called when a task is stopped)."""
+    with _RUNNING_LOCK:
+        procs = list(_RUNNING_PROCS)
+    for p in procs:
+        _kill(p)
+
+
+def kill_by_run(run_id):
+    """Kill every process whose environment carries BABD_RUN_ID == run_id.
+
+    Second line of defence: a program spawned between two registry updates (or by a harness that
+    bypassed run_process) is still found here, so a stopped task never leaves an orphan running.
+    """
+    if not run_id or os.name != "posix":
+        return 0
+    killed = 0
+    me = os.getpid()
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid == me:
+            continue
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                env = f.read()
+        except OSError:
+            continue
+        if f"BABD_RUN_ID={run_id}".encode() in env.split(b"\x00") or \
+                b"\x00BABD_RUN_ID=" + run_id.encode() + b"\x00" in env + b"\x00":
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    continue
+            killed += 1
+    return killed
 
 
 class HarnessError(LLMError):
@@ -137,6 +195,17 @@ class Harness:
                                     start_new_session=os.name == "posix")
         except OSError as e:
             raise HarnessError(f"{self.label}: cannot start {argv[0]}: {e}") from e
+        _register_proc(proc)
+        # Watchdog: kill the process group the moment the task is stopped, even if the loop below is
+        # blocked inside communicate(); without this a stopped step could leave an orphan program
+        # running (it kept its agent slot, so the next task waited forever).
+        if cancel is not None:
+            def _watchdog():
+                while proc.poll() is None:
+                    if cancel.wait(0.3):
+                        _kill(proc)
+                        return
+            threading.Thread(target=_watchdog, daemon=True, name="harness-watchdog").start()
         # Write stdin in a background thread. communicate() may only be called once with input=...,
         # so feeding stdin ourselves lets us poll for cancellation/timeout freely afterwards.
         if stdin_text is not None:
@@ -148,17 +217,24 @@ class Harness:
                     pass  # the program exited before reading all of stdin
             threading.Thread(target=_feed, daemon=True).start()
         deadline = time.monotonic() + self.timeout
-        while True:
-            try:
-                out, err = proc.communicate(timeout=0.5)
-                break
-            except subprocess.TimeoutExpired:
-                if cancel is not None and cancel.is_set():
-                    _kill(proc)
-                    raise HarnessError(f"{self.label}: stopped (task cancelled)")
-                if time.monotonic() > deadline:
-                    _kill(proc)
-                    raise HarnessError(f"{self.label}: timed out after {self.timeout:.0f}s")
+        try:
+            while True:
+                try:
+                    out, err = proc.communicate(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel is not None and cancel.is_set():
+                        _kill(proc)
+                        raise HarnessError(f"{self.label}: stopped (task cancelled)")
+                    if time.monotonic() > deadline:
+                        _kill(proc)
+                        raise HarnessError(f"{self.label}: timed out after {self.timeout:.0f}s")
+        finally:
+            # the program is done (or killed): drop it from the registry, and if the task was
+            # cancelled while we waited, make sure nothing of its process group survives.
+            if cancel is not None and cancel.is_set():
+                _kill(proc)
+            _unregister_proc(proc)
         if proc.returncode != 0:
             # CLIs print errors on stdout or stderr; the first and last meaningful lines carry the story.
             lines = [ln.strip() for ln in ((out or "") + "\n" + (err or "")).splitlines()

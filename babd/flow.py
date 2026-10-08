@@ -597,6 +597,14 @@ class Run:
                 add_usage(self.state["usage"].setdefault("by_agent", {}).setdefault(agent_id, {}), u)
         agent.listener.on_retry, agent.listener.cancelled = on_retry, self.cancelled
         agent.listener.on_usage = on_usage
+        # tag every child program with the run id, so Stop can kill exactly this run's programs
+        # even when they were not in the in-memory registry (the anti-orphan guarantee).
+        agent.harness.extra_env["BABD_RUN_ID"] = self.id
+        if getattr(agent, "fallback", None):
+            try:
+                agent.fallback_harness().extra_env["BABD_RUN_ID"] = self.id
+            except Exception:
+                pass
         try:
             out = agent.work(prompt, query=(self.goal, task), task=task, page_title=f"{agent.name} · {kind} · {goal_short}",
                              page_slug=f"babd/runs/{self.id}/{n:02d}-{agent_id}-{kind}",

@@ -1099,6 +1099,14 @@ class Dashboard:
             ctx["approval"][0].set()
         if ctx.get("question"):
             ctx["question"][0].set()
+        # kill any harness program still running right now, so a step that is between two calls
+        # cannot leave an orphan process holding the agent slot (that made the next task stuck).
+        try:
+            from ..harness.base import kill_all_running, kill_by_run
+            kill_all_running()
+            kill_by_run(ctx["run"].id)
+        except Exception as e:  # noqa: BLE001
+            log(f"kill on stop failed: {e}", "dashboard")
         return {"ok": True, "note": "stopping: the agent's running program is stopped now"}
 
     def pause_run(self, run_id, paused=True):
