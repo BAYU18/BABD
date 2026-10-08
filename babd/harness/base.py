@@ -137,10 +137,20 @@ class Harness:
                                     start_new_session=os.name == "posix")
         except OSError as e:
             raise HarnessError(f"{self.label}: cannot start {argv[0]}: {e}") from e
+        # Write stdin in a background thread. communicate() may only be called once with input=...,
+        # so feeding stdin ourselves lets us poll for cancellation/timeout freely afterwards.
+        if stdin_text is not None:
+            def _feed():
+                try:
+                    proc.stdin.write(stdin_text)
+                    proc.stdin.close()
+                except (BrokenPipeError, OSError, ValueError):
+                    pass  # the program exited before reading all of stdin
+            threading.Thread(target=_feed, daemon=True).start()
         deadline = time.monotonic() + self.timeout
         while True:
             try:
-                out, err = proc.communicate(input=stdin_text, timeout=0.5)
+                out, err = proc.communicate(timeout=0.5)
                 break
             except subprocess.TimeoutExpired:
                 if cancel is not None and cancel.is_set():
@@ -156,7 +166,6 @@ class Harness:
             detail = " | ".join(dict.fromkeys(lines[:1] + lines[-1:])) or "no output"
             raise HarnessError(f"{self.label}: exit code {proc.returncode}: {detail[:500]}")
         return out
-
 
 def _kill(proc):
     """Kill a harness program and its children (its own process group)."""
