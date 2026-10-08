@@ -101,6 +101,7 @@ class Dashboard:
         self.regenerate_image = regenerate_image
         self.hub = EventHub()
         self.cfg_lock = threading.RLock()
+        self.pr_lock = threading.RLock()
         self.jobs = {}
         self.chats = {}            # agent id -> (config fingerprint, Agent) for multi-turn chat
         self.chat_locks = {}
@@ -155,6 +156,7 @@ class Dashboard:
             "telegram": self.telegram_state(cfg),
             "projects": projects.projects(cfg),
             "servers": self.server_list(cfg),
+            "github_token_set": bool(os.environ.get(cfg["project"].get("github_token_env") or "GITHUB_TOKEN")),
             "permissions": {"profiles": permissions.PROFILES, "sandboxes": list(permissions.SANDBOXES),
                             "defaults": permissions.DEFAULT_PROFILE},
             "default_project": cfg["project"].get("default_project") or projects.DEFAULT_ID,
@@ -276,6 +278,11 @@ class Dashboard:
                 p["require_evidence"] = bool(body["require_evidence"])
             if body.get("skills_mode") in ("full", "lean"):
                 p["skills_mode"] = body["skills_mode"]
+            if body.get("pr_merge") in ("approve", "auto"):
+                p["pr_merge"] = body["pr_merge"]
+            if body.get("github_token"):
+                p.setdefault("github_token_env", "GITHUB_TOKEN")
+                set_env_var(p["github_token_env"], str(body["github_token"]).strip())
             if "isolation" in body:
                 iso = body["isolation"] or "none"
                 if iso not in permissions.SANDBOXES:
@@ -673,6 +680,80 @@ class Dashboard:
         except servers.ServerError as e:
             raise ApiError(400, str(e))
 
+    # -- pull requests (projects with "merge": "pr") ---------------------------------------------
+
+    def _write_state(self, s):
+        path = os.path.join(flow.RUNS_DIR, os.path.basename(s["id"]), "state.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({k: v for k, v in s.items() if k != "messages"}, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+
+    def open_prs(self, limit=200):
+        out = []
+        for s in self.saved_states(limit):
+            pr = ((s.get("workspace") or {}).get("result") or {}).get("pr")
+            if pr and pr.get("state") == "open":
+                out.append({"run": s["id"], "goal": s.get("goal"), **pr})
+        return out
+
+    def refresh_prs(self, only=None):
+        """Follow the open PRs: CI state, merged / closed on GitHub; merge the ones that may be merged."""
+        from .. import github
+        cfg = self.load()
+        project = cfg["project"]
+        token = github.token_of(project)
+        if not token:
+            return []
+        gh = github.GitHub(token, project.get("github_api"))
+        changed = []
+        with self.pr_lock:
+            for s in self.saved_states(200):
+                if only and s.get("id") != only:
+                    continue
+                pr = ((s.get("workspace") or {}).get("result") or {}).get("pr")
+                if not pr or pr.get("state") != "open":
+                    continue
+                before = json.dumps(pr, sort_keys=True)
+                try:
+                    info = gh.pr(pr["owner"], pr["repo"], pr["number"])
+                    pr.pop("error", None)
+                    if info.get("merged"):
+                        pr.update(state="merged", merged=True)
+                    elif info.get("state") == "closed":
+                        pr["state"] = "closed"
+                    else:
+                        pr["sha"] = (info.get("head") or {}).get("sha") or pr.get("sha")
+                        pr["checks"] = gh.checks(pr["owner"], pr["repo"], pr["sha"])
+                        wants = pr.get("merge_requested") or project.get("pr_merge") == "auto"
+                        if wants and pr["checks"] in ("success", "none"):
+                            gh.merge(pr["owner"], pr["repo"], pr["number"], project.get("pr_merge_method") or "squash",
+                                     f"{flow.one_line(s.get('goal'), 80)} (#{pr['number']})")
+                            pr.update(state="merged", merged=True, merged_at=flow.now())
+                except github.GitHubError as e:
+                    pr["error"] = str(e)[:300]
+                if json.dumps(pr, sort_keys=True) != before:
+                    self._write_state(s)
+                    item = {"run": s["id"], "goal": s.get("goal"), **pr}
+                    changed.append(item)
+                    self.hub.publish("pr", item)
+        return changed
+
+    def merge_pr(self, run_id):
+        """The CEO's go: merge the task's PR as soon as its checks are green."""
+        with self.pr_lock:
+            s = next((x for x in self.saved_states(500) if x.get("id") == os.path.basename(run_id)), None)
+            pr = ((s or {}).get("workspace") or {}).get("result", {}).get("pr") if s else None
+            if not pr or pr.get("state") != "open":
+                raise ApiError(409, "this task has no open pull request")
+            pr["merge_requested"] = True
+            self._write_state(s)
+        self.refresh_prs(only=s["id"])
+        pr = self.load_run(s["id"])["workspace"]["result"]["pr"]
+        note = ("merged" if pr.get("merged") else
+                f"will merge when CI is green (now: {pr.get('checks')})" if not pr.get("error") else pr["error"])
+        return {"ok": True, "pr": pr, "note": f"PR #{pr['number']}: {note}"}
+
     def update_projects(self, body):
         """Replace the project list (and the default project)."""
         with self.cfg_lock:
@@ -684,7 +765,7 @@ class Dashboard:
                 for p in body["projects"]:
                     if not isinstance(p, dict):
                         raise ApiError(400, "each project needs at least a name")
-                    clean = {k: p[k] for k in ("id", "name", "path", "repo", "branch", "merge", "push", "test_command")
+                    clean = {k: p[k] for k in ("id", "name", "path", "repo", "branch", "merge", "push", "test_command", "github_repo")
                              if p.get(k) not in (None, "")}
                     try:
                         n = projects.normalize(clean)
@@ -1276,6 +1357,8 @@ def make_handler(dash, token, allowed_hosts, security=None):
                         return templates.save(b.get("id"), b.get("title"), b.get("body"), b.get("description", ""))
                     except templates.TemplateError as e:
                         raise ApiError(400, str(e))
+            if method == "GET" and parts == ["prs"]:
+                return {"prs": d.open_prs()}
             if method == "GET" and parts == ["agentlogs"]:
                 from .. import agentlog
                 return {"agents": agentlog.summary([a["id"] for a in d.load()["agents"]])}
@@ -1332,6 +1415,8 @@ def make_handler(dash, token, allowed_hosts, security=None):
                     return d.resolve_approval(parts[1], b.get("approved"), b.get("note", ""))
                 if method == "POST" and parts[2:] == ["cancel"]:
                     return d.cancel_run(parts[1])
+                if method == "POST" and parts[2:] == ["merge-pr"]:
+                    return d.merge_pr(parts[1])
                 if method == "POST" and parts[2:] == ["answer"]:
                     return d.answer_question(parts[1], self.body().get("answer"))
                 if method == "POST" and parts[2:] == ["pause"]:
@@ -1373,13 +1458,18 @@ def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=N
     dash.telegram_on = True
     dash.telegram.reconcile()  # Telegram bots whose token is set start now
 
-    def tick():  # a queue held back (e.g. by the daily budget) is checked again every minute
+    def tick():  # a queue held back (e.g. by the daily budget) is checked again every minute; PRs too
         while True:
             time.sleep(60)
             try:
                 dash._pump()
             except Exception as e:
                 log(f"queue check failed: {e}", "dashboard")
+            try:
+                if dash.open_prs(100):
+                    dash.refresh_prs()
+            except Exception as e:  # noqa: BLE001
+                log(f"pull request check failed: {e}", "dashboard")
     threading.Thread(target=tick, daemon=True, name="queue-tick").start()
     local = host in ("127.0.0.1", "localhost", "::1")
     if public_url:

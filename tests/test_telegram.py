@@ -367,6 +367,19 @@ class TelegramFeaturesTest(TelegramTest):
         datas = [b["callback_data"] for row in msg[0]["reply_markup"]["inline_keyboard"] for b in row]
         self.assertEqual(datas, ["srvtest:lpnotif", "srvkey:lpnotif"])
 
+    def test_pull_requests_button(self):
+        self.fake.message(CEO_TOKEN, "🔀 Pull requests")
+        self.wait(lambda: any(t == "No open pull requests." for t in self.fake.texts()))
+        rid = "20260101-000000"
+        os.makedirs(os.path.join(td.flow.RUNS_DIR, rid))
+        with open(os.path.join(td.flow.RUNS_DIR, rid, "state.json"), "w") as f:
+            json.dump({"id": rid, "goal": "Add a cart", "status": "done", "workspace": {"result": {"pr": {
+                "number": 7, "url": "https://github.com/acme/shop/pull/7", "state": "open", "checks": "success"}}}}, f)
+        self.fake.message(CEO_TOKEN, "🔀 Pull requests")
+        msg = self.wait(lambda: [p for p in self.html_msgs() if "PR #7" in p["text"]])
+        self.assertIn("CI green", msg[0]["text"])
+        self.assertEqual(msg[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"prmerge:{rid}")
+
     def test_agents_and_report_commands(self):
         self.call("PUT", "/api/project", {"require_approval": False})
         self.fake.message(CEO_TOKEN, "/agents")

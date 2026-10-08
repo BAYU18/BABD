@@ -273,6 +273,26 @@ A direct job uses a short system prompt and no skill texts, so the model has far
 - A direct task that changed files keeps them on its branch `babd/<task id>` for review (it had no
   QA round, so it is never merged on its own).
 
+## Pull requests on GitHub
+
+A project with merge rule **Pull request on GitHub** (`"merge": "pr"`) never merges a task into its
+branch directly. When the task ends well (QA did not fail, the deploy was not rejected), BABD pushes
+the task's branch `babd/<task id>` and opens a pull request into the project's branch, with the goal,
+the QA verdict and evidence and the report as its description. Then:
+
+- The dashboard follows the PR every minute: its CI checks (GitHub check runs and commit statuses),
+  and whether it was merged or closed on GitHub.
+- **🔀 Merge PR** (task report, Telegram) merges it as soon as CI is green (right away when the repo
+  has no CI); with `project.pr_merge: "auto"` it merges by itself when CI is green. A failed CI never merges.
+- Telegram tells you when CI turns green (with a **Merge PR** button) or red, and when it is merged;
+  keyboard button **🔀 Pull requests** lists the open ones.
+
+Set the GitHub token (contents + pull requests: write) in Team settings → GitHub; it goes to `.env`
+(`project.github_token_env`, default `GITHUB_TOKEN`) and reaches git only through the environment,
+never a command line. The project's remote must be a GitHub URL, or set `github_repo: "owner/repo"`
+(SSH aliases, mirrors). GitHub Enterprise: `project.github_api`. Merge method:
+`project.pr_merge_method` (squash, merge, rebase; default squash).
+
 ## Servers: tell the team which machines it may reach
 
 Team settings → **Servers (SSH)** lists the servers the agents may use (agents.json `servers`): id,

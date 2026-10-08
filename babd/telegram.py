@@ -57,6 +57,7 @@ CEO_COMMANDS = [
     ("notify", "The notifications this bot sends"),
     ("questions", "Questions the agents are waiting on"),
     ("servers", "Servers the agents can reach: test, public key"),
+    ("prs", "Open pull requests: CI state, merge"),
 ]
 
 
@@ -75,7 +76,7 @@ CEO_KEYBOARD = [
     [("⚡ Quick task", "quick"), ("👥 Full team task", "full"), ("📁 Project", "project")],
     [("⏸ Pause", "pause"), ("▶️ Resume", "resume"), ("⏹ Stop task", "cancel")],
     [("🧩 Templates", "templates"), ("💬 Questions", "questions"), ("🖥 Servers", "servers")],
-    [("❓ Help", "help")],
+    [("🔀 Pull requests", "prs"), ("❓ Help", "help")],
 ]
 AGENT_KEYBOARD = [
     [("📊 Status", "status"), ("📜 Live log", "log")],
@@ -567,6 +568,13 @@ class CeoBot(Bot):
             return self.api.send_html(chat, text, [[{"text": f"🔌 Test {x['id']}", "callback_data": f"srvtest:{x['id']}"[:64]},
                                                     {"text": f"🔑 Key {x['id']}", "callback_data": f"srvkey:{x['id']}"[:64]}]
                                                    for x in svs])
+        if cmd == "/prs":
+            prs = self.dash.open_prs()
+            if not prs:
+                return self.api.send(chat, "No open pull requests.", keyboard=self.keyboard())
+            for pr in prs[:10]:
+                self.api.send_html(chat, self.pr_text(pr), self.pr_buttons(pr))
+            return None
         if cmd == "/notify":
             return self.api.send(chat, "This bot sends: " + (", ".join(n for n in NOTIFY if n in self.notify) or "nothing")
                                  + ".\nProgress = a live card per task: who works on what now, what comes next, what is done."
@@ -723,6 +731,10 @@ class CeoBot(Bot):
                 self.api.send_html(chat, text)
             threading.Thread(target=go, daemon=True).start()  # an SSH test can take a while
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Working on it…")
+        if action == "prmerge" and chat is not None:
+            r = self.safe(lambda: self.dash.merge_pr(run_id)["note"])
+            self.api.send(chat, r)
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="OK")
         if action == "proj" and chat is not None:
             self.on_command(chat, f"/project {run_id}")
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Project set")
@@ -818,6 +830,21 @@ class CeoBot(Bot):
         rows = [[{"text": _clip(o, 40), "callback_data": f"ans:{rid}:{i}"[:64]}] for i, o in enumerate(q.get("options") or [])]
         return rows + [[{"text": "✍️ Type an answer", "callback_data": f"ansfree:{rid}"[:64]}]]
 
+    @staticmethod
+    def pr_text(pr):
+        ci = {"success": "✅ CI green", "failure": "❌ CI failed", "pending": "⏳ CI running", "none": "no CI checks"}
+        state = {"merged": "🔀 merged", "closed": "closed"}.get(pr.get("state"), ci.get(pr.get("checks"), pr.get("checks")))
+        return (f"<b>PR #{pr.get('number')}</b> · {html.escape(state or '')}\n{html.escape(_clip(pr.get('goal'), 100))}\n"
+                f"<a href=\"{html.escape(pr.get('url') or '')}\">{html.escape(pr.get('url') or '')}</a>"
+                + ("\nmerges when CI is green" if pr.get("merge_requested") and pr.get("state") == "open" else "")
+                + (f"\n⚠️ {html.escape(pr['error'])}" if pr.get("error") else ""))
+
+    @staticmethod
+    def pr_buttons(pr):
+        if pr.get("state") != "open" or pr.get("merge_requested"):
+            return None
+        return [[{"text": "🔀 Merge PR", "callback_data": f"prmerge:{pr.get('run')}"[:64]}]]
+
     def agents_text(self):
         b = self.dash.board(history=5)
         out = ["<b>Agents</b>"]
@@ -842,6 +869,12 @@ class CeoBot(Bot):
     def on_event(self, kind, data):
         if kind == "run" and data.get("summary"):
             self.track(data["summary"], final=data.get("event") == "finished")
+        if kind == "pr" and "Reports" in self.notify and (data.get("state") != "open" or data.get("checks") in ("success", "failure")):
+            for chat in list(self.chats):
+                try:
+                    self.api.send_html(chat, self.pr_text(data), self.pr_buttons(data))
+                except TelegramError as e:
+                    log(f"telegram ceo: could not notify {chat}: {e}", "telegram")
         if kind == "question" and "Approvals" in self.notify:  # questions go where approvals go
             for chat in list(self.chats):
                 try:

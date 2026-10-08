@@ -27,7 +27,7 @@ from .config import ROOT
 PROJECTS_DIR = os.path.join(ROOT, "workspace", "projects")
 WORKTREES_DIR = os.path.join(ROOT, "workspace", "worktrees")
 DEFAULT_ID = "default"
-MERGE_POLICIES = ("on_approval", "on_pass", "never")
+MERGE_POLICIES = ("on_approval", "on_pass", "never", "pr")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,47}$")
 BRANCH_RE = re.compile(r"^(?!-)(?!.*\.\.)(?!.*//)(?!.*@\{)[A-Za-z0-9._/-]{1,200}(?<![./])$")
 # Where a project may be cloned from: https / http / ssh / git URLs, scp-style git@host:path, or a
@@ -75,12 +75,16 @@ def normalize(p):
     branch = str(p.get("branch") or "").strip()
     if branch and not BRANCH_RE.match(branch):
         raise ProjectError(f"project {pid}: {branch!r} is not a valid branch name")
+    gh_repo = str(p.get("github_repo") or "").strip()
+    if gh_repo and not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", gh_repo):
+        raise ProjectError(f"project {pid}: github_repo must look like owner/repo")
     merge = p.get("merge", "on_approval")
     if merge not in MERGE_POLICIES:
         raise ProjectError(f"project {pid}: merge must be one of {', '.join(MERGE_POLICIES)}")
     return {"id": pid, "name": p.get("name") or pid, "path": os.path.normpath(path), "repo": repo,
             "branch": branch, "merge": merge, "push": bool(p.get("push", False)),
-            "test_command": (p.get("test_command") or "").strip(), "custom_path": bool(p.get("path"))}
+            "test_command": (p.get("test_command") or "").strip(), "custom_path": bool(p.get("path")),
+            "github_repo": gh_repo}
 
 
 def get(cfg, project_id=None):

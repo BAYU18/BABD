@@ -186,6 +186,12 @@ function packagesBlock(r) {
       <b>${esc(p.id)}</b> ${esc(p.title)} <span class="muted small">· ${esc(nameOf(p.agent))}${p.depends_on?.length ? ` · after ${p.depends_on.map(esc).join(", ")}` : " · starts at once"}</span></div>`).join("")}</div>`;
 }
 
+function prLabel(pr) {
+  if (!pr) return "";
+  const ci = { success: "✓", failure: "✗", pending: "…", none: "" }[pr.checks] ?? "";
+  return ` · <a href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">PR #${esc(pr.number)}</a> ${esc(pr.state === "open" ? `CI ${ci}` : pr.state)}`;
+}
+
 function routeLabel(t) {
   const r = t.route;
   if (!r) return t.task_options?.mode && t.task_options.mode !== "auto" ? ` · mode ${esc(t.task_options.mode)}` : "";
@@ -243,7 +249,7 @@ function tgStatus(key) {
 }
 
 function projectRow(pr, isNew = false) {
-  const merge = [["on_approval", "Merge after QA passes and you approve the deploy"], ["on_pass", "Merge when QA passes"], ["never", "Never merge: keep a branch to review"]];
+  const merge = [["on_approval", "Merge after QA passes and you approve the deploy"], ["on_pass", "Merge when QA passes"], ["never", "Never merge: keep a branch to review"], ["pr", "Pull request on GitHub: merge when CI is green and you press Merge"]];
   return `<div class="proj-row" data-id="${esc(isNew ? "" : pr.id || "")}">
     <div class="row2">${text("pr_name", pr.name, "Name, e.g. Web shop")}${text("pr_repo", pr.repo, "Git repository URL (optional)")}</div>
     <div class="row2">${text("pr_path", pr.custom_path ? pr.path : "", "Folder (optional, default workspace/projects/<id>)")}${text("pr_branch", pr.branch, "Branch (default: the repo's)")}</div>
@@ -1031,6 +1037,7 @@ $("#btnSettings").addEventListener("click", () => {
       <div class="row2">${field("Tokens per task", `<input type="number" id="b_tt" min="0" step="10000" value="${esc(p.budget?.tokens_per_task || 0)}">`)}${field("USD per task", `<input type="number" id="b_ct" min="0" step="0.5" value="${esc(p.budget?.cost_per_task || 0)}">`)}</div>
       <div class="row2">${field("Tokens per day", `<input type="number" id="b_td" min="0" step="100000" value="${esc(p.budget?.tokens_per_day || 0)}">`)}${field("USD per day", `<input type="number" id="b_cd" min="0" step="1" value="${esc(p.budget?.cost_per_day || 0)}">`)}</div>
       <div class="help">0 = no limit. A task over its budget stops before its next step (raise the budget, then Resume); over the daily budget, queued tasks wait. Costs need a price per agent (agents.json llm.price) unless the tool reports them (Claude Code). Hermes token counts are estimates (~4 characters a token).</div>
+      ${field("GitHub (projects with merge = pull request)", `<div class="row2"><input type="password" id="p_gh_token" placeholder="${S.github_token_set ? "•••••••• token set — type to replace" : "GitHub token (contents + pull requests: write)"}" autocomplete="new-password">${select("p_pr_merge", p.pr_merge || "approve", [["approve", "Merge a PR when you press Merge and CI is green"], ["auto", "Merge a PR by itself when CI is green"]])}</div>`, "BABD pushes the task's branch, opens the PR with the report, follows its CI checks, and merges it. The token goes to .env.")}
       ${field("Agent isolation", select("p_isolation", p.isolation || "none", [["none", "None: agents run as BABD's user (guard rules only)"], ["bwrap", "bwrap: each agent isolated (recommended; apt install bubblewrap)"], ["docker", "Docker (Hermes agents' commands)"]]), "For every agent that does not set its own sandbox. bwrap: system and BABD read-only, only the task's folder writable, .env / runs / logs / secrets hidden, BABD's processes invisible.")}
       ${field("Skill texts in prompts", select("p_skills_mode", p.skills_mode || "full", [["full", "Full text (most reliable, most tokens)"], ["lean", "Lean: the start of each skill (~70% fewer skill tokens)"]]))}</div>
     <label class="check"><input type="checkbox" id="p_evidence" ${p.require_evidence ? "checked" : ""}> A QA PASS needs evidence (the project's tests passing, or QA's commands and outputs); without it the verdict is FAIL</label>
@@ -1136,6 +1143,7 @@ $("#btnSettings").addEventListener("click", () => {
         retry: { attempts: Number($("#p_retries").value) }, require_evidence: $("#p_evidence").checked,
         budget: { tokens_per_task: Number($("#b_tt").value), cost_per_task: Number($("#b_ct").value), tokens_per_day: Number($("#b_td").value), cost_per_day: Number($("#b_cd").value) },
         skills_mode: $('[name="p_skills_mode"]').value, isolation: $('[name="p_isolation"]').value,
+        pr_merge: $('[name="p_pr_merge"]').value, github_token: $("#p_gh_token").value.trim() || undefined,
         gbrain: { enabled: $("#g_enabled").checked, strict: $("#g_strict").checked, allow_cloud: $("#g_cloud").checked },
         ...Object.fromEntries(PACKS().map((k) => [k.key, { enabled: $(`#pk_en_${k.key}`).checked, enforce: $(`#pk_enf_${k.key}`).checked }])) });
       toast("Settings saved", "ok"); closeModal(); refresh();
@@ -1386,7 +1394,7 @@ function renderTasks() {
     return `<article class="task" data-task="${esc(t.id)}">
       <div class="task-row">
         <button type="button" class="task-toggle" data-toggle="${esc(t.id)}" aria-expanded="${open}" aria-label="Show steps">${open ? "▾" : "▸"}</button>
-        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${routeLabel(t)}${t.task_options?.skip?.length ? ` · no ${t.task_options.skip.map(esc).join(", no ")}` : ""}${Object.keys(t.task_options?.models || {}).length ? ` · ${Object.entries(t.task_options.models).map(([a, m]) => `${esc(nameOf(a))}: ${esc(m)}`).join(", ")}` : ""}${t.evidence ? ` · ${t.evidence.verified ? "✓ verified" : "unverified"}` : ""}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
+        <div class="task-title"><div class="goal">${t.documents?.length ? "📄 " : ""}${esc(t.goal)}</div><div class="muted small">${meta}${routeLabel(t)}${t.task_options?.skip?.length ? ` · no ${t.task_options.skip.map(esc).join(", no ")}` : ""}${Object.keys(t.task_options?.models || {}).length ? ` · ${Object.entries(t.task_options.models).map(([a, m]) => `${esc(nameOf(a))}: ${esc(m)}`).join(", ")}` : ""}${t.evidence ? ` · ${t.evidence.verified ? "✓ verified" : "unverified"}` : ""}${t.workspace?.name || t.project ? ` · 📁 ${esc(t.workspace?.name || projectName(t.project))}` : ""}${t.workspace?.result?.merged ? " · merged" : ""}${prLabel(t.workspace?.result?.pr)}${t.documents?.length ? ` · ${t.documents.map((d) => esc(d.name)).join(", ")}` : ""}</div></div>
         <div class="task-status">${pill(TASK_LABELS[t.status] || t.status, TASK_COLORS[t.status] || "var(--dim)", t.status === "running")}</div>
         <div class="task-progress">${t.status === "queued" ? '<span class="muted small">not started</span>' : `${stageTrack(t)}<span class="pct">${t.progress ?? 0}%</span>`}</div>
         ${t.question ? questionCard(t.id, t.question) : ""}
@@ -1859,6 +1867,8 @@ function renderReport(r) {
     ${ev.note || (r.tests || []).length ? `<h3>Tests and evidence</h3><div class="small">${ev.verified ? "✓ verified" : "not verified"}${ev.source ? ` (${esc(ev.source)})` : ""}: ${esc(ev.note || "")}</div>
       ${(r.tests || []).map((t) => `<details><summary>Round ${t.round}: <code>${esc(t.command)}</code> → exit ${t.exit}</summary><pre class="log-detail">${esc(t.output)}</pre></details>`).join("")}` : ""}
     ${ws.name ? `<h3>Project and code</h3><div class="small">📁 ${esc(ws.name)} · branch <code>${esc(ws.branch || "—")}</code>${res.commit ? ` · commit <code>${esc(res.commit)}</code>` : ""}${res.files ? ` · ${res.files} file(s)` : ""}${res.merged ? ` · merged into <code>${esc(ws.base)}</code>` : ""}${res.pushed ? " · pushed" : ""}${res.note ? `<br>${esc(res.note)}` : ""}</div>
+      ${res.pr ? `<div class="small">🔀 <a href="${esc(res.pr.url)}" target="_blank" rel="noopener noreferrer">Pull request #${esc(res.pr.number)}</a> · ${esc(res.pr.state)} · CI ${esc(res.pr.checks)}${res.pr.merge_requested && res.pr.state === "open" ? " · merges when CI is green" : ""}${res.pr.error ? ` · <span class="bad">${esc(res.pr.error)}</span>` : ""}
+        ${res.pr.state === "open" && !res.pr.merge_requested ? `<button type="button" class="btn small good" data-rep-act="merge-pr">🔀 Merge PR</button>` : ""}</div>` : ""}
       ${(ws.files_written || []).length ? `<details><summary class="small">${ws.files_written.length} file(s) written for agents without file tools</summary><pre class="log-detail">${esc(ws.files_written.map((f) => `${f.path}  (${nameOf(f.agent)})`).join("\n"))}</pre></details>` : ""}` : ""}
     ${(r.documents || []).length ? `<h3>Task documents</h3>${docChips(r.documents, r.id)}` : ""}
     <div class="small muted" style="margin-top:8px">Options: mode ${esc(opts.mode || "auto")}${(opts.skip || []).length ? ` · no ${opts.skip.map(esc).join(", no ")}` : ""}${Object.keys(opts.models || {}).length ? ` · ${Object.entries(opts.models).map(([a, m]) => `${esc(nameOf(a))}: ${esc(m)}`).join(", ")}` : ""}</div>

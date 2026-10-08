@@ -1243,6 +1243,20 @@ class Run:
         approved = not self.state["approval"] or self.state["approval"].get("result") == "approved"
         merge = passed and (policy == "on_pass" or (policy == "on_approval" and approved))
         result = projects.finish(self.project, self.workspace, f"babd: {one_line(self.goal, 72)} (task {self.id})", merge)
+        good = self.state["status"] == "done" and self.state["verdict"] != "FAIL" and approved
+        if policy == "pr" and result.get("commit") and good:
+            from . import github
+            rep = self.state.get("report") or {}
+            body = (f"Task `{self.id}` by the BABD team.\n\n**Goal:** {self.goal}\n\n"
+                    f"**QA:** {self.state.get('verdict') or 'no QA round (fast lane)'}"
+                    + (f" · evidence: {(self.state.get('evidence') or {}).get('note')}" if self.state.get("evidence") else "")
+                    + f"\n\n{rep.get('summary') or ''}")
+            try:
+                result["pr"] = github.open_pr(self.project, self.workspace, f"{one_line(self.goal, 90)} (babd {self.id})",
+                                              body, self.team.cfg.get("project"))
+                result["note"] = f"pull request #{result['pr']['number']} opened"
+            except github.GitHubError as e:
+                result["note"] = f"{result.get('note') + '; ' if result.get('note') else ''}no pull request: {e}"
         with self.lock:
             self.state["workspace"]["result"] = result
         self.emit("workspace", result)
