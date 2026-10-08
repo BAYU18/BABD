@@ -39,7 +39,7 @@ LOG_MINUTES = 10       # a live log follows the agent this long, then stops (sen
 CARD_EVERY = 3         # seconds between updates of a task's progress card
 LOG_LINES = 30
 
-# The bots' command menus (Telegram shows them under the "/" button and the menu button).
+# What each command does (the help text, and the slash commands that still work when typed).
 CEO_COMMANDS = [
     ("help", "All commands"),
     ("status", "What the team is doing now"),
@@ -64,12 +64,52 @@ def agent_commands(name):
             ("reset", "Start a new conversation")]
 
 
-def initialize(token, chat_id, commands, description, welcome, base=None):
-    """Set a bot up: check the token, set its command menu and description, greet the chat.
+# The bots are used with a reply keyboard: buttons under the message box, always there. Each button
+# sends its label; the bot turns it into the command. Commands that need a task, project or template
+# answer with buttons to pick one; Quick / Full team ask for the goal in the next message.
+CEO_KEYBOARD = [
+    [("📊 Status", "status"), ("🤖 Agents", "agents"), ("📋 Tasks", "tasks")],
+    [("📜 Live log", "log"), ("📄 Report", "report"), ("🔔 Notifications", "notify")],
+    [("⚡ Quick task", "quick"), ("👥 Full team task", "full"), ("📁 Project", "project")],
+    [("⏸ Pause", "pause"), ("▶️ Resume", "resume"), ("⏹ Stop task", "cancel")],
+    [("🧩 Templates", "templates"), ("❓ Help", "help")],
+]
+AGENT_KEYBOARD = [
+    [("📊 Status", "status"), ("📜 Live log", "log")],
+    [("📋 Recent work", "tasks"), ("🔄 New chat", "reset")],
+    [("❓ Help", "help")],
+]
+
+
+def keyboard_markup(rows, placeholder="Send a goal, or pick a button"):
+    return {"keyboard": [[{"text": label} for label, _ in row] for row in rows], "resize_keyboard": True,
+            "is_persistent": True, "input_field_placeholder": placeholder}
+
+
+def button_command(rows, text):
+    """The command a keyboard button stands for (None when the text is not a button)."""
+    for row in rows:
+        for label, cmd in row:
+            if text == label:
+                return cmd
+    return None
+
+
+def keyboard_help(rows, described):
+    desc = dict(described)
+    return "\n".join(f"{label} - {desc.get(cmd, '')}" for row in rows for label, cmd in row)
+
+
+def initialize(token, chat_id, keyboard, description, welcome, base=None):
+    """Set a bot up: check the token, clear the old "/" command menu (the bot works with a reply
+    keyboard), set its description, greet the chat with the keyboard.
     Returns {"username", "welcome_sent", "note"}; raises TelegramError for a bad token."""
     api = API(token, base)
     me = api.call("getMe", http_timeout=20)
-    api.call("setMyCommands", commands=[{"command": c, "description": d} for c, d in commands])
+    try:
+        api.call("deleteMyCommands")
+    except TelegramError:
+        pass
     for method, key, text in (("setMyDescription", "description", description),
                               ("setMyShortDescription", "short_description", description[:120])):
         try:
@@ -78,10 +118,10 @@ def initialize(token, chat_id, commands, description, welcome, base=None):
             pass  # optional
     out = {"username": me.get("username"), "welcome_sent": False, "note": ""}
     try:
-        api.send(chat_id, welcome)
+        api.send(chat_id, welcome, keyboard=keyboard_markup(keyboard))
         out["welcome_sent"] = True
     except TelegramError as e:
-        out["note"] = (f"The menu is set, but the bot could not write to chat {chat_id} ({e}). Open "
+        out["note"] = (f"The bot is set up, but it could not write to chat {chat_id} ({e}). Open "
                        f"@{me.get('username')} in Telegram, press Start, then Initialize again.")
     return out
 
@@ -209,19 +249,21 @@ class API:
             raise TelegramError(f"the file is larger than {max_bytes // 1000} KB")
         return data
 
-    def send(self, chat_id, text, buttons=None):
-        """Send text (split into several messages when long). Returns the last message."""
+    def send(self, chat_id, text, buttons=None, keyboard=None):
+        """Send text (split into several messages when long). Returns the last message. `buttons`:
+        inline buttons under the message; `keyboard`: the reply keyboard to show."""
         text = text or "…"
         msg = None
         for i in range(0, len(text), MAX_TEXT):
             last = i + MAX_TEXT >= len(text)
+            markup = ({"inline_keyboard": buttons} if buttons else keyboard) if last else None
             msg = self.call("sendMessage", chat_id=chat_id, text=text[i:i + MAX_TEXT], disable_web_page_preview=True,
-                            reply_markup={"inline_keyboard": buttons} if (buttons and last) else None)
+                            reply_markup=markup)
         return msg
 
-    def send_html(self, chat_id, text, buttons=None):
+    def send_html(self, chat_id, text, buttons=None, keyboard=None):
         return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True,
-                         reply_markup={"inline_keyboard": buttons} if buttons else None)
+                         reply_markup={"inline_keyboard": buttons} if buttons else keyboard)
 
     def edit_html(self, chat_id, message_id, text, buttons=None):
         try:
@@ -249,17 +291,20 @@ class Bot(threading.Thread):
         self.live_logs = {}     # chat -> Event that stops its live log
         self.log_every = LOG_EVERY
 
+    keyboard_rows = []
+
     def commands(self):
         return []
 
+    def keyboard(self):
+        return keyboard_markup(self.keyboard_rows)
+
     def set_commands(self):
-        """The command menu is set again at every start, so it always matches this version."""
-        cmds = self.commands()
-        if cmds:
-            try:
-                self.api.call("setMyCommands", commands=[{"command": c, "description": d} for c, d in cmds])
-            except TelegramError as e:
-                log(f"telegram {self.label}: could not set the command menu: {e}", "telegram")
+        """The bots work with a reply keyboard, not the "/" command menu: clear any old menu at start."""
+        try:
+            self.api.call("deleteMyCommands")
+        except TelegramError as e:
+            log(f"telegram {self.label}: could not clear the old command menu: {e}", "telegram")
 
     # -- live log: an agent's activity in a code block, updated every few seconds -------------------
 
@@ -403,7 +448,10 @@ class CeoBot(Bot):
         self.events = dash.hub.subscribe()
         self.notifier = threading.Thread(target=self.notify_loop, daemon=True, name="telegram-ceo-notify")
         self.cards = {}  # task id -> {"msgs": {chat: message id}, "summary", "dirty", "last"}
+        self.pending = {}  # chat -> "quick" / "full": the next message is that task's goal
         self.card_every = CARD_EVERY
+
+    keyboard_rows = CEO_KEYBOARD
 
     def commands(self):
         return CEO_COMMANDS
@@ -448,9 +496,19 @@ class CeoBot(Bot):
         self.remember_chat(chat)
         text = (msg.get("text") or msg.get("caption") or "").strip()
         if msg.get("document"):
+            self.pending.pop(str(chat), None)
             return self.on_document(chat, msg["document"], text)
+        cmd = button_command(CEO_KEYBOARD, text)
+        if cmd:
+            self.pending.pop(str(chat), None)
+            return self.on_command(chat, "/" + cmd)
         if text.startswith("/"):
+            self.pending.pop(str(chat), None)
             return self.on_command(chat, text)
+        mode = self.pending.pop(str(chat), None)
+        if text and mode:
+            return self.api.send(chat, self.safe(lambda: self.start_task(chat, text, options={"mode": mode})),
+                                 keyboard=self.keyboard())
         if text:
             return self.on_goal(chat, text)
 
@@ -461,7 +519,8 @@ class CeoBot(Bot):
         if cmd in ("/start", "/help"):
             return self.api.send(chat, "BABD CEO bot.\n\nSend a goal as a message, or a .md file, or a link to one: "
                                        "it becomes a task for the team (the Team Lead decides who is needed).\n\n"
-                                       + "\n".join(f"/{c} - {d}" for c, d in CEO_COMMANDS))
+                                       "The buttons below:\n" + keyboard_help(CEO_KEYBOARD, CEO_COMMANDS),
+                                 keyboard=self.keyboard())
         if cmd == "/agents":
             return self.api.send_html(chat, self.agents_text(), [
                 [{"text": f"📜 {n}", "callback_data": f"log:{a}"} for a, n in list(self.names().items())[i:i + 3]]
@@ -476,9 +535,9 @@ class CeoBot(Bot):
             return self.api.send(chat, "Whose log? (it updates every 3 s)", [
                 [{"text": n, "callback_data": f"log:{a}"} for a, n in list(names.items())[i:i + 3]]
                 for i in range(0, len(names), 3)])
+        if cmd in ("/report", "/pause", "/resume", "/cancel") and not arg:
+            return self.pick_task(chat, cmd[1:])
         if cmd == "/report":
-            if not arg:
-                return self.api.send(chat, "Usage: /report <task id> (see /tasks)")
             return self.api.send_html(chat, self.safe(lambda: self.report_text(arg)))
         if cmd == "/notify":
             return self.api.send(chat, "This bot sends: " + (", ".join(n for n in NOTIFY if n in self.notify) or "nothing")
@@ -493,7 +552,8 @@ class CeoBot(Bot):
             ps = projects.projects(self.dash.load())
             if not arg:
                 cur = self.chat_project.get(str(chat)) or "(default)"
-                return self.api.send(chat, f"New tasks go to: {cur}\nProjects: " + ", ".join(p["id"] for p in ps))
+                return self.api.send(chat, f"New tasks from this chat go to: {cur}\nPick a project:",
+                                     self.rows([(p["name"], f"proj:{p['id']}") for p in ps]))
             if arg not in {p["id"] for p in ps}:
                 return self.api.send(chat, f"No project {arg}. Projects: " + ", ".join(p["id"] for p in ps))
             self.chat_project[str(chat)] = arg
@@ -502,28 +562,48 @@ class CeoBot(Bot):
         if cmd in ("/quick", "/full"):
             mode = cmd[1:]
             if not arg:
-                return self.api.send(chat, f"Usage: {cmd} <goal>")
+                self.pending[str(chat)] = mode
+                return self.api.send(chat, ("⚡ Fast lane: the Team Lead answers or one agent does it." if mode == "quick" else
+                                            "👥 Whole team: plan, design, code, test, approval, deploy.")
+                                     + "\nSend the goal as your next message.", keyboard=self.keyboard())
             return self.api.send(chat, self.safe(lambda: self.start_task(chat, arg, options={"mode": mode})))
         if cmd in ("/templates", "/template"):
             from . import templates
             ts = templates.list_templates()
             if not arg:
-                return self.api.send(chat, "Templates (send /template <id>, fill it in, send it back as a message or a .md file):\n"
-                                     + "\n".join(f"• {t['id']} - {t['title']}: {t['description']}" for t in ts))
+                return self.api.send(chat, "Templates: pick one, fill it in, send it back as a message or a .md file.\n"
+                                     + "\n".join(f"• {t['title']}: {t['description']}" for t in ts),
+                                     self.rows([(t["title"], f"tpl:{t['id']}") for t in ts]))
             return self.api.send(chat, self.safe(lambda: templates.get(arg)["body"]))
         if cmd == "/resume":
-            if not arg:
-                return self.api.send(chat, "Usage: /resume <task id> (a failed, stopped or interrupted task)")
             return self.api.send(chat, self.safe(lambda: f"Resuming: {self.dash.resume_run(arg)['goal']}"))
         if cmd == "/pause":
-            if not arg:
-                return self.api.send(chat, "Usage: /pause <task id> (continue it with /resume <task id>)")
             return self.api.send(chat, self.safe(lambda: self.dash.pause_run(arg, True)["note"]))
         if cmd == "/cancel":
-            if not arg:
-                return self.api.send(chat, "Usage: /cancel <task id> (see /tasks)")
             return self.api.send(chat, self.safe(lambda: self.dash.cancel_run(arg)["note"]))
-        return self.api.send(chat, "Unknown command. /help")
+        return self.api.send(chat, "Unknown command: use the buttons below.", keyboard=self.keyboard())
+
+    @staticmethod
+    def rows(items, per_row=2):
+        """Inline buttons from (label, callback data) pairs."""
+        buttons = [{"text": _clip(label, 40), "callback_data": data[:64]} for label, data in items]
+        return [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
+
+    PICK = {"report": ("Which task's report?", None),
+            "pause": ("Pause which task?", ("running",)),
+            "resume": ("Continue which task?", ("paused", "failed", "cancelled", "interrupted")),
+            "cancel": ("Stop which task?", ("running", "waiting_approval", "paused", "queued"))}
+
+    def pick_task(self, chat, what):
+        question, statuses = self.PICK[what]
+        tasks = [t for t in self.dash.board(history=15)["tasks"]
+                 if (statuses is None and t.get("status") != "queued") or (statuses and t.get("status") in statuses)][:10]
+        if not tasks:
+            return self.api.send(chat, "No task to pick for that right now.", keyboard=self.keyboard())
+        icon = {"running": "🔄", "paused": "⏸", "queued": "⏳", "done": "✅", "failed": "❌", "cancelled": "⏹",
+                "interrupted": "⚠️", "waiting_approval": "🟡"}
+        return self.api.send(chat, question, self.rows(
+            [(f"{icon.get(t.get('status'), '•')} {t.get('goal')}", f"do:{what}:{t['id']}") for t in tasks], per_row=1))
 
     def safe(self, fn):
         try:
@@ -576,6 +656,21 @@ class CeoBot(Bot):
                     self.start_live_log(chat, run_id, names[run_id])
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"],
                                  text="Stopped" if action == "logstop" else "Following the log")
+        if action == "do" and chat is not None:
+            what, _, rid = run_id.partition(":")
+            done = {"report": lambda: self.api.send_html(chat, self.safe(lambda: self.report_text(rid))),
+                    "pause": lambda: self.api.send(chat, self.safe(lambda: self.dash.pause_run(rid, True)["note"])),
+                    "resume": lambda: self.api.send(chat, self.safe(lambda: f"Continuing: {self.dash.resume_run(rid)['goal']}")),
+                    "cancel": lambda: self.api.send(chat, self.safe(lambda: self.dash.cancel_run(rid)["note"]))}.get(what)
+            if done:
+                done()
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="OK")
+        if action == "proj" and chat is not None:
+            self.on_command(chat, f"/project {run_id}")
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Project set")
+        if action == "tpl" and chat is not None:
+            self.on_command(chat, f"/template {run_id}")
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Template")
         if action in ("approve", "reject"):
             ok = action == "approve"
             note = f"{'approved' if ok else 'rejected'} on Telegram by @{user.get('username') or user.get('id')}"
@@ -747,6 +842,8 @@ class AgentBot(Bot):
         except (StopIteration, KeyError, OSError, ValueError):
             return self.agent_id
 
+    keyboard_rows = AGENT_KEYBOARD
+
     def commands(self):
         return agent_commands(self.name)
 
@@ -827,14 +924,15 @@ class AgentBot(Bot):
         if not self.is_allowed(user):
             return self.deny(chat, user)
         self.remember_chat(chat)
-        cmd = text.split()[0].split("@")[0].lower() if text.startswith("/") else ""
+        button = button_command(AGENT_KEYBOARD, text)
+        cmd = "/" + button if button else text.split()[0].split("@")[0].lower() if text.startswith("/") else ""
         if cmd in ("/start", "/help"):
             return self.api.send(chat, f"{self.name} bot. Write to chat with {self.name}; you also get a message when "
-                                       f"{self.name} starts and finishes work.\n\n"
-                                       + "\n".join(f"/{c} - {d}" for c, d in self.commands()))
+                                       f"{self.name} starts and finishes work.\n\nThe buttons below:\n"
+                                       + keyboard_help(AGENT_KEYBOARD, self.commands()), keyboard=self.keyboard())
         if cmd == "/reset":
             self.dash.chats.pop(self.agent_id, None)
-            return self.api.send(chat, "New conversation.")
+            return self.api.send(chat, "New conversation.", keyboard=self.keyboard())
         if cmd == "/status":
             return self.api.send_html(chat, self.status_text())
         if cmd == "/log":

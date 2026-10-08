@@ -200,7 +200,7 @@ function tgInitBlock(key) {
   return `<div class="tg-init">
       <div class="row2"><input type="text" id="tgChat_${esc(key)}" inputmode="numeric" placeholder="Your chat id, e.g. 123456789 (ask @userinfobot)">
         <button type="button" class="btn small primary" data-tg-init="${esc(key)}">⚡ Initialize bot</button></div>
-      <div class="help">Paste the bot token above and your chat id, then Initialize: BABD checks the token, saves it to .env, sets the bot's command menu (${key === "ceo" ? "every dashboard feature: tasks, status, agents, live logs, reports, pause / resume / stop…" : "chat, status, live log, recent work"}), allows your chat, sends a welcome message and starts the bot. Press Start in the bot first if Telegram says it cannot write to you.</div></div>`;
+      <div class="help">Paste the bot token above and your chat id, then Initialize: BABD checks the token, saves it to .env, gives the bot a button keyboard (${key === "ceo" ? "every dashboard feature: status, agents, tasks, live logs, reports, quick / full tasks, pause / resume / stop, projects, templates…" : "status, live log, recent work, new chat"}), allows your chat, sends a welcome message and starts the bot. Press Start in the bot first if Telegram says it cannot write to you.</div></div>`;
 }
 
 async function tgInit(key, token) {
@@ -208,7 +208,7 @@ async function tgInit(key, token) {
   if (!chat) { toast("Type your chat id first", "bad"); return; }
   try {
     const r = await api("POST", "telegram/init", { target: key, chat_id: chat, token: token || undefined });
-    toast(r.welcome_sent ? `@${r.username} is ready: ${r.commands} commands in its menu, welcome message sent` : r.note, r.welcome_sent ? "ok" : "bad");
+    toast(r.welcome_sent ? `@${r.username} is ready: ${r.buttons} buttons on its keyboard, welcome message sent` : r.note, r.welcome_sent ? "ok" : "bad");
     await refresh(); setTimeout(() => refresh(), 2500);
   } catch (err) { toast(err.message, "bad"); }
 }

@@ -572,18 +572,19 @@ class Dashboard:
         if not re.fullmatch(r"\d{3,20}:[A-Za-z0-9_-]{3,100}", token):
             raise ApiError(400, "that is not a bot token (it looks like 123456789:AAF...)")
         if target == "ceo":
-            commands = telegram.CEO_COMMANDS
+            keyboard = telegram.CEO_KEYBOARD
             about = "BABD CEO bot: give the AI team tasks, follow their progress, approve deploys, read the agents' logs."
             welcome = ("✅ BABD CEO bot is ready.\n\nSend a goal as a message, a .md file or a link: it becomes a task. "
                        "You get a live progress card for every task (who works on what, what comes next, what is "
-                       "done), approvals with buttons, and reports.\n\n" + "\n".join(f"/{c} - {d}" for c, d in commands))
+                       "done), approvals with buttons, and reports.\n\nThe buttons below:\n"
+                       + telegram.keyboard_help(keyboard, telegram.CEO_COMMANDS))
         else:
-            commands = telegram.agent_commands(name)
+            keyboard = telegram.AGENT_KEYBOARD
             about = f"BABD {name}: chat with {name}, follow its live log, get told when it starts and finishes work."
             welcome = (f"✅ {name} bot is ready.\n\nWrite to chat with {name}. You get a message when {name} starts and "
-                       f"finishes a step.\n\n" + "\n".join(f"/{c} - {d}" for c, d in commands))
+                       f"finishes a step.\n\nThe buttons below:\n" + telegram.keyboard_help(keyboard, telegram.agent_commands(name)))
         try:
-            result = telegram.initialize(token, int(chat), commands, about, welcome, base=self.telegram.base)
+            result = telegram.initialize(token, int(chat), keyboard, about, welcome, base=self.telegram.base)
         except telegram.TelegramError as e:
             raise ApiError(400, f"Telegram refused: {e}")
         with self.cfg_lock:
@@ -606,7 +607,8 @@ class Dashboard:
         if self.telegram_on:
             self.telegram.reconcile()
         log(f"telegram {target}: initialized as @{result.get('username')}", "telegram")
-        return {**result, "target": target, "commands": len(commands), "telegram": self.telegram_state(self.load())}
+        return {**result, "target": target, "buttons": sum(len(r) for r in keyboard),
+                "telegram": self.telegram_state(self.load())}
 
     def update_projects(self, body):
         """Replace the project list (and the default project)."""

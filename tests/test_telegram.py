@@ -210,10 +210,54 @@ class TelegramFeaturesTest(TelegramTest):
         with self.fake.lock:
             return [p for t, m, p in self.fake.sent if t == token and p.get("parse_mode") == "HTML"]
 
-    def test_bots_set_their_command_menu_at_start(self):
-        cmds = {t: [c["command"] for c in p["commands"]] for t, m, p in self.fake.sent if m == "setMyCommands"}
-        self.assertEqual(cmds[CEO_TOKEN], [c for c, _ in telegram.CEO_COMMANDS])
-        self.assertEqual(cmds[DEV_TOKEN], ["help", "status", "log", "tasks", "reset"])
+    def test_bots_use_a_reply_keyboard_not_the_command_menu(self):
+        with self.fake.lock:
+            cleared = {t for t, m, p in self.fake.sent if m == "deleteMyCommands"}
+            self.assertFalse([p for t, m, p in self.fake.sent if m == "setMyCommands"])
+        self.assertEqual(cleared, {CEO_TOKEN, DEV_TOKEN})
+        self.fake.message(CEO_TOKEN, "/start")
+        msg = self.wait(lambda: [p for p in self.fake.calls("sendMessage") if (p.get("reply_markup") or {}).get("keyboard")])
+        kb = msg[0]["reply_markup"]
+        self.assertTrue(kb["is_persistent"] and kb["resize_keyboard"])
+        labels = [b["text"] for row in kb["keyboard"] for b in row]
+        self.assertEqual(labels, [label for row in telegram.CEO_KEYBOARD for label, _ in row])
+        self.assertIn("📜 Live log - Live log of an agent", msg[0]["text"])
+        self.fake.message(DEV_TOKEN, "/start")
+        self.wait(lambda: [p for t, m, p in self.fake.sent if t == DEV_TOKEN and m == "sendMessage"
+                           and [b["text"] for row in (p.get("reply_markup") or {}).get("keyboard", []) for b in row]
+                           == [label for row in telegram.AGENT_KEYBOARD for label, _ in row]])
+
+    def test_keyboard_buttons_do_the_commands(self):
+        self.call("PUT", "/api/project", {"require_approval": False})
+        self.fake.message(CEO_TOKEN, "📊 Status")
+        self.wait(lambda: any(t.startswith("Running") for t in self.fake.texts()))
+        self.fake.message(CEO_TOKEN, "🤖 Agents")
+        self.wait(lambda: any("<b>Agents</b>" in p["text"] for p in self.html_msgs()))
+        # Quick task: the next message is the goal
+        self.fake.message(CEO_TOKEN, "⚡ Quick task")
+        self.wait(lambda: any("Send the goal as your next message" in t for t in self.fake.texts()))
+        self.fake.message(CEO_TOKEN, "Print hello")
+        self.wait(lambda: any(t.startswith("Task started: Print hello") for t in self.fake.texts()))
+        run_id = [t for t in self.fake.texts() if t.startswith("Task started: Print hello")][0].split("id: ")[1]
+        self.wait(self.idle, timeout=20)
+        _, r = self.call("GET", f"/api/runs/{run_id}")
+        self.assertEqual(r["task_options"]["mode"], "quick")
+        # Report: pick the task from buttons
+        self.fake.message(CEO_TOKEN, "📄 Report")
+        pick = self.wait(lambda: [p for p in self.fake.calls("sendMessage") if p.get("text") == "Which task's report?"])
+        datas = [b["callback_data"] for row in pick[0]["reply_markup"]["inline_keyboard"] for b in row]
+        self.assertIn(f"do:report:{run_id}", datas)
+        self.fake.push(CEO_TOKEN, callback_query={"id": "cb7", "from": {"id": 7, "username": "boss"}, "data": f"do:report:{run_id}",
+                                                  "message": {"message_id": 3, "chat": {"id": 1007}}})
+        self.wait(lambda: any("<b>Report</b>" in p["text"] and run_id in p["text"] for p in self.html_msgs()))
+        # nothing to pause: a clear answer, not an error
+        self.fake.message(CEO_TOKEN, "⏸ Pause")
+        self.wait(lambda: any(t.startswith("No task to pick") for t in self.fake.texts()))
+        # Project: pick from buttons
+        self.fake.message(CEO_TOKEN, "📁 Project")
+        self.wait(lambda: any(t.startswith("New tasks from this chat go to") for t in self.fake.texts()))
+        self.fake.message(DEV_TOKEN, "📊 Status")
+        self.wait(lambda: any("Idle" in t or "slots busy" in t for t in self.fake.texts(DEV_TOKEN)))
 
     def test_initialize_a_bot(self):
         self.dash.telegram = self.manager  # the dashboard's own manager, on the fake Bot API
@@ -222,6 +266,8 @@ class TelegramFeaturesTest(TelegramTest):
         self.assertEqual((out["username"], out["welcome_sent"]), ("ceo_bot", True))
         welcome = [p for t, m, p in self.fake.sent if m == "sendMessage" and p.get("chat_id") == 5555]
         self.assertIn("BABD CEO bot is ready", welcome[0]["text"])
+        self.assertEqual(welcome[0]["reply_markup"]["keyboard"][0][0]["text"], "📊 Status")
+        self.assertEqual(out["buttons"], sum(len(r) for r in telegram.CEO_KEYBOARD))
         ceo = json.loads(td.read(self.cfg_path))["project"]["ceo_telegram"]
         self.assertIn("5555", ceo["allowed_users"])
         self.assertIn("Progress", ceo["notify"])
