@@ -380,6 +380,20 @@ class TelegramFeaturesTest(TelegramTest):
         self.assertIn("CI green", msg[0]["text"])
         self.assertEqual(msg[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"prmerge:{rid}")
 
+    def test_schedules_button(self):
+        self.fake.message(CEO_TOKEN, "⏰ Schedules")
+        msg = self.wait(lambda: [p for p in self.html_msgs() if "Scheduled tasks" in p["text"]])
+        self.assertEqual(msg[0]["reply_markup"]["inline_keyboard"][-1][0]["callback_data"], "schnew")
+        self.fake.push(CEO_TOKEN, callback_query={"id": "s1", "from": {"id": 7, "username": "boss"}, "data": "schnew",
+                                                  "message": {"message_id": 2, "chat": {"id": 1007}}})
+        self.wait(lambda: any(t.startswith("Send the new schedule") for t in self.fake.texts()))
+        self.fake.message(CEO_TOKEN, "daily 07:00 | cek disk server lpnotif")
+        self.wait(lambda: any(t.startswith("⏰ Scheduled: cek disk server lpnotif") for t in self.fake.texts()))
+        self.assertEqual(json.loads(td.read(self.cfg_path))["schedules"][0]["cron"], "0 7 * * *")
+        self.fake.message(CEO_TOKEN, "⏰ Schedules")
+        msg = self.wait(lambda: [p for p in self.html_msgs() if "cek disk server lpnotif" in p["text"] and "every day at 07:00" in p["text"]])
+        self.assertEqual(msg[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "schrun:cek-disk-server-lpnotif")
+
     def test_agents_and_report_commands(self):
         self.call("PUT", "/api/project", {"require_approval": False})
         self.fake.message(CEO_TOKEN, "/agents")

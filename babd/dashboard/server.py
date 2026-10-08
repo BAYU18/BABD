@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, resolve_env, save_config, set_env_var
-from .. import permissions, projects, servers, skillpacks, taskdocs, telegram
+from .. import permissions, projects, schedules, servers, skillpacks, taskdocs, telegram
 from .auth import Security, verify_password
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
@@ -156,6 +156,7 @@ class Dashboard:
             "telegram": self.telegram_state(cfg),
             "projects": projects.projects(cfg),
             "servers": self.server_list(cfg),
+            "schedules": self.schedule_list(cfg),
             "github_token_set": bool(os.environ.get(cfg["project"].get("github_token_env") or "GITHUB_TOKEN")),
             "permissions": {"profiles": permissions.PROFILES, "sandboxes": list(permissions.SANDBOXES),
                             "defaults": permissions.DEFAULT_PROFILE},
@@ -679,6 +680,99 @@ class Dashboard:
             return servers.test(cfg, sid)
         except servers.ServerError as e:
             raise ApiError(400, str(e))
+
+    # -- scheduled tasks -----------------------------------------------------------------------------
+
+    @property
+    def schedule_book(self):
+        return schedules.Book(os.path.join(flow.RUNS_DIR, "_schedules.json"))
+
+    def schedule_list(self, cfg):
+        try:
+            items = schedules.schedules(cfg)
+        except schedules.ScheduleError:
+            return []
+        book = self.schedule_book.load()
+        out = []
+        for s in items:
+            nxt = schedules.next_run(s["cron"]) if s["enabled"] else None
+            out.append({**s, "when": schedules.describe(s["cron"]), "next": nxt.isoformat(timespec="minutes") if nxt else None,
+                        **{k: v for k, v in book.get(s["id"], {}).items() if k in ("fired", "task", "error")}})
+        return out
+
+    def update_schedules(self, body):
+        items = body.get("schedules")
+        if not isinstance(items, list):
+            raise ApiError(400, "schedules must be a list")
+        cfg = self.load()
+        project_ids = {p["id"] for p in projects.projects(cfg)}
+        out, seen = [], set()
+        for item in items:
+            if not isinstance(item, dict):
+                raise ApiError(400, "each schedule is an object")
+            try:
+                n = schedules.normalize(item)
+            except schedules.ScheduleError as e:
+                raise ApiError(400, str(e))
+            if n["id"] in seen:
+                raise ApiError(400, f"two schedules with the id {n['id']!r}")
+            if n["project"] and n["project"] not in project_ids:
+                raise ApiError(400, f"schedule {n['id']}: no project {n['project']!r}")
+            seen.add(n["id"])
+            out.append(n)
+        with self.cfg_lock:
+            cfg = self.load()
+            cfg["schedules"] = out
+            self.save(cfg)
+        return {"schedules": self.schedule_list(cfg)}
+
+    def set_schedule(self, sid, **changes):
+        with self.cfg_lock:
+            cfg = self.load()
+            items = cfg.get("schedules") or []
+            item = next((s for s in items if s.get("id") == sid), None)
+            if not item:
+                raise ApiError(404, f"no schedule {sid!r}")
+            item.update(changes)
+            self.save(cfg)
+        return next(s for s in self.schedule_list(cfg) if s["id"] == sid)
+
+    def start_scheduled(self, s):
+        """Start one schedule's task now; remember which task it was."""
+        book = self.schedule_book
+        data = book.load()
+        entry = data.setdefault(s["id"], {})
+        try:
+            task = self.start_run(f"{s['goal']}", auto_approve=s["auto_approve"], project=s["project"] or None,
+                                  options={"mode": s["mode"]})
+            entry.update(task=task["id"], error=None)
+            log(f"schedule {s['id']}: started task {task['id']}", "dashboard")
+        except Exception as e:  # noqa: BLE001  (a bad schedule must not stop the others)
+            task = None
+            entry["error"] = str(e)[:300]
+            log(f"schedule {s['id']}: {e}", "dashboard")
+        book.save(data)
+        self.hub.publish("schedule", {"id": s["id"], "goal": s["goal"], "task": task and task["id"], "error": entry.get("error")})
+        return task
+
+    def run_schedule_now(self, sid):
+        try:
+            s = next(x for x in schedules.schedules(self.load()) if x["id"] == sid)
+        except StopIteration:
+            raise ApiError(404, f"no schedule {sid!r}")
+        task = self.start_scheduled(s)
+        if not task:
+            raise ApiError(400, self.schedule_book.load().get(sid, {}).get("error") or "could not start")
+        return task
+
+    def schedule_tick(self, now=None):
+        """Start every schedule that is due this minute (called every 30 s while the dashboard runs)."""
+        try:
+            due = schedules.due(self.load(), self.schedule_book, now)
+        except schedules.ScheduleError as e:
+            log(f"schedules: {e}", "dashboard")
+            return []
+        return [self.start_scheduled(s) for s in due]
 
     # -- pull requests (projects with "merge": "pr") ---------------------------------------------
 
@@ -1357,6 +1451,12 @@ def make_handler(dash, token, allowed_hosts, security=None):
                         return templates.save(b.get("id"), b.get("title"), b.get("body"), b.get("description", ""))
                     except templates.TemplateError as e:
                         raise ApiError(400, str(e))
+            if method == "PUT" and parts == ["schedules"]:
+                return d.update_schedules(self.body())
+            if method == "POST" and len(parts) == 3 and parts[0] == "schedules" and parts[2] == "run":
+                return d.run_schedule_now(parts[1])
+            if method == "POST" and len(parts) == 3 and parts[0] == "schedules" and parts[2] in ("on", "off"):
+                return d.set_schedule(parts[1], enabled=parts[2] == "on")
             if method == "GET" and parts == ["prs"]:
                 return {"prs": d.open_prs()}
             if method == "GET" and parts == ["agentlogs"]:
@@ -1471,6 +1571,15 @@ def serve(host="127.0.0.1", port=8800, open_browser=True, token=None, cfg_path=N
             except Exception as e:  # noqa: BLE001
                 log(f"pull request check failed: {e}", "dashboard")
     threading.Thread(target=tick, daemon=True, name="queue-tick").start()
+
+    def schedule_loop():  # scheduled tasks: checked every 30 s, each starts once per matching minute
+        while True:
+            try:
+                dash.schedule_tick()
+            except Exception as e:  # noqa: BLE001
+                log(f"schedule check failed: {e}", "dashboard")
+            time.sleep(30)
+    threading.Thread(target=schedule_loop, daemon=True, name="schedules").start()
     local = host in ("127.0.0.1", "localhost", "::1")
     if public_url:
         allowed = {urlparse(public_url).netloc.lower()}

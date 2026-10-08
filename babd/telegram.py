@@ -58,6 +58,7 @@ CEO_COMMANDS = [
     ("questions", "Questions the agents are waiting on"),
     ("servers", "Servers the agents can reach: test, public key"),
     ("prs", "Open pull requests: CI state, merge"),
+    ("schedules", "Scheduled tasks: run now, on / off, add"),
 ]
 
 
@@ -76,7 +77,7 @@ CEO_KEYBOARD = [
     [("⚡ Quick task", "quick"), ("👥 Full team task", "full"), ("📁 Project", "project")],
     [("⏸ Pause", "pause"), ("▶️ Resume", "resume"), ("⏹ Stop task", "cancel")],
     [("🧩 Templates", "templates"), ("💬 Questions", "questions"), ("🖥 Servers", "servers")],
-    [("🔀 Pull requests", "prs"), ("❓ Help", "help")],
+    [("🔀 Pull requests", "prs"), ("⏰ Schedules", "schedules"), ("❓ Help", "help")],
 ]
 AGENT_KEYBOARD = [
     [("📊 Status", "status"), ("📜 Live log", "log")],
@@ -455,6 +456,7 @@ class CeoBot(Bot):
         self.cards = {}  # task id -> {"msgs": {chat: message id}, "summary", "dirty", "last"}
         self.pending = {}  # chat -> "quick" / "full": the next message is that task's goal
         self.pending_answer = {}  # chat -> task id: the next message answers that task's question
+        self.pending_schedule = set()  # chats whose next message is a new schedule
         self.card_every = CARD_EVERY
 
     keyboard_rows = CEO_KEYBOARD
@@ -508,7 +510,11 @@ class CeoBot(Bot):
         if cmd:
             self.pending.pop(str(chat), None)
             self.pending_answer.pop(str(chat), None)
+            self.pending_schedule.discard(str(chat))
             return self.on_command(chat, "/" + cmd)
+        if str(chat) in self.pending_schedule and text and not text.startswith("/"):
+            self.pending_schedule.discard(str(chat))
+            return self.api.send(chat, self.safe(lambda: self.add_schedule(text)), keyboard=self.keyboard())
         rid = self.pending_answer.pop(str(chat), None)
         if text and rid and not text.startswith("/"):
             return self.api.send(chat, self.safe(lambda: f"✅ Answer sent: {self.dash.answer_question(rid, text)['question']}"),
@@ -568,6 +574,19 @@ class CeoBot(Bot):
             return self.api.send_html(chat, text, [[{"text": f"🔌 Test {x['id']}", "callback_data": f"srvtest:{x['id']}"[:64]},
                                                     {"text": f"🔑 Key {x['id']}", "callback_data": f"srvkey:{x['id']}"[:64]}]
                                                    for x in svs])
+        if cmd == "/schedules":
+            items = self.dash.schedule_list(self.dash.load())
+            lines = ["<b>Scheduled tasks</b>"] + [
+                f"{'⏰' if x['enabled'] else '⏸'} <b>{html.escape(x['id'])}</b>: {html.escape(_clip(x['goal'], 70))}\n"
+                f"    {html.escape(x['when'])} · {html.escape(x['mode'])}"
+                + (f" · next {html.escape((x.get('next') or '').replace('T', ' '))}" if x.get("next") else "") for x in items]
+            if not items:
+                lines.append("None yet.")
+            rows = [[{"text": f"▶ Run {x['id']}", "callback_data": f"schrun:{x['id']}"[:64]},
+                     {"text": f"{'⏸ Off' if x['enabled'] else '▶ On'} {x['id']}",
+                      "callback_data": f"sch{'off' if x['enabled'] else 'on'}:{x['id']}"[:64]}] for x in items[:15]]
+            rows.append([{"text": "➕ New schedule", "callback_data": "schnew"}])
+            return self.api.send_html(chat, "\n".join(lines), rows)
         if cmd == "/prs":
             prs = self.dash.open_prs()
             if not prs:
@@ -731,6 +750,18 @@ class CeoBot(Bot):
                 self.api.send_html(chat, text)
             threading.Thread(target=go, daemon=True).start()  # an SSH test can take a while
             return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="Working on it…")
+        if action in ("schrun", "schon", "schoff", "schnew") and chat is not None:
+            if action == "schnew":
+                self.pending_schedule.add(str(chat))
+                self.api.send(chat, "Send the new schedule as: when | goal\nExamples:\n"
+                                    "daily 07:00 | cek disk dan service di server lpnotif\n"
+                                    "weekly mon 08:00 | update the project's dependencies\nhourly | check the web shop is up")
+            elif action == "schrun":
+                self.api.send(chat, self.safe(lambda: f"Started: {self.dash.run_schedule_now(run_id)['goal']}"))
+            else:
+                x = self.safe(lambda: self.dash.set_schedule(run_id, enabled=action == "schon"))
+                self.api.send(chat, x if isinstance(x, str) else f"{x['id']}: {'on' if x['enabled'] else 'off'}")
+            return self.api.call("answerCallbackQuery", callback_query_id=q["id"], text="OK")
         if action == "prmerge" and chat is not None:
             r = self.safe(lambda: self.dash.merge_pr(run_id)["note"])
             self.api.send(chat, r)
@@ -830,6 +861,16 @@ class CeoBot(Bot):
         rows = [[{"text": _clip(o, 40), "callback_data": f"ans:{rid}:{i}"[:64]}] for i, o in enumerate(q.get("options") or [])]
         return rows + [[{"text": "✍️ Type an answer", "callback_data": f"ansfree:{rid}"[:64]}]]
 
+    def add_schedule(self, text):
+        when, sep, goal = text.partition("|")
+        if not sep or not goal.strip():
+            return "Use: when | goal  (e.g. daily 07:00 | cek disk server lpnotif)"
+        cfg = self.dash.load()
+        current = list(cfg.get("schedules") or [])
+        out = self.dash.update_schedules({"schedules": current + [{"goal": goal.strip(), "cron": when.strip(), "mode": "quick"}]})
+        new = out["schedules"][-1]
+        return f"⏰ Scheduled: {new['goal']}\n{new['when']} · next {(new.get('next') or '-').replace('T', ' ')}"
+
     @staticmethod
     def pr_text(pr):
         ci = {"success": "✅ CI green", "failure": "❌ CI failed", "pending": "⏳ CI running", "none": "no CI checks"}
@@ -873,6 +914,12 @@ class CeoBot(Bot):
             for chat in list(self.chats):
                 try:
                     self.api.send_html(chat, self.pr_text(data), self.pr_buttons(data))
+                except TelegramError as e:
+                    log(f"telegram ceo: could not notify {chat}: {e}", "telegram")
+        if kind == "schedule" and data.get("error") and "Blockers" in self.notify:
+            for chat in list(self.chats):
+                try:
+                    self.api.send(chat, f"⚠️ Scheduled task {data.get('id')} could not start: {data.get('error')}")
                 except TelegramError as e:
                     log(f"telegram ceo: could not notify {chat}: {e}", "telegram")
         if kind == "question" and "Approvals" in self.notify:  # questions go where approvals go

@@ -273,6 +273,21 @@ A direct job uses a short system prompt and no skill texts, so the model has far
 - A direct task that changed files keeps them on its branch `babd/<task id>` for review (it had no
   QA round, so it is never merged on its own).
 
+## Scheduled tasks
+
+Team settings → **Scheduled tasks** (agents.json `schedules`): a goal that becomes a task on a
+schedule, in this machine's local time. **When** is `daily 07:00`, `hourly`, `weekly mon,fri 08:30`,
+`monthly 1 06:00`, or any five-field cron expression (`0 7 * * 1-5`, `*/15 * * * *`); **mode** is
+⚡ Quick (default: one agent, fast and cheap), Auto or Whole team; plus the project, whether its
+deploys are approved automatically, and on / off. The dashboard checks every 30 seconds and starts a
+due schedule once per matching minute (kept in `runs/_schedules.json`, so a restart never starts it
+twice); **▶ Run now** starts one at once. A scheduled task is an ordinary task: progress card,
+questions, reports, logs.
+
+Telegram: keyboard button **⏰ Schedules** lists them with ▶ Run and ⏸ Off / ▶ On buttons;
+**➕ New schedule** takes `when | goal` (e.g. `daily 07:00 | cek disk dan service di server lpnotif`).
+A schedule that cannot start is reported under Blockers.
+
 ## Pull requests on GitHub
 
 A project with merge rule **Pull request on GitHub** (`"merge": "pr"`) never merges a task into its

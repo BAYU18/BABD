@@ -260,6 +260,20 @@ function projectRow(pr, isNew = false) {
   </div>`;
 }
 
+function scheduleRow(sc, isNew = false) {
+  const projOpts = [["", "Default project"], ...(S.projects || []).map((p) => [p.id, p.name])];
+  return `<div class="proj-row sch-row" data-id="${esc(isNew ? "" : sc.id || "")}">
+    ${text("sc_goal", sc.goal, "Goal, e.g. cek disk dan service di server lpnotif")}
+    <div class="row2">${text("sc_cron", sc.cron, "When: daily 07:00 · hourly · weekly mon 07:00 · or cron 0 7 * * *")}${select("sc_mode", sc.mode || "quick", [["quick", "⚡ Quick (one agent)"], ["auto", "Auto (Team Lead decides)"], ["full", "Whole team"]])}</div>
+    <div class="row2">${select("sc_project", sc.project || "", projOpts)}
+      <span><label class="check"><input type="checkbox" name="sc_enabled" ${sc.enabled !== false ? "checked" : ""}> On</label>
+      <label class="check"><input type="checkbox" name="sc_auto" ${sc.auto_approve ? "checked" : ""}> Approve deploys</label></span></div>
+    ${isNew ? "" : `<div class="help">${esc(sc.when || sc.cron)}${sc.next ? ` · next ${esc(sc.next.replace("T", " "))}` : ""}${sc.task ? ` · last task ${esc(sc.task)}` : ""}${sc.error ? ` · <span class="bad">${esc(sc.error)}</span>` : ""}</div>
+      <button type="button" class="btn small" data-sch-run="${esc(sc.id)}">▶ Run now</button>`}
+    <button type="button" class="linkish" data-sch-rm>Remove</button>
+  </div>`;
+}
+
 function serverRow(sv, isNew = false) {
   const agents = (sv.agents || ["devops"]).join(", ");
   return `<div class="proj-row srv-row" data-id="${esc(isNew ? "" : sv.id || "")}">
@@ -1075,6 +1089,11 @@ $("#btnSettings").addEventListener("click", () => {
       <div class="row"><button type="button" class="btn small" id="projAdd">+ Add project</button>
         <label class="project-pick">Default <select id="projDefault">${(S.projects || []).map((pr) => `<option value="${esc(pr.id)}" ${pr.id === S.default_project ? "selected" : ""}>${esc(pr.name)}</option>`).join("")}</select></label>
         <button type="button" class="btn small primary" id="projSave">Save projects</button></div></div>
+    <div class="field"><label>Scheduled tasks</label>
+      <div class="help">A goal that becomes a task on a schedule (this machine's time): e.g. every morning a quick check of a server, every Friday a dependency update.</div>
+      <div class="proj-list" id="schList">${(S.schedules || []).map((sc) => scheduleRow(sc)).join("")}</div>
+      <div class="row"><button type="button" class="btn small" id="schAdd">+ Add schedule</button>
+        <button type="button" class="btn small primary" id="schSave">Save schedules</button></div></div>
     <div class="field"><label>Servers (SSH)</label>
       <div class="help">Servers the agents may reach: a task can just say "server lpnotif". Only the key's path is stored; Generate key makes an ed25519 key on this machine and shows the public key to put in the server's ~/.ssh/authorized_keys. Save first, then Generate key / Test.</div>
       <div class="proj-list" id="srvList">${(S.servers || []).map((sv) => serverRow(sv)).join("")}</div>
@@ -1093,6 +1112,25 @@ $("#btnSettings").addEventListener("click", () => {
         allow_groups: $("#tg_groups").checked });
       toast("Telegram saved", "ok"); await refresh(); setTimeout(async () => { await refresh(); }, 2500);
     } catch (err) { toast(err.message, "bad"); }
+  };
+  $("#schAdd").onclick = () => $("#schList").insertAdjacentHTML("beforeend", scheduleRow({ cron: "daily 07:00", mode: "quick" }, true));
+  $("#schList").onclick = async (e) => {
+    const rm = e.target.closest("[data-sch-rm]");
+    if (rm) { rm.closest(".sch-row").remove(); return; }
+    const run = e.target.closest("[data-sch-run]");
+    if (run) {
+      try { const t = await api("POST", `schedules/${run.dataset.schRun}/run`); toast(`Started: ${t.goal}`, "ok"); refreshSoon(); }
+      catch (err) { toast(err.message, "bad"); }
+    }
+  };
+  $("#schSave").onclick = async () => {
+    const list = [...document.querySelectorAll("#schList .sch-row")].map((r) => {
+      const v = (n) => r.querySelector(`[name="${n}"]`).value.trim();
+      return { id: r.dataset.id || undefined, goal: v("sc_goal"), cron: v("sc_cron"), mode: v("sc_mode"), project: v("sc_project"),
+        enabled: r.querySelector('[name="sc_enabled"]').checked, auto_approve: r.querySelector('[name="sc_auto"]').checked };
+    });
+    try { await api("PUT", "schedules", { schedules: list }); toast("Schedules saved", "ok"); await refresh(); $("#btnSettings").click(); }
+    catch (err) { toast(err.message, "bad"); }
   };
   $("#srvAdd").onclick = () => $("#srvList").insertAdjacentHTML("beforeend", serverRow({}, true));
   $("#srvList").onclick = async (e) => {
