@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
@@ -232,10 +233,22 @@ def is_secret(root, rel):
 
 
 def run_tests(command, cwd, timeout=900):
-    """Run the project's own test command in the task's worktree: {"command", "exit", "output", "seconds"}."""
+    """Run the project's own test command in the task's worktree: {"command", "exit", "output", "seconds"}.
+
+    The shell must find what BABD already provides, or a healthy project fails its own gate:
+      * the BABD runtime dirs (`.babd/tools`, e.g. Node) via `extra_path()`;
+      * the interpreter BABD itself runs on (`sys.executable`), so `python -m pytest` resolves to the
+        virtualenv that has the project's dependencies instead of `python: not found` (QA round-2:
+        the gate exited 127 with "/bin/sh: 1: python: not found" because PATH was passed through
+        untouched).
+    """
     started = time.monotonic()
     from .config import scrub_env
+    from .harness import tools
     env = {k: v for k, v in scrub_env(os.environ).items() if not k.startswith(("GIT_DIR", "GIT_WORK_TREE"))}
+    py_bin = os.path.dirname(sys.executable)
+    prefix = [py_bin] + [d for d in tools.extra_path() if os.path.isdir(d)]
+    env["PATH"] = os.pathsep.join([d for d in prefix if d] + [env.get("PATH", "")])
     try:
         proc = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
         code, out = proc.returncode, (proc.stdout + ("\n" + proc.stderr if proc.stderr else ""))
