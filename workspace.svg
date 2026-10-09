@@ -6,7 +6,7 @@
 <rect x="50" y="50" width="20" height="16" rx="4" fill="#0d1628" opacity="1" />
 <circle cx="56" cy="58" r="2.5" fill="#9b8cff"/><circle cx="64" cy="58" r="2.5" fill="#9b8cff"/>
 <text x="96" y="66" font-size="26" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">AI SOFTWARE DEVELOPMENT WORKSPACE</text>
-<text x="720" y="66" font-size="16" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">1 Human CEO  ·  5 AI Agents</text>
+<text x="720" y="66" font-size="16" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">1 Human CEO  ·  6 AI Agents</text>
 <line x1="1356" y1="230" x2="1016" y2="230" stroke="#5b8cff" stroke-width="2.5" stroke-dasharray="2 7" stroke-linecap="round"/>
 <path d="M1024 224 L1016 230 L1024 236" stroke="#5b8cff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1185.0" y="218" font-size="11" fill="#5b8cff" font-weight="700" text-anchor="middle" letter-spacing="2" opacity="1">SUPERVISES</text>
@@ -14,7 +14,7 @@
 <path d="M1346 284 L1354 290 L1346 296" stroke="#9b8cff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1185.0" y="314" font-size="11" fill="#9b8cff" font-weight="700" text-anchor="middle" letter-spacing="2" opacity="1">REPORTS</text>
 <line x1="670.0" y1="622" x2="670.0" y2="666" stroke="#9b8cff" stroke-width="2.5"/>
-<line x1="188.5" y1="666" x2="1151.5" y2="666" stroke="#3a5078" stroke-width="2.5" stroke-linecap="round"/>
+<line x1="188.5" y1="666" x2="1472.5" y2="666" stroke="#3a5078" stroke-width="2.5" stroke-linecap="round"/>
 <circle cx="670.0" cy="666" r="5" fill="#9b8cff"/>
 <line x1="188.5" y1="666" x2="188.5" y2="706" stroke="#3a5078" stroke-width="2.5"/>
 <path d="M182.5 700 L188.5 708 L194.5 700" stroke="#38bdf8" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
@@ -24,6 +24,8 @@
 <path d="M824.5 700 L830.5 708 L836.5 700" stroke="#fbbf24" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <line x1="1151.5" y1="666" x2="1151.5" y2="706" stroke="#3a5078" stroke-width="2.5"/>
 <path d="M1145.5 700 L1151.5 708 L1157.5 700" stroke="#f472b6" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="1472.5" y1="666" x2="1472.5" y2="706" stroke="#3a5078" stroke-width="2.5"/>
+<path d="M1466.5 700 L1472.5 708 L1478.5 700" stroke="#c084fc" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="684.0" y="652" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">ASSIGNS &amp; COORDINATES</text>
 <rect x="330" y="110" width="680" height="512" rx="18" fill="#15223a" stroke="#9b8cff" stroke-width="1.5" opacity="1" />
 <rect x="330" y="110" width="680" height="5" rx="2" fill="#9b8cff" opacity="1" />
@@ -546,6 +548,100 @@
 <text x="1107.5" y="1503.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">★ Recommended 13/13 ✓</text>
 <rect x="1023" y="1518" width="99.0" height="26" rx="13" fill="none" stroke="#8597b4" stroke-width="1.4" opacity="1" stroke-dasharray="4 3"/>
 <text x="1072.5" y="1535.5" font-size="12" fill="#8597b4" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">+ Add Skill</text>
+<rect x="1324" y="712" width="297" height="870" rx="18" fill="#15223a" stroke="#26385a" stroke-width="1" opacity="1" />
+<rect x="1324" y="712" width="297" height="5" rx="2" fill="#c084fc" opacity="1" />
+<g transform="translate(1357.5 734)">
+<ellipse cx="115" cy="104" rx="105" ry="7" fill="#c084fc" opacity="0.10"/>
+<line x1="58" y1="8" x2="58" y2="20" stroke="#c084fc" stroke-width="3" stroke-linecap="round"/>
+<circle cx="58" cy="7" r="5" fill="#c084fc"/>
+<rect x="32" y="20" width="52" height="40" rx="12" fill="#dfe7f3" opacity="1" />
+<rect x="39" y="29" width="38" height="20" rx="8" fill="#0d1628" opacity="1" />
+<circle cx="51" cy="39" r="4" fill="#c084fc"/><circle cx="65" cy="39" r="4" fill="#c084fc"/>
+<rect x="27" y="33" width="6" height="14" rx="3" fill="#b9c5d8" opacity="1" />
+<rect x="83" y="33" width="6" height="14" rx="3" fill="#b9c5d8" opacity="1" />
+<path d="M34 98 v-24 a12 12 0 0 1 12 -12 h24 a12 12 0 0 1 12 12 v24 z" fill="#c084fc"/>
+<rect x="50" y="72" width="16" height="8" rx="3" fill="#0d1628" opacity="0.35" />
+<path d="M80 80 q14 2 26 4" stroke="#c084fc" stroke-width="7" stroke-linecap="round" fill="none"/>
+<rect x="18" y="92" width="196" height="8" rx="4" fill="#2f4266" opacity="1" />
+<rect x="122" y="26" width="88" height="56" rx="7" fill="#2a3c5e" opacity="1" />
+<rect x="128" y="32" width="76" height="44" rx="4" fill="#0d1628" opacity="1" />
+<rect x="135" y="40" width="34" height="4" rx="2" fill="#c084fc" opacity="1" />
+<rect x="135" y="49" width="54" height="4" rx="2" fill="#3a5078" opacity="1" />
+<rect x="135" y="58" width="44" height="4" rx="2" fill="#3a5078" opacity="1" />
+<rect x="135" y="67" width="24" height="4" rx="2" fill="#c084fc" opacity="0.6" />
+<rect x="160" y="82" width="12" height="10" rx="0" fill="#2a3c5e" opacity="1" />
+<rect x="102" y="86" width="36" height="6" rx="3" fill="#3a5078" opacity="1" />
+</g>
+<text x="1348" y="864" font-size="14" fill="#c084fc" font-weight="700" text-anchor="start" letter-spacing="1.6" opacity="1">06 · RESEARCHER</text>
+<rect x="1534.36" y="847" width="62.64" height="24" rx="12" fill="#5a6c8a" opacity="0.16" />
+<circle cx="1547.36" cy="859" r="4" fill="#5a6c8a"/>
+<text x="1557.36" y="863.5" font-size="12" fill="#5a6c8a" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">IDLE</text>
+<line x1="1348" y1="878" x2="1597" y2="878" stroke="#26385a"/>
+<text x="1348" y="904" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">MAIN TASK</text>
+<text x="1348" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">RESEARCH</text>
+<text x="1348" y="980" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">INTERNET</text>
+<text x="1348" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
+<rect x="1349" y="1043" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<text x="1378" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Search the web</text>
+<rect x="1349" y="1073" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<text x="1378" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Verify sources</text>
+<rect x="1349" y="1103" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<text x="1378" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Report findings</text>
+<rect x="1336" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
+<text x="1344" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
+<circle cx="1593" cy="1162" r="6.5" fill="none" stroke="#8597b4" stroke-width="4" stroke-dasharray="2.6 2.5"/>
+<circle cx="1593" cy="1162" r="5" fill="#8597b4"/>
+<circle cx="1593" cy="1162" r="2.2" fill="#15223a"/>
+<rect x="1344" y="1178" width="257" height="44" rx="10" fill="#1b2a45" opacity="1" />
+<rect x="1354" y="1192" width="20" height="16" rx="4" fill="#1b2a45" stroke="#c084fc" stroke-width="2" opacity="1" />
+<path d="M1359 1197 l3 3 l-3 3 M1365 1204 h4" stroke="#c084fc" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1384" y="1196" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">HARNESS · PROCESS</text>
+<text x="1384" y="1213" font-size="14" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">scripts/researcher_adap…</text>
+<rect x="1344" y="1230" width="257" height="76" rx="10" fill="#1b2a45" opacity="1" />
+<line x1="1360" y1="1242" x2="1360" y2="1262" stroke="#c084fc" stroke-width="1.6"/>
+<line x1="1354" y1="1248" x2="1374" y2="1248" stroke="#c084fc" stroke-width="1.6"/>
+<line x1="1364" y1="1242" x2="1364" y2="1262" stroke="#c084fc" stroke-width="1.6"/>
+<line x1="1354" y1="1252" x2="1374" y2="1252" stroke="#c084fc" stroke-width="1.6"/>
+<line x1="1368" y1="1242" x2="1368" y2="1262" stroke="#c084fc" stroke-width="1.6"/>
+<line x1="1354" y1="1256" x2="1374" y2="1256" stroke="#c084fc" stroke-width="1.6"/>
+<rect x="1357" y="1245" width="14" height="14" rx="3" fill="#1b2a45" stroke="#c084fc" stroke-width="2" opacity="1" />
+<rect x="1361" y="1249" width="6" height="6" rx="1" fill="#c084fc" opacity="1" />
+<text x="1384" y="1248" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">LLM · CUSTOM</text>
+<text x="1384" y="1265" font-size="13" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">ag-hermes</text>
+<text x="1384" y="1282" font-size="11" fill="#8597b4" font-weight="500" text-anchor="start" letter-spacing="0" opacity="1">URL  43.134.238.213:20128/v1</text>
+<text x="1384" y="1297" font-size="11" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">KEY  $KEY1</text>
+<circle cx="1585" cy="1252" r="5" fill="#34d399"/>
+<circle cx="1585" cy="1252" r="9" fill="#34d399" opacity="0.2"/>
+<rect x="1344" y="1314" width="257" height="44" rx="10" fill="#1b2a45" opacity="1" />
+<circle cx="1364" cy="1336" r="10" fill="#5a6c8a"/>
+<path d="M1358.5 1335.5 L1369.5 1331 L1367.5 1341.5 L1364.5 1338.5 L1362.5 1340.5 L1362.5 1337.5 Z" fill="#ffffff"/>
+<text x="1384" y="1332" font-size="10" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="1.4" opacity="1">TELEGRAM GATEWAY</text>
+<text x="1384" y="1349" font-size="14" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">@babd_researcher_bot</text>
+<circle cx="1585" cy="1336" r="5" fill="#5a6c8a"/>
+<text x="1344" y="1380" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SKILLS</text>
+<rect x="1344" y="1390" width="64.0" height="26" rx="13" fill="#c084fc" opacity="0.14" />
+<rect x="1344" y="1390" width="64.0" height="26" rx="13" fill="none" stroke="#c084fc" stroke-width="1" opacity="0.55" />
+<text x="1376.0" y="1407.5" font-size="12" fill="#c084fc" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">GBrain</text>
+<rect x="1414.0" y="1390" width="106.0" height="26" rx="13" fill="#c084fc" opacity="0.14" />
+<rect x="1414.0" y="1390" width="106.0" height="26" rx="13" fill="none" stroke="#c084fc" stroke-width="1" opacity="0.55" />
+<text x="1467.0" y="1407.5" font-size="12" fill="#c084fc" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Web Research</text>
+<rect x="1344" y="1422" width="127.0" height="26" rx="13" fill="#c084fc" opacity="0.14" />
+<rect x="1344" y="1422" width="127.0" height="26" rx="13" fill="none" stroke="#c084fc" stroke-width="1" opacity="0.55" />
+<text x="1407.5" y="1439.5" font-size="12" fill="#c084fc" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Internet Search</text>
+<rect x="1344" y="1454" width="127.0" height="26" rx="13" fill="#c084fc" opacity="0.14" />
+<rect x="1344" y="1454" width="127.0" height="26" rx="13" fill="none" stroke="#c084fc" stroke-width="1" opacity="0.55" />
+<text x="1407.5" y="1471.5" font-size="12" fill="#c084fc" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Source Citation</text>
+<rect x="1477.0" y="1454" width="120.0" height="26" rx="13" fill="#c084fc" opacity="0.14" />
+<rect x="1477.0" y="1454" width="120.0" height="26" rx="13" fill="none" stroke="#c084fc" stroke-width="1" opacity="0.55" />
+<text x="1537.0" y="1471.5" font-size="12" fill="#c084fc" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Superpowers ×3</text>
+<rect x="1344" y="1486" width="85.0" height="26" rx="13" fill="#c084fc" opacity="0.14" />
+<rect x="1344" y="1486" width="85.0" height="26" rx="13" fill="none" stroke="#c084fc" stroke-width="1" opacity="0.55" />
+<text x="1386.5" y="1503.5" font-size="12" fill="#c084fc" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">Pocock ×3</text>
+<rect x="1344" y="1518" width="169.0" height="26" rx="13" fill="#34d399" opacity="0.14" />
+<rect x="1344" y="1518" width="169.0" height="26" rx="13" fill="none" stroke="#34d399" stroke-width="1" opacity="0.55" />
+<text x="1428.5" y="1535.5" font-size="12" fill="#34d399" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">★ Recommended 10/10 ✓</text>
+<rect x="1344" y="1550" width="99.0" height="26" rx="13" fill="none" stroke="#8597b4" stroke-width="1.4" opacity="1" stroke-dasharray="4 3"/>
+<text x="1393.5" y="1567.5" font-size="12" fill="#8597b4" font-weight="700" text-anchor="middle" letter-spacing="0" opacity="1">+ Add Skill</text>
 <rect x="333" y="774" width="32" height="28" rx="14" fill="#0d1628" opacity="1" />
 <line x1="340" y1="788" x2="357" y2="788" stroke="#8597b4" stroke-width="2.5"/>
 <path d="M351 782 L359 788 L351 794" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
@@ -555,6 +651,9 @@
 <rect x="975" y="774" width="32" height="28" rx="14" fill="#0d1628" opacity="1" />
 <line x1="982" y1="788" x2="999" y2="788" stroke="#8597b4" stroke-width="2.5"/>
 <path d="M993 782 L1001 788 L993 794" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="1296" y="774" width="32" height="28" rx="14" fill="#0d1628" opacity="1" />
+<line x1="1303" y1="788" x2="1320" y2="788" stroke="#8597b4" stroke-width="2.5"/>
+<path d="M1314 782 L1322 788 L1314 794" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <rect x="1354" y="24" width="532" height="1564" rx="24" fill="#5b8cff" opacity="0.08" />
 <rect x="1360" y="30" width="520" height="1552" rx="20" fill="#172747" stroke="#5b8cff" stroke-width="2" opacity="1" />
 <circle cx="1418" cy="88" r="34" fill="#5b8cff" opacity="0.18"/>
@@ -588,24 +687,25 @@
 <text x="1644.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">laporan CEO</text>
 <rect x="1384" y="652.5" width="472" height="72" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="680.5" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT STATUS</text>
-<text x="1404" y="708.5" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">0 Working / 5 Waiting</text>
-<circle cx="1716" cy="690.5" r="9" fill="none" stroke="#9b8cff" stroke-width="2.5" stroke-dasharray="4 3"/>
-<circle cx="1746" cy="690.5" r="9" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-dasharray="4 3"/>
-<circle cx="1776" cy="690.5" r="9" fill="none" stroke="#34d399" stroke-width="2.5" stroke-dasharray="4 3"/>
-<circle cx="1806" cy="690.5" r="9" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-dasharray="4 3"/>
-<circle cx="1836" cy="690.5" r="9" fill="none" stroke="#f472b6" stroke-width="2.5" stroke-dasharray="4 3"/>
+<text x="1404" y="708.5" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">0 Working / 6 Waiting</text>
+<circle cx="1686" cy="690.5" r="9" fill="none" stroke="#9b8cff" stroke-width="2.5" stroke-dasharray="4 3"/>
+<circle cx="1716" cy="690.5" r="9" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-dasharray="4 3"/>
+<circle cx="1746" cy="690.5" r="9" fill="none" stroke="#34d399" stroke-width="2.5" stroke-dasharray="4 3"/>
+<circle cx="1776" cy="690.5" r="9" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-dasharray="4 3"/>
+<circle cx="1806" cy="690.5" r="9" fill="none" stroke="#f472b6" stroke-width="2.5" stroke-dasharray="4 3"/>
+<circle cx="1836" cy="690.5" r="9" fill="none" stroke="#c084fc" stroke-width="2.5" stroke-dasharray="4 3"/>
 <rect x="1384" y="808.0" width="472" height="92" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="836.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">TEAM SETUP</text>
-<text x="1404.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">5/5</text>
+<text x="1404.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">6/6</text>
 <text x="1404.0" y="890.0" font-size="12" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">LLM connected</text>
 <circle cx="1456.5" cy="865.0" r="4" fill="#34d399"/>
-<text x="1512.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">4/5</text>
+<text x="1512.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">4/6</text>
 <text x="1512.0" y="890.0" font-size="12" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Telegram bots</text>
 <circle cx="1564.5" cy="865.0" r="4" fill="#fbbf24"/>
-<text x="1620.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">1</text>
+<text x="1620.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">2</text>
 <text x="1620.0" y="890.0" font-size="12" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Harness types</text>
 <circle cx="1645.5" cy="865.0" r="4" fill="#5b8cff"/>
-<text x="1728.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">34</text>
+<text x="1728.0" y="872.0" font-size="22" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">38</text>
 <text x="1728.0" y="890.0" font-size="12" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Skills added</text>
 <circle cx="1767.0" cy="865.0" r="4" fill="#5b8cff"/>
 <rect x="1384.0" y="983.5" width="230.0" height="92" rx="14" fill="#fbbf24" opacity="0.12" />
