@@ -34,7 +34,7 @@ PROFILES = {
     "full": "Runs any command without asking (use only with the Docker sandbox)",
 }
 DEFAULT_PROFILE = {"lead": "plan", "architect": "plan", "developer": "workspace", "qa": "workspace",
-                   "devops": "workspace"}
+                   "devops": "workspace", "researcher": "workspace"}
 SANDBOXES = ("none", "bwrap", "docker")
 
 DANGEROUS = [

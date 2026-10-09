@@ -15,6 +15,7 @@ RECOMMENDED = {
     "developer": ["implement", "tdd", "codebase-design", "diagnosing-bugs", "prototype", "pr", "research"],
     "qa": ["tdd", "code-review", "diagnosing-bugs", "triage"],
     "devops": ["wizard", "diagnosing-bugs", "pr", "setup-pre-commit"],
+    "researcher": ["research", "domain-modeling", "handoff"],
 }
 
 # Which skills apply to which step of the team flow (a step uses those the agent has).

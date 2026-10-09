@@ -17,6 +17,7 @@ DEFAULT_ASSIGNMENT = {
            "verification-before-completion"],
     "devops": ["using-superpowers", "verification-before-completion", "finishing-a-development-branch",
                "using-git-worktrees", "systematic-debugging"],
+    "researcher": ["using-superpowers", "dispatching-parallel-agents", "verification-before-completion"],
 }
 
 # Which skills apply to which step of the team flow (a step uses those the agent has).
