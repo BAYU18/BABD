@@ -129,6 +129,14 @@ class Process(Harness):
     type = "process"
     label = "Custom process"
 
+    @property
+    def has_tools(self):
+        """A `process` harness runs a real command (its own adapter), so it reads/writes files and
+        runs commands itself: BABD must not write its file blocks, and triage must not describe it as
+        "cannot run commands (plans and writes text only)". A process harness with no command is not
+        a runner - keep the safe `False` default so BABD still writes its file blocks."""
+        return bool(self.cfg.get("command"))
+
     def describe(self):
         return " ".join([self.cfg.get("command", "?")] + list(self.cfg.get("args") or []))[:40]
 

@@ -136,6 +136,15 @@ class BudgetExceeded(FlowError):
     pass
 
 
+class PeerLoop(FlowError):
+    """An agent kept asking teammates instead of doing its task: stop the peer turns (never the run).
+
+    Not a failure of the task: `delegate` catches it and reports the state as it is, so one
+    confused agent cannot spin the run forever (and cannot burn the whole budget either).
+    """
+    pass
+
+
 def add_usage(total, u):
     """Add one call's usage {"input", "output", "cost", "estimated"} into a running total."""
     total["input"] = total.get("input", 0) + u["input"]
@@ -166,7 +175,7 @@ SPECIALIST_DUTY = {
     "researcher": "Researcher searches the internet and reports findings with their sources",
 }
 PACKAGE_KIND = {"architect": "design", "developer": "code", "qa": "test_plan",
-                "devops": "deploy_prep", "researcher": "code"}
+                "devops": "deploy_prep", "researcher": "research"}
 
 
 MODES = {"auto": "the Team Lead decides who is needed (fast for small jobs)",
@@ -345,6 +354,9 @@ class Run:
         project = team.cfg.get("project", {})
         self.require_approval = project.get("require_approval", ["deploy"])
         self.max_questions = int(project.get("max_questions", 3)) if project.get("ask_ceo", True) else 0
+        # Peer Q&A is the other half of "every agent can ask every agent": it needs its own cap so a
+        # single agent that keeps printing `ASK:` cannot loop forever (QA bug B-3). Counted per run.
+        self.max_peer_questions = int(project.get("max_peer_questions", max(3, self.max_questions * 2)))
         self.max_fix_rounds = int(project.get("max_fix_rounds", 2))
         self.parallel_prep = bool(project.get("parallel_prep", True))
         self.budget = budget_of(project)
@@ -656,15 +668,24 @@ class Run:
         self.bus.send("lead", agent_id, kind, task)
         self.agent(agent_id, "working", task)
         started = time.monotonic()
+        fact = None
+        out = ""
         try:
-            fact = None
             if reply_kind == "test_report":
                 fact = (lambda o: f"QA verdict {parse_verdict(o)} for '{one_line(self.goal, 80)}': {one_line(o, 200)}")
             out = self.work(agent_id, prompt, task, reply_kind, fact=fact, **work_kw)
             q = parse_question(out)
+            # Peer turns are capped per run (project.max_peer_questions): an agent that keeps
+            # printing `ASK:` must never spin the run forever. Without a cap this loop called the
+            # LLM unbounded (QA B-3: >1000 calls with a mock that always answers `ASK:`), which on
+            # a real model burns the budget until timeout. The cap still allows the normal
+            # ask -> answer -> work cycle, so real collaboration is unaffected.
             while q:
                 peer = self.ask_peer(agent_id, q) if q.get("ask") else None
                 if peer:
+                    if self.peer_budget_left() <= 0:
+                        raise PeerLoop(f"{self.team.by_id[agent_id].name} kept asking teammates "
+                                       f"(more than {self.max_peer_questions} peer turns this run)")
                     out = self.work(agent_id, f"{prompt}\n\n### You asked your teammate {q['ask'][0]}\n"
                                     f"{q['question']}\n\n### Your teammate answered\n{peer}\n\n"
                                     "Now do your task again, using this answer.", task, reply_kind, fact=fact, **work_kw)
@@ -678,6 +699,10 @@ class Run:
                 out = self.work(agent_id, f"{prompt}\n\n### You asked the CEO\n{q['question']}\n\n### The CEO answered\n"
                                 f"{answer}\n\nNow do your task again, using this answer.", task, reply_kind, fact=fact, **work_kw)
                 q = parse_question(out)
+        except PeerLoop as e:  # the agent would not stop asking peers: keep what it produced
+            with self.lock:
+                self.state["blockers"].append(str(e))
+            self.emit("peer_loop_stopped", {"agent": agent_id, "kind": kind, "task": task, "error": str(e)})
         except Exception:
             self.agent(agent_id, "blocked")
             raise
@@ -697,11 +722,23 @@ class Run:
         "lead": "the plan, the priorities and the scope of the task",
     }
 
+    def is_skipped(self, agent_id):
+        """True when the CEO's task options skip this agent. Skipped agents must not be dispatched,
+        so a peer question naming one (`ASK: researcher`) falls back to the CEO instead."""
+        skip = getattr(self, "skip", None) or ()
+        if isinstance(skip, str):
+            skip = (skip,)
+        return agent_id in skip
+
+    def peer_budget_left(self):
+        """How many more peer answers this run may ask for (see `max_peer_questions`)."""
+        return self.max_peer_questions - len(self.state.get("peer_questions") or [])
+
     def ask_peer(self, agent_id, q):
         """A teammate answers the question (the agent named on ASK:). Returns the answer text, or
         None when there is no teammate to ask / it gave no usable answer (then the CEO is asked)."""
         targets = [t for t in (q.get("ask") or []) if t in self.team.by_id and t != agent_id
-                   and not (t == "devops" and "devops" in getattr(self, "skip", ()))]
+                   and not self.is_skipped(t)]
         if not targets:
             return None
         asker_name = self.team.by_id[agent_id].name
