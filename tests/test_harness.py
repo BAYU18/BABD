@@ -378,6 +378,52 @@ class HarnessTest(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "Anthropic-compatible"):
             create_harness(dev).complete("S", [{"role": "user", "content": "x"}])
 
+    def test_relative_install_is_resolved_against_root(self):
+        """B-9 (QA round-2): `agents.json` researcher memakai `install: scripts/researcher_setup.sh`.
+
+        RED sebelum perbaikan: `Process.setup()` menjalankan argv apa adanya dengan cwd = self.cwd
+        (bukan ROOT) -> FileNotFoundError: 'scripts/researcher_setup.sh'; jadi jalur pertama agent
+        researcher (auto-install saat run pertama / tombol Setup di dashboard) mati total.
+        Kontraknya: perintah `install` diresolusi ROOT-relatif seperti `command`, sehingga jalan
+        dari cwd mana pun.
+        """
+        agent = copy.deepcopy(self.agents["devops"])
+        rel = os.path.join("scripts", "relative_install_probe.sh")
+        marker = os.path.join(self.tmp, "installed_rel.txt")
+        target = os.path.join(tools.ROOT, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w") as f:
+            f.write(f"#!/bin/sh\nprintf x >> {marker!r}\n")
+        os.chmod(target, 0o755)
+        self.addCleanup(os.remove, target)
+        agent["harness"] = {"type": "process", "command": "faketool", "install": rel,
+                            "cwd": os.path.join(self.tmp, "workspace")}
+        isolated = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(isolated, exist_ok=True)
+        with mock.patch.object(tools, "TOOLS_DIR", os.path.join(self.tmp, "tools")):
+            h = create_harness(agent)
+            old = os.getcwd()
+            os.chdir(isolated)          # cwd bukan ROOT
+            try:
+                h.complete("S", [{"role": "user", "content": "x"}])
+            finally:
+                os.chdir(old)
+        self.assertEqual(open(marker).read(), "x", "install relatif tidak jalan dari cwd non-ROOT")
+
+    def test_process_install_absent_binary_fails_loudly(self):
+        """B-10: `install` yang tidak ada harus jadi HarnessError yang ramah, bukan FileNotFoundError.
+
+        RED sebelum perbaikan: `subprocess.run` melempar FileNotFoundError mentah (jalur install tidak
+        pernah diperiksa), padahal `ensure_command` untuk `command` sudah memberi pesan rapi.
+        """
+        agent = copy.deepcopy(self.agents["devops"])
+        agent["harness"] = {"type": "process", "command": "faketool",
+                            "install": "no-such-installer-xyz --go",
+                            "cwd": os.path.join(self.tmp, "workspace")}
+        with mock.patch.object(tools, "TOOLS_DIR", os.path.join(self.tmp, "tools")):
+            with self.assertRaisesRegex(HarnessError, "install.*no-such-installer-xyz.*not found"):
+                create_harness(agent).complete("S", [{"role": "user", "content": "x"}])
+
     def test_process_install_runs_once(self):
         agent = copy.deepcopy(self.agents["devops"])
         marker = os.path.join(self.tmp, "installed.txt")
