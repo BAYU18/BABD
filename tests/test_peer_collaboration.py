@@ -85,12 +85,16 @@ class PeerLoopBoundTest(unittest.TestCase):
 
         state, asks = self.run_with(self.cfg, always_ask, asker=lambda q: "just proceed")
         self.assertEqual(state["status"], "done", state.get("error"))
-        # Batas nyata: peer Q&A berhenti sendiri (blocker "kept asking teammates") alih-alih
+        # Batas nyata: peer Q&A berhenti sendiri (catatan "kept asking teammates") alih-alih
         # memutar run selamanya. Tanpa fix: loop tak terbatas (QA: >1000 call, timeout).
         # Angka longgar karena peer-answer bisa jalan PARALEL antar agent, jadi jumlahnya bisa
         # beberapa kali `max_peer_questions` — tetap jauh dari runaway (ratusan/∞).
-        self.assertTrue(any("kept asking teammates" in b for b in state["blockers"]),
-                        f"the stop must be visible as a blocker: {state['blockers']}")
+        # CATATAN: stop ini adalah `note` (bukan `blocker`), karena docstring PeerLoop sendiri
+        # menyatakan ini "not a failure of the task": task yang selesai tak boleh jadi BLOCKED.
+        self.assertTrue(any("kept asking teammates" in n for n in state.get("notes", [])),
+                        f"the stop must be visible as a note: {state.get('notes')}")
+        self.assertFalse(any("kept asking teammates" in b for b in state["blockers"]),
+                         f"the stop must NOT block a finished task: {state['blockers']}")
         self.assertLess(len(asks), 60, f"too many LLM calls: {len(asks)} (peer loop is unbounded)")
 
     def test_peer_turns_never_exceed_the_cap(self):

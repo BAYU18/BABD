@@ -453,7 +453,7 @@ class Run:
             "started_at": now(), "finished_at": None, "error": None, "dir": self.dir,
             "agents": {a.id: {"status": "idle", "task": ""} for a in team.agents},
             "stages": {k: "todo" for k, *_ in STAGES}, "qa_rounds": 0, "verdict": None,
-            "approval": None, "deployed": False, "blockers": [], "report": None, "memory": [], "skills": [],
+            "approval": None, "deployed": False, "blockers": [], "notes": [], "report": None, "memory": [], "skills": [],
             "steps": [], "documents": [taskdocs.summary(d) for d in self.docs], "checkpoints": [], "resumes": 0,
             "usage": {}, "questions": [], "question": None, "peer_questions": [],
         }
@@ -763,8 +763,11 @@ class Run:
                                 f"{answer}\n\nNow do your task again, using this answer.", task, reply_kind, fact=fact, **work_kw)
                 q = parse_question(out)
         except PeerLoop as e:  # the agent would not stop asking peers: keep what it produced
+            # PeerLoop bukan kegagalan task (lihat docstring PeerLoop): cukup dicatat sebagai
+            # `note` informasional. Kalau ini masuk `blockers`, task yang sudah selesai pun
+            # dilabeli BLOCKED hanya karena satu agen bertanya lebih dari budget peer.
             with self.lock:
-                self.state["blockers"].append(str(e))
+                self.state.setdefault("notes", []).append(str(e))
             self.emit("peer_loop_stopped", {"agent": agent_id, "kind": kind, "task": task, "error": str(e)})
         except Exception:
             self.agent(agent_id, "blocked")
@@ -1595,8 +1598,10 @@ class Run:
             status = "BLOCKED"
         else:
             status = "ACTIVE"
+        note_list = self.state.get("notes") or []
         return {"status": status, "progress": 100 if finished else self.state["progress"],
                 "approval_needed": 1 if pending else 0, "blockers": len(self.state["blockers"]),
                 "qa_verdict": verdict, "fix_rounds": self.state["qa_rounds"], "deployed": deployed,
                 "verified": bool((self.state.get("evidence") or {}).get("verified")),
-                "blocker_list": self.state["blockers"]}
+                "blocker_list": self.state["blockers"], "note_list": note_list,
+                "notes": len(note_list)}
