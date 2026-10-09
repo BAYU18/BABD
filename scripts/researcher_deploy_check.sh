@@ -103,10 +103,12 @@ from babd import flow
 from babd.config import load_config
 from babd.team import Team
 t = Team(load_config(), log=lambda m: None)
+# PEER_WHO adalah atribut class Run di babd/flow.py, bukan modul flow.
+PEER_WHO = getattr(flow, "PEER_WHO", None) or getattr(getattr(flow, "Run", object), "PEER_WHO", {})
 print("SPECIALISTS:", flow.specialist_roles(t))
-print("PEER_WHO:", (flow.PEER_WHO.get("researcher") or "<kosong>"))
+print("PEER_WHO:", (PEER_WHO.get("researcher") or "<kosong>"))
 assert "researcher" in flow.specialist_roles(t), "researcher bukan specialist"
-assert (flow.PEER_WHO.get("researcher") or "").strip(), "PEER_WHO researcher kosong"
+assert (PEER_WHO.get("researcher") or "").strip(), "PEER_WHO researcher kosong"
 PYEOF
 )
   [[ $? -eq 0 ]] && ok "researcher jalan sendiri & bisa dipanggil-peer" || bad "H3 gagal: $out"

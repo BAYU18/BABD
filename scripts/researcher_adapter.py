@@ -36,6 +36,14 @@ Env:
                                 lewat babd/harness/routing.py; jalur manual membacanya dari
                                 `.env` BABD (nama key mengikuti `api_key_env` di agents.json).
                                 Variabel lingkungan yang sudah ada tidak pernah ditimpa `.env`.
+
+LLM (baca ini kalau riset gagal "access_denied"/"model not found"):
+  gpt-researcher memutuskan model lewat env FAST_LLM / SMART_LLM (default upstream
+  "gpt-4o-mini"/"o4-mini"). Default itu TIDAK valid di endpoint tim (o4-mini -> 403
+  access_denied), jadi adapter ini WAJIB menulis FAST_LLM/SMART_LLM/OPENAI_* SEBELUM
+  `GPTResearcher()` dibuat. Kunci: `os.environ` adalah sumber kebenaran tertinggi
+  gpt-researcher (Config.__init__ memakai _set_llm_model() -> os.getenv("FAST_LLM")),
+  jadi kita set env dulu; tidak perlu menyentuh kode vendor.
 """
 from __future__ import annotations
 
@@ -53,6 +61,14 @@ PROMPT_ENV = "RESEARCHER_PROMPT"  # prompt dibawa melewati os.execve (stdin suda
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOME = os.environ.get("RESEARCHER_HOME") or os.path.join(ROOT, ".babd", "researcher")
 VENV_PYTHON = os.path.join(HOME, "venv", "bin", "python")
+
+# Default upstream gpt-researcher yang HARUS kita kalahkan. Nama-nama ini dikunci oleh
+# library (string literal di gpt_researcher/config/config.py, dan Config.__init__ melewati
+# smart_llm kalau sama dengan o4-mini). Kalau kita tidak memenangkan salah satunya,
+# GPTResearcher() akan memakai model ini -> 403 access_denied di endpoint tim ini.
+UPSTREAM_DEFAULT_SMART = "o4-mini"
+UPSTREAM_DEFAULT_FAST = "gpt-4o-mini"
+UPSTREAM_DEFAULT_STRATEGIC = "o4-mini"
 
 
 def log(msg: str) -> None:
@@ -213,6 +229,72 @@ def llm_env_from_config(config_path: str | None = None, agent_id: str = "researc
     return {k: v for k, v in resolved.items() if v}
 
 
+def llm_model_spec(model: str, provider: str = "") -> str:
+    """Ubah model mentah jadi spec '<provider>:<model>' yang diminta Config.parse_llm gpt-researcher.
+
+    Bila `model` SUDAH memuat prefiks provider, biarkan apa adanya (mis. 'openai:gpt-4.1'). BABD
+    memakai provider 'Custom' = endpoint OpenAI-compatible, jadi prefiks yang benar 'openai'
+    (litellm memetakan 'openai' ke OPENAI_BASE_URL). Prefiks mentah 'custom:' akan ditolak
+    litellm 'LLM Provider NOT provided', jadi jangan diteruskan apa adanya (QA B-15).
+    """
+    model = (model or "").strip()
+    if not model:
+        return ""
+    if ":" in model:
+        return model
+    return f"openai:{model}"
+
+
+def apply_llm_env() -> dict[str, str]:
+    """Menangkan FAST_LLM/SMART_LLM + OPENAI_BASE_URL/OPENAI_API_KEY dari config tim.
+
+    Kenapa perlu: `GPTResearcher()` membaca model dari env `FAST_LLM`/`SMART_LLM` (lihat
+    gpt_researcher/config/config.py: Config.__init__ -> _set_llm_model() -> os.getenv("FAST_LLM")
+    / ("SMART_LLM"); kalau kosong, default upstream 'gpt-4o-mini'/'o4-mini'). Model default
+    'o4-mini' tidak ada di endpoint tim -> 403 access_denied. Jadi env HARUS sudah benar SEBELUM
+    `GPTResearcher()` dibuat, dan di sini kita berbeda dari versi sebelumnya: kita TIDAK berhenti
+    di `setdefault` - nilai yang masih sama dengan default upstream kita paksa timpa.
+
+    `os.environ` adalah sumber kebenaran tertinggi bagi gpt-researcher (tidak ada nilai config
+    vendor yang menang di atasnya di versi ini), jadi cukup set env - kode vendor tidak disentuh
+    dan tetap bersih saat venv dibangun ulang.
+
+    Dipakai oleh DUA jalur: `real_result()` (writer riset) dan `write_report_only()` (strategi).
+    Return dict env yang kita set (bisa dicetak untuk diagnostik; tidak memuat nilai secret).
+    """
+    applied: dict[str, str] = {}
+
+    # 1. Kredensial: BABD_LLM_* (diisi harness routing.py atau llm_env_from_config) -> OPENAI_*.
+    #    Jalur manual harus lebih dulu memanggil load_babd_env() + llm_env_from_config().
+    if os.environ.get("BABD_LLM_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = os.environ["BABD_LLM_API_KEY"]
+        applied["OPENAI_API_KEY"] = "(set)"
+    if os.environ.get("BABD_LLM_BASE_URL"):
+        os.environ["OPENAI_BASE_URL"] = os.environ["BABD_LLM_BASE_URL"]
+    # Akomodasi operator yang menaruh nilainya di OPENAI_*, bukan BABD_LLM_* (jalur manual .env).
+    if os.environ.get("OPENAI_BASE_URL"):
+        applied["OPENAI_BASE_URL"] = os.environ["OPENAI_BASE_URL"]
+
+    # 2. Model: spec '<provider>:<model>'. Nilai eksplisit tim (BABD_LLM_MODEL, atau FAST_LLM/
+    #    SMART_LLM yang sudah diisi manusia di .env) tak boleh kalah dari default upstream.
+    model = llm_model_spec(os.environ.get("BABD_LLM_MODEL") or "",
+                           os.environ.get("BABD_LLM_PROVIDER") or "")
+    env_model = llm_model_spec(os.environ.get("FAST_LLM") or "", "")  # hormati FAST_LLM eksplisit
+    for dst in ("FAST_LLM", "SMART_LLM", "STRATEGIC_LLM"):
+        current = (os.environ.get(dst) or "").strip()
+        chosen = ""
+        if model:
+            chosen = model
+        elif current and current not in (UPSTREAM_DEFAULT_FAST, UPSTREAM_DEFAULT_SMART, UPSTREAM_DEFAULT_STRATEGIC):
+            chosen = current
+        elif env_model:
+            chosen = env_model
+        if chosen and chosen != current:
+            os.environ[dst] = chosen
+            applied[dst] = chosen
+    return applied
+
+
 def search_provider() -> tuple[str, str]:
     """(kind, value) provider pencarian. kind "" = tidak ada.
 
@@ -253,6 +335,38 @@ def fake_result(query: str) -> dict:
             "local": True}
 
 
+def _build_researcher(query, kind, value, report_type, extra_kwargs=None):
+    """Bangun `GPTResearcher` TANPA pernah memanggil API LLM; env sudah final sebelum init.
+
+    Inilah seam yang dipakai jalur strategi (`write_report_only`): bila library atau
+    konstruktornya tidak kompatibel, pemanggil jatuh ke `real_result()` (jalur writer),
+    bukan gagal total. Return objek GPTResearcher (belum ada riset/kredit yang terpakai
+    selain koneksi yang memang dibutuhkan saat init).
+    """
+    if kind == "duckduckgo":
+        ensure_ddg_shim()
+
+    try:
+        from gpt_researcher import GPTResearcher  # type: ignore
+    except ImportError as e:
+        raise RuntimeError(
+            "gpt-researcher is not installed for this adapter. Run scripts/researcher_setup.sh "
+            f"(offline: the adapter cannot search without the library). ({e})") from e
+
+    # RETRIEVER + provider HARUS sudah terpasang sebelum init.
+    os.environ["RETRIEVER"] = RETRIEVER_NAME[kind]     # provider eksplisit selalu menang
+    if kind == "searxng":
+        os.environ["SEARX_URL"] = value
+
+    # >>> KUNCI PERBAIKAN: LLM tim ditulis ke FAST_LLM/SMART_LLM/OPENAI_* DI SINI, sebelum
+    #     GPTResearcher() dibuat. Tanpa ini, Config memakai default 'o4-mini' -> 403.
+    apply_llm_env()
+
+    kwargs = {"query": query, "report_type": report_type}
+    kwargs.update(extra_kwargs or {})
+    return GPTResearcher(**kwargs)
+
+
 def real_result(query: str, kind: str, value: str) -> dict:
     """Panggil gpt-researcher sebagai library lokal. Raise RuntimeError bila tidak bisa.
 
@@ -266,43 +380,10 @@ def real_result(query: str, kind: str, value: str) -> dict:
     load_babd_env()
     llm_env_from_config()
 
-    if kind == "duckduckgo":
-        # Retriever DuckDuckGo vendor bisa `import ddgs` (paket baru) padahal venv punya
-        # `duckduckgo_search` (paket lama). Shim ini harus aktif SEBELUM library memuatnya,
-        # kalau tidak riset mati `ImportError: Unable to import ddgs` (QA B-12).
-        ensure_ddg_shim()
-
-    try:
-        from gpt_researcher import GPTResearcher  # type: ignore
-    except ImportError as e:
-        raise RuntimeError(
-            "gpt-researcher is not installed for this adapter. Run scripts/researcher_setup.sh "
-            f"(offline: the adapter cannot search without the library). ({e})") from e
-
     import asyncio
 
-    os.environ.setdefault("RETRIEVER", RETRIEVER_NAME[kind])
-    os.environ["RETRIEVER"] = RETRIEVER_NAME[kind]     # provider eksplisit selalu menang
-    if kind == "searxng":
-        os.environ["SEARX_URL"] = value
-    # gpt-researcher memakai klien OpenAI-compatible: teruskan LLM tim dari BABD_* ke OPENAI_*.
-    # FAST_LLM/SMART_LLM WAJIB berformat '<provider>:<model>' (lihat Config.parse_llm), jadi
-    # nama model mentah seperti 'ag-hermes' harus diberi prefiks provider - kalau tidak riset
-    # selalu mati ValueError meski kredensial benar (QA B-15). BABD `provider: Custom` adalah
-    # endpoint OpenAI-compatible, jadi prefiksnya 'openai'.
-    for src, dst in (("BABD_LLM_API_KEY", "OPENAI_API_KEY"), ("BABD_LLM_BASE_URL", "OPENAI_BASE_URL")):
-        if os.environ.get(src) and not os.environ.get(dst):
-            os.environ[dst] = os.environ[src]
-    model = os.environ.get("BABD_LLM_MODEL") or ""
-    if model and ":" not in model:
-        model = f"openai:{model}"
-    if model:
-        for dst in ("FAST_LLM", "SMART_LLM"):
-            if not os.environ.get(dst):
-                os.environ[dst] = model
-
     async def run() -> tuple[str, list[str]]:
-        researcher = GPTResearcher(query=query, report_type="research_report")
+        researcher = _build_researcher(query, kind, value, "research_report")
         await researcher.conduct_research()
         answer = await researcher.write_report()
         return answer or "", list(researcher.get_source_urls() or [])
@@ -311,6 +392,36 @@ def real_result(query: str, kind: str, value: str) -> dict:
         answer, urls = asyncio.run(run())
     except Exception as e:  # noqa: BLE001 - jadikan kegagalan yang jujur, bukan sumber palsu
         raise RuntimeError(f"gpt-researcher failed: {type(e).__name__}: {e}") from e
+
+    sources = [{"title": u, "url": u} for u in urls[:max_results()]]
+    return {"query": query, "answer": answer.strip(), "sources": sources, "local": True}
+
+
+def write_report_only(query: str, kind: str, value: str) -> dict:
+    """Jalur STRATEGI: pakai gpt-researcher HANYA untuk menulis laporan dari hasil pencarian.
+
+    `conduct_research()` (jalur writer) memakai sub-agent/planner yang membutuhkan kredensial
+    dan kuota tambahan; jalur strategi hanya butuh `write_report()` di atas sumber yang sudah
+    dikumpulkan. Keduanya tetap harus memenangkan FAST_LLM/SMART_LLM lewat `_build_researcher()`.
+
+    Dipakai opsional oleh `main()` via `RESEARCHER_MODE=report` (default `full`): riset mencari
+    sumber lewat retriever yang sama, lalu laporan ditulis dengan model tim. Mode ini tidak
+    pernah mengarang sumber - kalau gagal, `real_result()` (jalur writer) tetap jadi fallback.
+    """
+    load_babd_env()
+    llm_env_from_config()
+
+    import asyncio
+
+    async def run() -> tuple[str, list[str]]:
+        researcher = _build_researcher(query, kind, value, "research_report")
+        answer = await researcher.write_report()
+        return answer or "", list(researcher.get_source_urls() or [])
+
+    try:
+        answer, urls = asyncio.run(run())
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"gpt-researcher (report-only) failed: {type(e).__name__}: {e}") from e
 
     sources = [{"title": u, "url": u} for u in urls[:max_results()]]
     return {"query": query, "answer": answer.strip(), "sources": sources, "local": True}
@@ -329,10 +440,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true", help="print the JSON block before the text summary")
     ap.add_argument("--which-python", action="store_true",
                     help="print the interpreter that runs the research, then exit (diagnostics)")
+    ap.add_argument("--show-llm-env", action="store_true",
+                    help="print the FAST_LLM/SMART_LLM/OPENAI_* the adapter would apply, then exit")
     args = ap.parse_args(argv)
 
     if args.which_python:
         print(interpreter())
+        return EXIT_OK
+
+    if args.show_llm_env:
+        load_babd_env()
+        llm_env_from_config()
+        applied = apply_llm_env()
+        for key in ("FAST_LLM", "SMART_LLM", "STRATEGIC_LLM", "OPENAI_BASE_URL"):
+            print(f"{key}={os.environ.get(key, '')}")
+        print(f"OPENAI_API_KEY={'set' if os.environ.get('OPENAI_API_KEY') else 'missing'}")
+        print(f"# applied_now={sorted(applied)}")
         return EXIT_OK
 
     # Proses hasil re-exec mewarisi stdin yang sudah habis, jadi prompt diambil dari env
@@ -357,8 +480,10 @@ def main(argv: list[str] | None = None) -> int:
             log("no search provider: set RESEARCHER_SEARXNG_URL to a local SearXNG, or "
                 "RESEARCHER_ALLOW_DUCKDUCKGO=1. Refusing to invent sources.")
             return EXIT_NO_PROVIDER
+        mode = (os.environ.get("RESEARCHER_MODE") or "full").strip().lower()
+        runner = write_report_only if mode in ("report", "strategy") else real_result
         try:
-            data = real_result(query, kind, value)
+            data = runner(query, kind, value)
         except RuntimeError as e:
             log(str(e))
             return EXIT_NO_PROVIDER

@@ -40,11 +40,13 @@ if ! "$VENV/bin/pip" install --quiet -e "$VENDOR"; then
 fi
 
 # Retriever DuckDuckGo gpt-researcher meng-`import ddgs` (paket baru), sedangkan pyproject
-# versi vendor mendeklarasikan `duckduckgo_search` (paket lama). Pasang `ddgs` bila jaringan
+# versi vendor mendeklarasikan `duckduckgo_search` (paket lama). Pin ddgs==9.0.0: 9.16.x
+# membangun URL Wikipedia dari region wt-wt -> wt.wikipedia.org (DNS gagal, 0 sumber).
+# 9.0.0 tidak punya backend wikipedia itu, jadi region tidak bocor ke URL. Pasang bila jaringan
 # mengizinkan supaya jalur tanpa key benar-benar bisa mencari; bila gagal, adapter tetap punya
 # shim `ensure_ddg_shim()` sebagai jaring pengaman (QA B-12).
 if ! "$VENV/bin/python" -c "import ddgs" >/dev/null 2>&1; then
-  if "$VENV/bin/pip" install --quiet "ddgs" >/dev/null 2>&1; then
+  if "$VENV/bin/pip" install --quiet "ddgs==9.0.0" >/dev/null 2>&1; then
     echo "researcher-setup: paket 'ddgs' terpasang (provider DuckDuckGo siap)."
   else
     echo "researcher-setup: catatan: 'ddgs' tidak bisa dipasang (jaringan?). Adapter memakai"
