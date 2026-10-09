@@ -555,13 +555,64 @@ function messageItem(m) {
   </li>`;
 }
 
+// ---- memory text helpers (pure; tested by tests/test_memory_text.py) ----
+const MEM_KEYWORDS_MAX = 6;
+const MEM_ITEMS_SHOWN = 3;
+
+function memoryNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function memoryKeywords(query) {
+  const parts = String(query ?? "").split(/\s+or\s+/i).map((w) => w.trim()).filter(Boolean);
+  if (parts.length <= MEM_KEYWORDS_MAX) return parts;
+  return [...parts.slice(0, MEM_KEYWORDS_MAX), "…"];
+}
+
+function memoryCountLine(facts, pages) {
+  const f = memoryNum(facts), p = memoryNum(pages);
+  if (!f && !p) return "";
+  const cat = (n, word) => `${n} ${word}`;
+  return `${cat(f, "catatan")}, ${cat(p, "halaman")}`;
+}
+
+function memoryHeadline(m) {
+  const read = m.op === "read";
+  const detail = (read ? m.items || [] : m.fact ? [m.fact] : []).map(String);
+  const facts = read ? memoryNum(m.facts) : 0;
+  const pages = read ? memoryNum(m.pages) : 0;
+  return {
+    label: read ? "Membaca memori tim" : "Menyimpan ke memori tim",
+    count: read ? memoryCountLine(facts, pages) : "",
+    keywords: read ? memoryKeywords(m.query) : [],
+    detail,
+    empty: read && !facts && !pages,
+  };
+}
+
+function memoryLogText(who, m) {
+  const h = memoryHeadline(m);
+  if (h.empty) return `${who} · ${h.label} · tidak ada memori terkait · kata kunci: ${h.keywords.join(", ")}`;
+  const kw = h.keywords.length ? ` · kata kunci: ${h.keywords.join(", ")}` : "";
+  return `${who} · ${h.label}${h.count ? ` · ${h.count}` : ""}${kw}`;
+}
+// ---- end memory text helpers ----
+
 function memoryItem(m) {
-  const what = m.op === "read"
-    ? `read gbrain · ${m.facts} fact(s), ${m.pages} page(s) <span class="kind">${esc(m.query)}</span>`
-    : `wrote gbrain · <span class="kind">${esc(m.page || m.entity)}</span>`;
-  const title = m.op === "read" ? (m.items || []).join("\n") : (m.fact || "");
-  return `<li class="mem ${m.op}" title="${esc(title)}"><span class="mem-dot"></span>
-    <span class="who" style="--c:${colorOf(m.agent)}">${esc(nameOf(m.agent))}</span> ${what}
+  const h = memoryHeadline(m);
+  const head = `<span class="mem-dot"></span>
+    <span class="who" style="--c:${colorOf(m.agent)}">${esc(nameOf(m.agent))}</span>
+    <span class="mem-act">${esc(h.label)}</span>`;
+  const bits = [];
+  if (h.count) bits.push(`<span class="kind">${esc(h.count)}</span>`);
+  if (h.keywords.length) bits.push(`<span class="mem-kw">kata kunci: ${esc(h.keywords.join(", "))}</span>`);
+  const empty = h.empty ? ` <span class="mem-empty">Tidak ada memori terkait — kamu yang pertama</span>` : "";
+  const found = !h.empty && h.detail.length
+    ? `<span class="mem-found">↳ ${h.detail.length} temuan: ${esc(h.detail.slice(0, MEM_ITEMS_SHOWN).map((d) => `"${d}"`).join(", "))}${h.detail.length > MEM_ITEMS_SHOWN ? " …" : ""}</span>`
+    : "";
+  return `<li class="mem ${m.op}" title="${esc(h.detail.join("\n"))}">${head}
+    <span class="mem-mid">${bits.join(" · ")}${empty}${found}</span>
     <span class="msg-time">${fmtTime(m.at)}</span></li>`;
 }
 
@@ -1695,7 +1746,7 @@ function connect() {
   const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
   es.addEventListener("log", (e) => { const d = JSON.parse(e.data); logLine(d.source, d.msg, /fail|error/i.test(d.msg) ? "bad" : ""); });
   es.addEventListener("job", (e) => onJob(JSON.parse(e.data)));
-  es.addEventListener("memory", (e) => { const m = JSON.parse(e.data); flashMemory(m.agent, m.op); logLine("gbrain", `${nameOf(m.agent)} ${m.op === "read" ? "read" : "wrote"} gbrain`); });
+  es.addEventListener("memory", (e) => { const m = JSON.parse(e.data); flashMemory(m.agent, m.op); logLine("gbrain", memoryLogText(nameOf(m.agent), m)); });
   es.addEventListener("config", () => refreshSoon());
   es.addEventListener("approval", (e) => { toast(`Approval needed: ${JSON.parse(e.data).question}`); boardSoon(); });
   es.addEventListener("tasks", () => { refreshSoon(); boardSoon(); });
@@ -1715,7 +1766,7 @@ function connect() {
     if (d.event === "package") logLine("package", `${d.data.id} ${d.data.title} · ${nameOf(d.data.agent)}: ${d.data.status}`, d.data.status === "failed" ? "bad" : "ok");
     if (d.event === "paused" || d.event === "unpaused") { logLine("task", d.event === "paused" ? "paused" : "continuing"); refreshSoon(); boardSoon(); }
     if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok");
-    if (d.event === "memory") logLine("gbrain", `${nameOf(d.data.agent)} ${d.data.op === "read" ? `read ${d.data.facts} fact(s), ${d.data.pages} page(s)` : `wrote ${d.data.page}`}`);
+    if (d.event === "memory") logLine("gbrain", memoryLogText(nameOf(d.data.agent), d.data));
     if (d.event === "retry") logLine("retry", `${nameOf(d.data.agent)} ${d.data.kind}: ${d.data.fallback ? `trying fallback model ${d.data.fallback}` : `retry ${d.data.attempt}/${d.data.of} in ${d.data.wait}s`} (${d.data.error})`, "bad");
     if (d.event === "finished") { toast(`Task ${d.data.status}: ${d.summary.goal.slice(0, 50)}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
     renderTop(); renderAgents(); renderRun(); renderRunButtons(); renderNav();
