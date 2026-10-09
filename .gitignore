@@ -10,3 +10,4 @@ worktrees/
 logs/
 *.bak
 *.pre-*
+*.bak*
