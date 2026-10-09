@@ -163,10 +163,16 @@ class FlowTest(unittest.TestCase):
 
     def test_routes_are_enforced(self):
         bus = MessageBus(lambda *a: None, self.tmp)
+        # Teammates may ask each other directly (peer Q&A: the agent on ASK: answers), so
+        # developer -> qa is a legitimate route now. What stays forbidden is everyone talking
+        # to the CEO: only the Team Lead reports there.
+        bus.send("developer", "qa", "question", "what DB do we use?")
         with self.assertRaises(FlowError):
-            bus.send("developer", "qa", "code", "x")   # specialists only talk to the Team Lead
+            bus.send("developer", "ceo", "report", "x")   # only the Team Lead reports to the CEO
         with self.assertRaises(FlowError):
-            bus.send("devops", "ceo", "report", "x")   # only the Team Lead reports to the CEO
+            bus.send("devops", "ceo", "report", "x")      # only the Team Lead reports to the CEO
+        with self.assertRaises(FlowError):
+            bus.send("nobody", "lead", "report", "x")     # an unknown sender is not on the team
         bus.send("lead", "qa", "assign", "ok")
 
     def test_run_ids_are_unique(self):

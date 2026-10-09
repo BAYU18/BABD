@@ -746,6 +746,23 @@ class Run:
 
     # -- questions: an agent asks the CEO and waits for the answer ----------------------------------
 
+    def _peer_answers(self, agent_id, q):
+        """What the named teammates already answered for this question, so the CEO's card shows it.
+
+        `ASK:` is only a first attempt: when the teammate has nothing usable, the question goes to
+        the CEO anyway. Showing the peer's answer there is what stops the CEO from answering
+        something another agent already answered (and from asking why they were bothered).
+        """
+        asked = [t for t in (q.get("ask") or []) if t != agent_id]
+        if not asked:
+            return []
+        out = []
+        for entry in self.state.get("peer_questions") or []:
+            if entry.get("from") == agent_id and entry.get("to") in asked and entry.get("question") == q.get("question"):
+                out.append({"to": entry["to"], "to_name": self.team.by_id[entry["to"]].name,
+                            "answer": entry.get("answer")})
+        return out
+
     def can_ask(self):
         return bool(self.asker) and len(self.state.get("questions") or []) < self.max_questions
 
@@ -762,7 +779,8 @@ class Run:
         self.agent(agent_id, "waiting", "Waiting for the CEO's answer")
         self.bus.send("lead", "ceo", "question", f"{name} asks: {q['question']}"
                       + (f"\nOptions: {' | '.join(entry['options'])}" if entry["options"] else ""), agent=agent_id)
-        self.emit("question", {**entry, "goal": self.goal, "agent_name": name})
+        self.emit("question", {**entry, "goal": self.goal, "agent_name": name,
+                               "peer_answers": self._peer_answers(agent_id, q)})
         try:
             answer = self.asker({**entry, "run": self.id, "goal": self.goal, "agent_name": name})
         finally:

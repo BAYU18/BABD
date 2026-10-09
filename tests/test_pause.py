@@ -95,6 +95,24 @@ class StopKillsTheProgramTest(unittest.TestCase):
         self.assertEqual(h.run_process(["cat"], {}, stdin_text="hello"), "hello")
         with self.assertRaisesRegex(HarnessError, "exit code 3"):
             h.run_process(["sh", "-c", "echo boom; exit 3"], {})
+        with self.assertRaisesRegex(HarnessError, "exit code 4"):
+            h.run_process(["sh", "-c", "echo oops >&2; exit 4"], {})
+
+    def test_stdin_written_in_background_never_raises_valueerror(self):
+        # Regresi nyata: stdin ditulis di thread (`_feed`) sementara loop utama memanggil
+        # communicate(timeout=...) berulang. Begitu program anak selesai lebih dulu, thread itu
+        # menutup stdin dan communicate() melempar "ValueError: I/O operation on closed file"
+        # (atau AttributeError '_fileobj2output' pada percobaan kedua). Program yang lambat membaca
+        # stdin harus tetap mendapat jawabannya; program yang cepat selesai tidak boleh membuat
+        # run_process meledak.
+        h = create_harness({"id": "dev", "llm": {"model": "m"}, "harness": {"type": "process", "command": "cat"}})
+        # 1) program selesai cepat, stdin besar tidak pernah dibaca sampai habis
+        self.assertEqual(h.run_process([sys.executable, "-c", "pass"], {}, stdin_text="x" * 200_000), "")
+        # 2) program hidup cukup lama untuk versi lama kalah balapan dengan penutupan stdin
+        out = h.run_process([sys.executable, "-c",
+                             "import sys,time; time.sleep(0.3); sys.stdout.write(sys.stdin.read())"],
+                            {}, stdin_text="slow reader payload")
+        self.assertEqual(out, "slow reader payload")
 
 
 class PauseApiTest(unittest.TestCase):
