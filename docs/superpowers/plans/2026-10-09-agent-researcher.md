@@ -32,6 +32,7 @@
 ---
 
 ### Task 1: Roster dinamis, landmine plan, dan entri agent researcher
+**Status: SELESAI** — commit `426a30d`: roster + `agents.json` + kamus skill/permission + `specialist_roles()` + `PEER_WHO`/`ASK_INSTRUCTION`. Suite hijau.
 
 **Catatan test file baru:** `tests/test_researcher.py` perlu header seperti `tests/test_team.py:1-22`:
 `sys.path.insert(0, <root>)` sebelum import `babd`, lalu `import copy, json, os, subprocess, sys, unittest`,
@@ -51,7 +52,7 @@ Semua kelas test (Task 1–4) hidup di file ini; kelasnya: `ResearcherRosterTest
 **Interfaces — Consumes:** `team.by_id`, `flow.ROLES`, `flow.PEER_WHO`.
 **Produces:** `flow.specialist_roles(team) -> list[str]`; `flow.PEER_WHO["researcher"]`; `flow.SKIPPABLE["researcher"]`; konfigurasi agent `researcher` di `agents.json`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_researcher.py` (pola `unittest`, meniru `tests/test_team.py`):
 
@@ -93,12 +94,12 @@ class ResearcherRosterTest(unittest.TestCase):
         self.assertIn("sumber", prompt)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m unittest tests.test_researcher -v`
 Expected: FAIL — `AttributeError: module 'babd.flow' has no attribute 'specialist_roles'` (dan `AssertionError` untuk `ROLES`).
 
-- [ ] **Step 3: Implement in `babd/flow.py`**
+- [x] **Step 3: Implement in `babd/flow.py`**
 
 (a) Line 42 jadi:
 
@@ -148,12 +149,12 @@ def specialist_roles(team):
 `triage_prompt()` line 1179 (`for r in specialist_roles(team):`),
 `parse_route()` line 1222 (`if agent not in specialist_roles(self.team) or agent in self.skip:`).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m unittest tests.test_researcher -v`
 Expected: PASS untuk `test_roles_include_researcher` dan `test_old_config_without_researcher_still_works`. `test_real_config_has_a_working_researcher` masih FAIL sampai Step 5.
 
-- [ ] **Step 5: Add the `researcher` entry to `agents.json` and the four role dictionaries**
+- [x] **Step 5: Add the `researcher` entry to `agents.json` and the four role dictionaries**
 
 Tambah objek ini sebagai elemen **terakhir** array `agents` (setelah `devops`, line 422), bentuknya persis seperti `devops`:
 
@@ -202,12 +203,12 @@ Tambah entri `researcher` ke kamus role:
 - `babd/superpowers.py` `DEFAULT_ASSIGNMENT` — `"researcher": ["using-superpowers", "dispatching-parallel-agents", "verification-before-completion"],`
 - `babd/mattpocock.py` `RECOMMENDED` — `"researcher": ["research", "domain-modeling", "handoff"],`
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `python -m json.tool agents.json > /dev/null && python -m unittest discover -s tests -q`
 Expected: PASS. `test_team.py::test_full_run` tetap hijau (fixture tidak berubah → masih 6 request LLM). Output nyata wajib ditempel di laporan, bukan diklaim.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add babd/flow.py babd/permissions.py babd/skillpacks.py babd/superpowers.py babd/mattpocock.py agents.json tests/test_researcher.py
@@ -217,6 +218,7 @@ git commit -m "feat: researcher agent in the roster, config and skill packs"
 ---
 
 ### Task 2: Path relatif untuk harness `process` (dipicu jawaban CEO)
+**Status: SELESAI** — `Process.command_path()` me-resolusi `command` relatif terhadap `ROOT`; test `test_process_command_may_be_relative` + `test_process_command_absolute_is_untouched` di `tests/test_harness.py` hijau.
 
 **Files:**
 - Modify: `babd/harness/others.py:154-156` (`Process.command_path`)
@@ -225,7 +227,7 @@ git commit -m "feat: researcher agent in the roster, config and skill packs"
 **Interfaces — Consumes:** `os.path.join(ROOT, command)` pola `cwd`/`config_dir`.
 **Produces:** `Process.command_path()` menerima `command` relatif; dipakai Task 3 lewat `agents.json`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
     def test_process_command_may_be_relative(self):
@@ -251,12 +253,12 @@ git commit -m "feat: researcher agent in the roster, config and skill packs"
 
 (Perhatikan: `babd/flow.py` dipakai sebagai file executable-tiruan karena ia ada di repo; test hanya menguji resolusi path, bukan menjalankannya. Nama fungsinya `create_harness`, **bukan** `build_harness` — `babd/harness/__init__.py:21`.)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m unittest tests.test_researcher.ResearcherHarnessTest -v`
 Expected: FAIL — `HarnessError: Custom process: command 'babd/flow.py' not found` (dari `ensure_command`).
 
-- [ ] **Step 3: Implement in `babd/harness/others.py`**
+- [x] **Step 3: Implement in `babd/harness/others.py`**
 
 ```python
     def command_path(self):
@@ -269,12 +271,12 @@ Expected: FAIL — `HarnessError: Custom process: command 'babd/flow.py' not fou
         return ensure_command(self.label, {**self.cfg, "command": command}, None)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m unittest tests.test_researcher -v && python -m unittest discover -s tests -q`
 Expected: PASS, termasuk `tests/test_harness.py` (tidak ada regresi pada harness `process`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add babd/harness/others.py tests/test_researcher.py
@@ -284,6 +286,7 @@ git commit -m "fix(harness): resolve a relative process command against ROOT"
 ---
 
 ### Task 3: Adapter lokal gpt-researcher (program black box)
+**Status: SELESAI (kecuali E2E berkredensial)** — commit `2aadf30`; adapter + kelas test adapter di `tests/test_researcher.py`. Perbaikan rc=3 palsu (prompt lewat `RESEARCHER_PROMPT` saat re-exec venv) terverifikasi RED->GREEN. E2E provider nyata BELUM dijalankan (tak ada SearXNG di mesin ini) — serah-terima ke QA/DevOps.
 
 **Files:**
 - Create: `scripts/researcher_adapter.py`
@@ -295,7 +298,7 @@ git commit -m "fix(harness): resolve a relative process command against ROOT"
 **Interfaces — Consumes:** stdin = `render_prompt()` (system prompt, `\n\n---\n\n`, task); env `BABD_LLM_BASE_URL` / `BABD_LLM_MODEL` / `BABD_LLM_API_KEY` (dari `generic_routing`, `babd/harness/routing.py:98-113`); env `RESEARCHER_SEARXNG_URL`, `RESEARCHER_ALLOW_DUCKDUCKGO`, `RESEARCHER_FAKE` (hanya untuk test).
 **Produces:** stdout = satu blok JSON `{"query": str, "answer": str, "sources": [{"title": str, "url": str}], "local": bool}` lalu `\n---\n` + ringkasan teks; exit 0 sukses, exit 2 tanpa provider, exit 3 error lain.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
     def test_adapter_reads_prompt_from_stdin(self):
@@ -322,12 +325,12 @@ git commit -m "fix(harness): resolve a relative process command against ROOT"
 
 (dengan `ADAPTER = os.path.join(os.path.dirname(os.path.dirname(HERE)), "scripts", "researcher_adapter.py")`)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m unittest tests.test_researcher.ResearcherAdapterTest -v`
 Expected: FAIL — file adapter belum ada (`FileNotFoundError` / returncode 2 dari python).
 
-- [ ] **Step 3: Implement `scripts/researcher_adapter.py`**
+- [x] **Step 3: Implement `scripts/researcher_adapter.py`**
 
 Poin implementasi yang harus tepat:
 - Baca seluruh stdin (`sys.stdin.read()`).
@@ -338,17 +341,17 @@ Poin implementasi yang harus tepat:
 - Semua exception lain → pesan ke stderr + **exit 3**. **Jangan pernah** mencetak sumber yang tidak benar-benar dikembalikan provider.
 - LLM: baca `os.environ["BABD_LLM_BASE_URL"/"BABD_LLM_MODEL"/"BABD_LLM_API_KEY"]`; jangan hardcode kunci.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m unittest tests.test_researcher -v` → PASS.
 Run manual (output nyata wajib ditempel; kalau jaringan mati tulis **NOT RUN** + alasan):
 `printf 'You are the RESEARCHER.\n\n---\n\nversi terbaru httpx\n' | python scripts/researcher_adapter.py --json ; echo "exit=$?"`
 
-- [ ] **Step 5: `scripts/researcher_setup.sh` dan `docs/researcher/SETUP.md`**
+- [x] **Step 5: `scripts/researcher_setup.sh` dan `docs/researcher/SETUP.md`**
 
 `researcher_setup.sh`: clone/pin gpt-researcher ke `.babd/researcher/gpt-researcher/`, buat venv `.babd/researcher/venv`, `pip install -e`, buat symlink `.babd/researcher/bin/research` → `scripts/researcher_adapter.py` (executable) dan `.babd/researcher/bin/setup` → skrip ini. Harus idempoten. Catat di `SETUP.md` bahwa kegagalan jaringan → jalur `--offline` yang jujur.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/researcher_adapter.py scripts/researcher_setup.sh docs/researcher/SETUP.md
@@ -359,6 +362,7 @@ git commit -m "feat: local gpt-researcher adapter for the researcher agent"
 ---
 
 ### Task 4: Dashboard researcher
+**Status: SELESAI** — commit `cb707b5`: checkbox `skip=researcher` di `app.js` + test board/skip di `tests/test_dashboard.py` (13 OK).
 
 **Files:**
 - Modify: `babd/dashboard/static/app.js:149-151` (checkbox skip), `:283` (hint `sv_agents`)
@@ -367,7 +371,7 @@ git commit -m "feat: local gpt-researcher adapter for the researcher agent"
 **Interfaces — Consumes:** `Dashboard.board()` loop over `cfg["agents"]` (`babd/dashboard/server.py:1171-1190`).
 **Produces:** kartu agent + checkbox skip researcher; hint server menyebut riset web.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
     def test_board_shows_researcher(self):
@@ -387,12 +391,12 @@ git commit -m "feat: local gpt-researcher adapter for the researcher agent"
 `REAL_AGENTS_JSON = os.path.join(os.path.dirname(HERE), "agents.json")` didefinisikan di
 `setUpClass`; `load_config` ada di `babd/config.py`, sudah dipakai `tests/test_team.py:18`.)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m unittest tests.test_researcher.ResearcherDashboardTest -v`
 Expected: FAIL — `app.js` belum punya checkbox skip researcher.
 
-- [ ] **Step 3: Implement in `app.js`**
+- [x] **Step 3: Implement in `app.js`**
 
 Sesudah line 151 tambah:
 
@@ -403,12 +407,12 @@ Sesudah line 151 tambah:
 Dan ubah hint server (line 283) dari `"Agents that may use it, e.g. devops, developer"` menjadi
 `"Agents that may use it, e.g. devops, developer, researcher"`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `python -m unittest tests.test_researcher -v && python -m unittest discover -s tests -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add babd/dashboard/static/app.js tests/test_researcher.py
