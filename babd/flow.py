@@ -681,11 +681,18 @@ class Run:
             # a real model burns the budget until timeout. The cap still allows the normal
             # ask -> answer -> work cycle, so real collaboration is unaffected.
             while q:
-                peer = self.ask_peer(agent_id, q) if q.get("ask") else None
-                if peer:
-                    if self.peer_budget_left() <= 0:
+                peers = self.peer_targets(agent_id, q)
+                peer = None
+                if peers:
+                    # Guard BEFORE asking: `ask_peer` has side effects (records state["peer_questions"]
+                    # and calls the peer's LLM). Checking the budget afterwards let each turn answer
+                    # one question past the cap, which piled up across agents (QA/Dev regression:
+                    # cap 6 produced 12 executed peer answers). Budget the targets we are about to ask.
+                    if len(peers) > self.peer_budget_left():
                         raise PeerLoop(f"{self.team.by_id[agent_id].name} kept asking teammates "
                                        f"(more than {self.max_peer_questions} peer turns this run)")
+                    peer = self.ask_peer(agent_id, q, peers)
+                if peer:
                     out = self.work(agent_id, f"{prompt}\n\n### You asked your teammate {q['ask'][0]}\n"
                                     f"{q['question']}\n\n### Your teammate answered\n{peer}\n\n"
                                     "Now do your task again, using this answer.", task, reply_kind, fact=fact, **work_kw)
@@ -734,11 +741,18 @@ class Run:
         """How many more peer answers this run may ask for (see `max_peer_questions`)."""
         return self.max_peer_questions - len(self.state.get("peer_questions") or [])
 
-    def ask_peer(self, agent_id, q):
+    def peer_targets(self, agent_id, q):
+        """Teammates named on `ASK:` that can really answer: in the roster, not the asker, not skipped.
+
+        Pure (no side effects) so the caller can budget the turn before `ask_peer` records it.
+        """
+        return [t for t in (q.get("ask") or []) if t in self.team.by_id and t != agent_id
+                and not self.is_skipped(t)]
+
+    def ask_peer(self, agent_id, q, targets=None):
         """A teammate answers the question (the agent named on ASK:). Returns the answer text, or
         None when there is no teammate to ask / it gave no usable answer (then the CEO is asked)."""
-        targets = [t for t in (q.get("ask") or []) if t in self.team.by_id and t != agent_id
-                   and not self.is_skipped(t)]
+        targets = self.peer_targets(agent_id, q) if targets is None else targets
         if not targets:
             return None
         asker_name = self.team.by_id[agent_id].name

@@ -510,3 +510,32 @@ Kode fix dipulihkan → 5 OK.
 **Serah-terima ke QA (round 2):** jalankan `python -m unittest discover -s tests -q` (harap 321 OK) dan
 E2E kolaborasi termock. E2E **berkredensial/provider pencarian nyata tetap NOT RUN** (tidak ada SearXNG
 di mesin ini; adapter jujur `exit 2` tanpa provider) — itu pekerjaan DevOps (Task 6), bukan klaim Developer.
+
+## Developer round 3 — dua cacat sisa yang ditemukan & ditutup
+
+QA round-2 memberi **PASS**, tapi menyisakan dua hal yang bisa ditutup tanpa kredensial. Developer
+menutupnya dengan TDD (RED lebih dulu), bukan dengan menambah tes setelah kode.
+
+| # | Cacat | Akar masalah | Fix | Tes permanen | Bukti RED |
+|---|---|---|---|---|---|
+| **B-7** | Cap peer tidak dihormati tepat: lewat batas satu kali; cap 6 pernah mengeksekusi 12 peer answer | Guard `peer_budget_left() <= 0` diperiksa **setelah** `ask_peer()`, padahal `ask_peer()` sudah menambah `state["peer_questions"]` **dan** memanggil LLM peer (efek samping). Overshoot menumpuk lintas agent. | Guard dipindah **sebelum** `ask_peer`, dibudgetkan terhadap `peer_targets(agent_id, q)` (helper murni baru); `ask_peer` menerima `targets`. Bila peer tidak menjawab, tetap jatuh ke jalur CEO seperti semula. | `tests/test_peer_collaboration.py::test_peer_turns_never_exceed_the_cap` (assert `<= max_peer_questions` persis, bukan ambang longgar) | cap 6 → **12 peer answer** (FAIL) sebelum fix |
+| **B-8** | `test_import_error_message_points_at_the_setup_script` **selalu SKIP** di mesin yang vendornya terpasang (dicatat oleh QA round-2) | Tes bergantung pada ada/tidaknya `.babd/researcher/venv` di disk, yang **ter-gitignore** → hasil non-deterministik antar mesin. | Tes memaksa jalur gagal dengan `RESEARCHER_HOME` ke direktori kosong (pola sama seperti `test_query_survives_the_venv_reexec`), jadi berjalan di mana pun. | tes yang sama, kini **berjalan** (bukan skip) | hapus `researcher_setup.sh` dari pesan adapter → **FAILED**; dipulihkan → PASS |
+
+**Perintah verifikasi & output nyata (Developer, round 3):**
+
+```
+$ python -m pytest tests/ -q
+320 passed, 2 skipped in 102.71s        # naik dari 318; 1 skip hilang karena B-8 kini berjalan
+
+$ python -m pytest tests/test_researcher.py -v
+16 passed in 4.28s                     # SEBELUM: 15 passed, 1 skipped (B-8)
+
+$ timeout 120 python /tmp/dev_peer_cap_loop.py
+max_peer_questions = 4
+len(peer_questions) = 4                # SEBELUM: 10  (overshoot 6)
+VERDICT: PASS (cap honoured, no overshoot)
+```
+
+**Masih terbuka (bukan milik Developer):** E2E dengan search provider nyata + vendor penuh — QA sudah
+``ASK: devops`` untuk ini; butuh kunci API dan jaringan, tetap **NOT RUN**.
+

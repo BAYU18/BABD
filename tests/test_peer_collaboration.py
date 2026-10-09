@@ -92,6 +92,27 @@ class PeerLoopBoundTest(unittest.TestCase):
                         f"the stop must be visible as a blocker: {state['blockers']}")
         self.assertLess(len(asks), 60, f"too many LLM calls: {len(asks)} (peer loop is unbounded)")
 
+    def test_peer_turns_never_exceed_the_cap(self):
+        """Batas peer harus dihormati TEPAT, tanpa overshoot.
+
+        Regresi ditemukan Developer pada fix pertama B-3: guard `peer_budget_left() <= 0`
+        diperiksa SETELAH `ask_peer()` dipanggil, padahal `ask_peer()` sudah menambah entri ke
+        state["peer_questions"] DAN memanggil LLM peer. Akibatnya setiap agent yang masuk cabang
+        peer menjawab satu kali melebihi batas. Dengan roster nyata (beberapa agent bertanya),
+        overshoot menumpuk: cap=4 pernah menghasilkan 10 peer answer yang benar-benar dieksekusi.
+
+        Test ini mengunci angka persisnya, bukan ambang longgar, supaya overshoot tidak bisa
+        bersembunyi lagi.
+        """
+        def always_ask(agent, prompt, **kw):
+            return "still unsure\nASK: researcher\nQUESTION: again?"
+
+        state, _asks = self.run_with(self.cfg, always_ask, asker=lambda q: "just proceed")
+        cap = self.cfg["project"]["max_peer_questions"]
+        peers = state.get("peer_questions") or []
+        self.assertLessEqual(len(peers), cap,
+                             f"peer cap {cap} exceeded with {len(peers)} answers: {peers}")
+
     def test_a_single_peer_answer_closes_the_loop(self):
         """Kasus normal: satu tanya-jawab peer, lalu agent menyelesaikan tugasnya (tidak mengulang)."""
         calls = {"n": 0}

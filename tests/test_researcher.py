@@ -161,12 +161,18 @@ class ResearcherAdapterTest(unittest.TestCase):
 
     def test_import_error_message_points_at_the_setup_script(self):
         """Tanpa venv/vendor, adapter harus gagal dengan pesan yang menyebut cara memperbaikinya,
-        bukan dengan traceback mentah."""
-        venv_python = os.path.join(WORKTREE, ".babd", "researcher", "venv", "bin", "python")
-        if os.path.exists(venv_python):
-            self.skipTest("vendored gpt-researcher is installed here; the failure path needs it missing")
+        bukan dengan traceback mentah.
+
+        Determinisme: jalur ini tidak boleh bergantung pada ada/tidaknya `.babd/researcher/venv`
+        di mesin (dir itu ter-gitignore, jadi hasilnya beda antar mesin dan tesnya selalu SKIP di
+        mesin yang vendornya sudah dipasang - persis catatan QA round-2). Kita paksa dengan
+        `RESEARCHER_HOME` ke direktori kosong, seperti yang sudah dipakai test re-exec di atas.
+        """
+        empty_home = os.path.join(self._tmp, "no-vendor-home")
+        os.makedirs(empty_home, exist_ok=True)
         prompt = "RESEARCHER\n\n---\n\nsome question"
-        p = self.run_adapter(prompt, env={"RESEARCHER_SEARXNG_URL": "http://127.0.0.1:8888"})
+        p = self.run_adapter(prompt, env={"RESEARCHER_SEARXNG_URL": "http://127.0.0.1:8888",
+                                          "RESEARCHER_HOME": empty_home})
         self.assertEqual(p.returncode, 2, f"stdout={p.stdout!r} stderr={p.stderr!r}")
         self.assertIn("researcher_setup.sh", (p.stderr + p.stdout))
 
