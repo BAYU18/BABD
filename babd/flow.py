@@ -39,7 +39,16 @@ from . import projects, servers, skillpacks, taskdocs
 from .gbrain import one_line, slugify
 
 RUNS_DIR = os.path.join(ROOT, "runs")
-ROLES = ("lead", "architect", "developer", "qa", "devops")
+ROLES = ("lead", "architect", "developer", "qa", "devops", "researcher")
+CORE_ROLES = ROLES[:5]  # every agents.json must have these; extra roles (researcher) are optional
+
+
+def specialist_roles(team):
+    """The team's specialist ids, in ROLES order, skipping roles missing from this agents.json.
+
+    Old installations (no researcher) keep working: a role only counts when the team really has it.
+    """
+    return [r for r in ROLES[1:] if r in team.by_id]
 
 ROUTES = ({("ceo", "lead"), ("lead", "ceo")} | {(r, "lead") for r in ROLES[1:]} | {("lead", r) for r in ROLES[1:]}
 # teammates may ask each other directly (peer Q&A): the agent named on ASK: answers, so a
@@ -64,7 +73,8 @@ QUESTION_RE = re.compile(r"^\s*\**\s*QUESTION\s*\**\s*:\s*\**\s*(.+?)\s*$", re.M
 OPTIONS_RE = re.compile(r"^\s*\**\s*OPTIONS\s*\**\s*:\s*\**\s*(.+?)\s*$", re.M)
 ASK_RE = re.compile(r"^\s*\**\s*ASK\s*\**\s*:\s*\**\s*(.+?)\s*$", re.M)
 ASK_INSTRUCTION = ("If something essential is unclear, ask the teammate who owns that part first, NOT the CEO. "
-                   "End your answer with a line `ASK: <agent id>` (architect, developer, qa, devops or lead) and a "
+                   "End your answer with a line `ASK: <agent id>` (architect, developer, qa, devops, researcher "
+                   "or lead) and a "
                    "line `QUESTION: <your question>`; your teammate answers and you do the step again. Only when "
                    "no teammate can know it (a password you were not given, which server, a choice only the CEO "
                    "can make) ask the CEO with the same `QUESTION:` line and no `ASK:` line. Add a line "
@@ -126,6 +136,15 @@ class BudgetExceeded(FlowError):
     pass
 
 
+class PeerLoop(FlowError):
+    """An agent kept asking teammates instead of doing its task: stop the peer turns (never the run).
+
+    Not a failure of the task: `delegate` catches it and reports the state as it is, so one
+    confused agent cannot spin the run forever (and cannot burn the whole budget either).
+    """
+    pass
+
+
 def add_usage(total, u):
     """Add one call's usage {"input", "output", "cost", "estimated"} into a running total."""
     total["input"] = total.get("input", 0) + u["input"]
@@ -141,8 +160,22 @@ def add_usage(total, u):
 
 
 SKIPPABLE = {"architect": "no Architect: the Team Lead's plan is the design (small changes)",
+             "researcher": "no Researcher: no web research, the team uses what it already knows",
              "devops": "no DevOps: no deploy, the task ends after QA and the report",
              "prep": "no parallel preparation: QA and DevOps do not prepare while the Developer builds"}
+
+# What each specialist does in the flow, written into the Team Lead's plan prompt, and where a
+# work package done by that agent lands in the stage machine. A role with no entry here would
+# break the plan (KeyError), so every role in ROLES must have one.
+SPECIALIST_DUTY = {
+    "architect": "Architect designs",
+    "developer": "Developer builds",
+    "qa": "QA tests (failed tests go back to the Developer)",
+    "devops": "DevOps deploys and sets up monitoring after QA passes and the CEO approves",
+    "researcher": "Researcher searches the internet and reports findings with their sources",
+}
+PACKAGE_KIND = {"architect": "design", "developer": "code", "qa": "test_plan",
+                "devops": "deploy_prep", "researcher": "research"}
 
 
 MODES = {"auto": "the Team Lead decides who is needed (fast for small jobs)",
@@ -321,6 +354,9 @@ class Run:
         project = team.cfg.get("project", {})
         self.require_approval = project.get("require_approval", ["deploy"])
         self.max_questions = int(project.get("max_questions", 3)) if project.get("ask_ceo", True) else 0
+        # Peer Q&A is the other half of "every agent can ask every agent": it needs its own cap so a
+        # single agent that keeps printing `ASK:` cannot loop forever (QA bug B-3). Counted per run.
+        self.max_peer_questions = int(project.get("max_peer_questions", max(3, self.max_questions * 2)))
         self.max_fix_rounds = int(project.get("max_fix_rounds", 2))
         self.parallel_prep = bool(project.get("parallel_prep", True))
         self.budget = budget_of(project)
@@ -632,14 +668,30 @@ class Run:
         self.bus.send("lead", agent_id, kind, task)
         self.agent(agent_id, "working", task)
         started = time.monotonic()
+        fact = None
+        out = ""
         try:
-            fact = None
             if reply_kind == "test_report":
                 fact = (lambda o: f"QA verdict {parse_verdict(o)} for '{one_line(self.goal, 80)}': {one_line(o, 200)}")
             out = self.work(agent_id, prompt, task, reply_kind, fact=fact, **work_kw)
             q = parse_question(out)
+            # Peer turns are capped per run (project.max_peer_questions): an agent that keeps
+            # printing `ASK:` must never spin the run forever. Without a cap this loop called the
+            # LLM unbounded (QA B-3: >1000 calls with a mock that always answers `ASK:`), which on
+            # a real model burns the budget until timeout. The cap still allows the normal
+            # ask -> answer -> work cycle, so real collaboration is unaffected.
             while q:
-                peer = self.ask_peer(agent_id, q) if q.get("ask") else None
+                peers = self.peer_targets(agent_id, q)
+                peer = None
+                if peers:
+                    # Guard BEFORE asking: `ask_peer` has side effects (records state["peer_questions"]
+                    # and calls the peer's LLM). Checking the budget afterwards let each turn answer
+                    # one question past the cap, which piled up across agents (QA/Dev regression:
+                    # cap 6 produced 12 executed peer answers). Budget the targets we are about to ask.
+                    if len(peers) > self.peer_budget_left():
+                        raise PeerLoop(f"{self.team.by_id[agent_id].name} kept asking teammates "
+                                       f"(more than {self.max_peer_questions} peer turns this run)")
+                    peer = self.ask_peer(agent_id, q, peers)
                 if peer:
                     out = self.work(agent_id, f"{prompt}\n\n### You asked your teammate {q['ask'][0]}\n"
                                     f"{q['question']}\n\n### Your teammate answered\n{peer}\n\n"
@@ -654,6 +706,10 @@ class Run:
                 out = self.work(agent_id, f"{prompt}\n\n### You asked the CEO\n{q['question']}\n\n### The CEO answered\n"
                                 f"{answer}\n\nNow do your task again, using this answer.", task, reply_kind, fact=fact, **work_kw)
                 q = parse_question(out)
+        except PeerLoop as e:  # the agent would not stop asking peers: keep what it produced
+            with self.lock:
+                self.state["blockers"].append(str(e))
+            self.emit("peer_loop_stopped", {"agent": agent_id, "kind": kind, "task": task, "error": str(e)})
         except Exception:
             self.agent(agent_id, "blocked")
             raise
@@ -669,14 +725,34 @@ class Run:
         "developer": "the code, the implementation and the build",
         "qa": "the tests, the acceptance criteria and the evidence",
         "devops": "the deployment, the servers, the pipeline and the monitoring",
+        "researcher": "searching the internet, facts from outside sources, and citing them",
         "lead": "the plan, the priorities and the scope of the task",
     }
 
-    def ask_peer(self, agent_id, q):
+    def is_skipped(self, agent_id):
+        """True when the CEO's task options skip this agent. Skipped agents must not be dispatched,
+        so a peer question naming one (`ASK: researcher`) falls back to the CEO instead."""
+        skip = getattr(self, "skip", None) or ()
+        if isinstance(skip, str):
+            skip = (skip,)
+        return agent_id in skip
+
+    def peer_budget_left(self):
+        """How many more peer answers this run may ask for (see `max_peer_questions`)."""
+        return self.max_peer_questions - len(self.state.get("peer_questions") or [])
+
+    def peer_targets(self, agent_id, q):
+        """Teammates named on `ASK:` that can really answer: in the roster, not the asker, not skipped.
+
+        Pure (no side effects) so the caller can budget the turn before `ask_peer` records it.
+        """
+        return [t for t in (q.get("ask") or []) if t in self.team.by_id and t != agent_id
+                and not self.is_skipped(t)]
+
+    def ask_peer(self, agent_id, q, targets=None):
         """A teammate answers the question (the agent named on ASK:). Returns the answer text, or
         None when there is no teammate to ask / it gave no usable answer (then the CEO is asked)."""
-        targets = [t for t in (q.get("ask") or []) if t in self.team.by_id and t != agent_id
-                   and not (t == "devops" and "devops" in getattr(self, "skip", ()))]
+        targets = self.peer_targets(agent_id, q) if targets is None else targets
         if not targets:
             return None
         asker_name = self.team.by_id[agent_id].name
@@ -721,6 +797,23 @@ class Run:
 
     # -- questions: an agent asks the CEO and waits for the answer ----------------------------------
 
+    def _peer_answers(self, agent_id, q):
+        """What the named teammates already answered for this question, so the CEO's card shows it.
+
+        `ASK:` is only a first attempt: when the teammate has nothing usable, the question goes to
+        the CEO anyway. Showing the peer's answer there is what stops the CEO from answering
+        something another agent already answered (and from asking why they were bothered).
+        """
+        asked = [t for t in (q.get("ask") or []) if t != agent_id]
+        if not asked:
+            return []
+        out = []
+        for entry in self.state.get("peer_questions") or []:
+            if entry.get("from") == agent_id and entry.get("to") in asked and entry.get("question") == q.get("question"):
+                out.append({"to": entry["to"], "to_name": self.team.by_id[entry["to"]].name,
+                            "answer": entry.get("answer")})
+        return out
+
     def can_ask(self):
         return bool(self.asker) and len(self.state.get("questions") or []) < self.max_questions
 
@@ -737,7 +830,8 @@ class Run:
         self.agent(agent_id, "waiting", "Waiting for the CEO's answer")
         self.bus.send("lead", "ceo", "question", f"{name} asks: {q['question']}"
                       + (f"\nOptions: {' | '.join(entry['options'])}" if entry["options"] else ""), agent=agent_id)
-        self.emit("question", {**entry, "goal": self.goal, "agent_name": name})
+        self.emit("question", {**entry, "goal": self.goal, "agent_name": name,
+                               "peer_answers": self._peer_answers(agent_id, q)})
         try:
             answer = self.asker({**entry, "run": self.id, "goal": self.goal, "agent_name": name})
         finally:
@@ -804,7 +898,7 @@ class Run:
 
     def _flow(self):
         team, goal = self.team, self.goal
-        missing = [r for r in ROLES if r not in team.by_id]
+        missing = [r for r in CORE_ROLES if r not in team.by_id]
         if missing:
             raise FlowError(f"agents.json needs agents with these ids: {', '.join(missing)}")
         names = {a.id: a.name for a in team.agents}
@@ -824,17 +918,14 @@ class Run:
 
         # PLAN
         self.agent("lead", "working", "Plan work and assign agents")
-        specialists = [r for r in ROLES[1:] if r not in self.skip]
+        specialists = [r for r in specialist_roles(team) if r not in self.skip]
         team_desc = "\n".join(f"- {r}: {names[r]} - main task {team.by_id[r].main_task}; skills: "
                               f"{', '.join(team.by_id[r].cfg.get('skills', []))}" for r in specialists)
         slots = ", ".join(f'"{r}": "<task>"' for r in specialists)
         plan_text = self.step("plan", lambda: self.work("lead",
             f"{self.goal_block}\n\nYour team:\n{team_desc}\n\n"
             + ("The work flows through you: " + ", ".join(
-                {"architect": "Architect designs", "developer": "Developer builds",
-                 "qa": "QA tests (failed tests go back to the Developer)",
-                 "devops": "DevOps deploys and sets up monitoring after QA passes and the CEO approves"}[r]
-                for r in specialists) + ".\n"
+                SPECIALIST_DUTY.get(r, r) for r in specialists) + ".\n"
                + ("" if "architect" not in self.skip else "There is no Architect on this task: put the design "
                   "decisions the Developer needs into your plan.\n")
                + ("" if "devops" not in self.skip else "This task has no deploy.\n")) +
@@ -1014,7 +1105,7 @@ class Run:
         raw = plan.get("work_packages") if isinstance(plan, dict) else None
         if not isinstance(raw, list):
             return []
-        allowed = [r for r in ROLES[1:] if r not in self.skip]
+        allowed = [r for r in specialist_roles(self.team) if r not in self.skip]
         out, ids = [], set()
         for i, p in enumerate(raw[:self.MAX_PACKAGES]):
             if not isinstance(p, dict) or not str(p.get("task") or "").strip():
@@ -1074,7 +1165,7 @@ class Run:
             inputs = "".join(f"\n\n### {names[results_of['agent']]} finished {d}: {results_of['title']}\n{results[d]}"
                              for d in p["depends_on"] for results_of in [next(x for x in packages if x["id"] == d)])
             others = "\n".join(f"- {x['id']} ({names[x['agent']]}): {x['title']}" for x in packages if x["id"] != p["id"])
-            kind = {"architect": "design", "developer": "code", "qa": "test_plan", "devops": "deploy_prep"}[p["agent"]]
+            kind = PACKAGE_KIND.get(p["agent"], "code")
             extra = {"qa": " Prepare the tests (cases and test code); do not give a verdict yet: the full test "
                            "round comes after the build.",
                      "devops": " Prepare only: do not deploy yet, that waits for QA and the CEO."}.get(p["agent"], "")
@@ -1163,7 +1254,7 @@ class Run:
                     self.skip.add(role)
             if self.mode == "quick":
                 self.skip |= {"architect", "devops"}
-            r["agents"] = [x for x in ROLES[1:] if x not in self.skip]
+            r["agents"] = [x for x in specialist_roles(self.team) if x not in self.skip]
         with self.lock:
             self.state["route"] = r
         self.emit("route", r)
@@ -1176,7 +1267,7 @@ class Run:
     def triage_prompt(self):
         team = self.team
         lines = []
-        for r in ROLES[1:]:
+        for r in specialist_roles(team):
             a = team.by_id[r]
             lines.append(f"- {r}: {a.name} - {a.main_task}; "
                          + ("runs commands and changes files on this machine" if self.can_run(r)
@@ -1219,7 +1310,7 @@ class Run:
             return r
         agent = str(data.get("agent") or "").strip().lower()
         if route == "direct" or self.mode == "quick":
-            if agent not in ROLES[1:] or agent in self.skip:
+            if agent not in specialist_roles(self.team) or agent in self.skip:
                 agent = next((x for x in ("devops", "developer") if x not in self.skip and self.can_run(x)), "developer")
             return {**r, "route": "direct", "agent": agent, "task": str(data.get("task") or "").strip() or self.goal}
         agents = data.get("agents") if isinstance(data.get("agents"), list) else []

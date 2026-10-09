@@ -30,6 +30,7 @@ GENERAL_RECOMMENDED = {
     "developer": ["GBrain", "Python", "TypeScript", "Git"],
     "qa": ["GBrain", "Unit Tests", "E2E Tests", "Bug Triage"],
     "devops": ["GBrain", "Docker", "CI/CD", "Monitoring"],
+    "researcher": ["GBrain", "Web Research", "Internet Search", "Source Citation"],
 }
 _FRONT = re.compile(r"\A---\n(.*?)\n---\n?", re.S)
 

@@ -196,6 +196,23 @@ class InstallTest(unittest.TestCase):
         self.assertTrue(tools.managed_path(spec).endswith(os.path.join("cc", "node_modules", ".bin", "claude")))
         self.assertEqual(spec.requirement("2.1.0"), "@anthropic-ai/claude-code@2.1.0")
 
+    def test_relative_command_is_resolved_against_root(self):
+        """`agents.json` memakai `command: scripts/researcher_adapter.py` (ROOT-relatif).
+
+        QA menemukan `Process.command_path()` mengembalikan path relatif apa adanya; itu hanya
+        kebetulan jalan kalau cwd == ROOT, dan gagal di run yang cwd-nya lain. Kontraknya: path
+        eksplisit relatif diresolusi ke absolut (ROOT-relatif), jadi anak `subprocess` selalu
+        menemukan programnya.
+        """
+        rel = "scripts/relative_probe.py"
+        target = os.path.join(tools.ROOT, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        write_exe(os.path.dirname(target), "relative_probe.py", "#!/bin/sh\necho hi\n")
+        self.addCleanup(os.remove, target)
+        path = tools.ensure_command("Probe", {"command": rel}, None)
+        self.assertTrue(os.path.isabs(path), f"command relatif harus jadi absolut: {path!r}")
+        self.assertEqual(path, target)
+
 
 class HarnessTest(unittest.TestCase):
     def setUp(self):
@@ -361,6 +378,52 @@ class HarnessTest(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "Anthropic-compatible"):
             create_harness(dev).complete("S", [{"role": "user", "content": "x"}])
 
+    def test_relative_install_is_resolved_against_root(self):
+        """B-9 (QA round-2): `agents.json` researcher memakai `install: scripts/researcher_setup.sh`.
+
+        RED sebelum perbaikan: `Process.setup()` menjalankan argv apa adanya dengan cwd = self.cwd
+        (bukan ROOT) -> FileNotFoundError: 'scripts/researcher_setup.sh'; jadi jalur pertama agent
+        researcher (auto-install saat run pertama / tombol Setup di dashboard) mati total.
+        Kontraknya: perintah `install` diresolusi ROOT-relatif seperti `command`, sehingga jalan
+        dari cwd mana pun.
+        """
+        agent = copy.deepcopy(self.agents["devops"])
+        rel = os.path.join("scripts", "relative_install_probe.sh")
+        marker = os.path.join(self.tmp, "installed_rel.txt")
+        target = os.path.join(tools.ROOT, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w") as f:
+            f.write(f"#!/bin/sh\nprintf x >> {marker!r}\n")
+        os.chmod(target, 0o755)
+        self.addCleanup(os.remove, target)
+        agent["harness"] = {"type": "process", "command": "faketool", "install": rel,
+                            "cwd": os.path.join(self.tmp, "workspace")}
+        isolated = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(isolated, exist_ok=True)
+        with mock.patch.object(tools, "TOOLS_DIR", os.path.join(self.tmp, "tools")):
+            h = create_harness(agent)
+            old = os.getcwd()
+            os.chdir(isolated)          # cwd bukan ROOT
+            try:
+                h.complete("S", [{"role": "user", "content": "x"}])
+            finally:
+                os.chdir(old)
+        self.assertEqual(open(marker).read(), "x", "install relatif tidak jalan dari cwd non-ROOT")
+
+    def test_process_install_absent_binary_fails_loudly(self):
+        """B-10: `install` yang tidak ada harus jadi HarnessError yang ramah, bukan FileNotFoundError.
+
+        RED sebelum perbaikan: `subprocess.run` melempar FileNotFoundError mentah (jalur install tidak
+        pernah diperiksa), padahal `ensure_command` untuk `command` sudah memberi pesan rapi.
+        """
+        agent = copy.deepcopy(self.agents["devops"])
+        agent["harness"] = {"type": "process", "command": "faketool",
+                            "install": "no-such-installer-xyz --go",
+                            "cwd": os.path.join(self.tmp, "workspace")}
+        with mock.patch.object(tools, "TOOLS_DIR", os.path.join(self.tmp, "tools")):
+            with self.assertRaisesRegex(HarnessError, "install.*no-such-installer-xyz.*not found"):
+                create_harness(agent).complete("S", [{"role": "user", "content": "x"}])
+
     def test_process_install_runs_once(self):
         agent = copy.deepcopy(self.agents["devops"])
         marker = os.path.join(self.tmp, "installed.txt")
@@ -380,6 +443,37 @@ class HarnessTest(unittest.TestCase):
         self.assertIn("['--model', 'qwen2.5-coder:7b']", reply)
         self.assertIn("key=local-secret", reply)
         self.assertIn("base=http://localhost:11434/v1", reply)
+
+    def test_project_tests_find_a_python_when_path_lacks_one(self):
+        """QA round-2 (bug lingkungan): gate tes BABD gagal `exit 127 /bin/sh: 1: python: not found`.
+
+        Akarnya: `projects.run_tests` menjalankan shell dengan `env=scrub_env(os.environ)` APA ADANYA,
+        tanpa memperkaya PATH (bandingkan `tools._run` dan program agent yang memakai `extra_path()`).
+        Di mesin ini `python` hanya ada di venv yang di-deny-rule, jadi `python -m pytest` mati.
+
+        RED sebelum perbaikan: PATH tanpa interpreter -> exit 127. Kontraknya: `run_tests` menaruh
+        direktori `sys.executable` (interpreter BABD) DI DEPAN PATH, sehingga `python` selalu ada.
+        """
+        from babd import projects
+        bare = os.path.dirname(sys.executable)  # satu-satunya interpretor yang kita beri
+        # PATH yang sengaja tidak memuat interpretor apa pun yang bisa dipanggil `python`.
+        with mock.patch.dict(os.environ, {"PATH": "/nonexistent-dir-qa"}):
+            r = projects.run_tests("python -c \"print('alive')\"", self.tmp)
+        self.assertEqual(r["exit"], 0, r["output"])
+        self.assertIn("alive", r["output"])
+        self.assertTrue(os.path.isdir(bare))
+
+    def test_project_tests_keep_babd_runtime_on_path(self):
+        """`run_tests` harus tetap memuat `extra_path()` BABD (runtime yang diinstal ke .babd/tools),
+        bukan mengganti PATH sepenuhnya. RED: PATH di bawah dikosongkan, penanda harus tetap muncul.
+        """
+        from babd import projects
+        marker_dir = os.path.join(self.tmp, "runtime-bin")
+        os.makedirs(marker_dir, exist_ok=True)
+        with mock.patch.object(tools, "extra_path", return_value=[marker_dir]), \
+                mock.patch.dict(os.environ, {"PATH": "/nonexistent-dir-qa"}):
+            out = projects.run_tests('printf "%s" "$PATH"', self.tmp)["output"]
+        self.assertIn(marker_dir, out)
 
     def test_missing_command(self):
         agent = copy.deepcopy(self.agents["qa"])

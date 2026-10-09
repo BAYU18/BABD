@@ -35,10 +35,16 @@ def asking_ask(agent, prompt, **kw):
 class ParseTest(unittest.TestCase):
     def test_parse_question(self):
         q = flow.parse_question("text\n**QUESTION:** Which DB?\nOPTIONS: Postgres | SQLite | `MySQL`")
-        self.assertEqual(q, {"question": "Which DB?", "options": ["Postgres", "SQLite", "MySQL"]})
+        self.assertEqual(q, {"question": "Which DB?", "options": ["Postgres", "SQLite", "MySQL"], "ask": []})
         self.assertIsNone(flow.parse_question("no question here"))
         self.assertIsNone(flow.parse_question("QUESTION: <your question>"))  # the instruction echoed back
         self.assertIsNone(flow.parse_question("QUESTION: early\n" + "line\n" * 30))  # only at the end
+
+    def test_parse_question_reads_the_ask_line(self):
+        # `ASK:` is what makes peer Q&A work: the named teammates answer before the CEO is bothered.
+        q = flow.parse_question("QUESTION: Which DB?\nASK: developer | qa")
+        self.assertEqual(q["ask"], ["developer", "qa"])
+        self.assertEqual(flow.parse_question("QUESTION: Which DB?")["ask"], [])
 
 
 class FlowQuestionTest(unittest.TestCase):

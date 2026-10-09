@@ -129,6 +129,14 @@ class Process(Harness):
     type = "process"
     label = "Custom process"
 
+    @property
+    def has_tools(self):
+        """A `process` harness runs a real command (its own adapter), so it reads/writes files and
+        runs commands itself: BABD must not write its file blocks, and triage must not describe it as
+        "cannot run commands (plans and writes text only)". A process harness with no command is not
+        a runner - keep the safe `False` default so BABD still writes its file blocks."""
+        return bool(self.cfg.get("command"))
+
     def describe(self):
         return " ".join([self.cfg.get("command", "?")] + list(self.cfg.get("args") or []))[:40]
 
@@ -139,11 +147,24 @@ class Process(Harness):
         install = self.cfg.get("install")
         if install:
             argv = shlex.split(install) if isinstance(install, str) else [str(a) for a in install]
+            # A relative `install` (e.g. `scripts/researcher_setup.sh` in agents.json) is ROOT-relative,
+            # exactly like `command`: resolve it to an absolute path so the subprocess launched from
+            # any cwd still finds the program (QA B-9: with cwd = DEFAULT_WORKSPACE it used to die with
+            # `FileNotFoundError: 'scripts/researcher_setup.sh'`, so the researcher agent's first-run
+            # install - and the dashboard Setup button - never worked).
+            if argv and not os.path.isabs(argv[0]) and os.sep in argv[0]:
+                argv[0] = os.path.join(ROOT, argv[0])
             digest = hashlib.sha256(json.dumps(argv).encode()).hexdigest()[:16]
             marker = os.path.join(tools.TOOLS_DIR, f"process-{self.agent_id}.{digest}.installed")
             if not os.path.exists(marker):
                 log(f"{self.agent_id}: running install: {' '.join(argv)}")
-                proc = subprocess.run(argv, capture_output=True, text=True, cwd=self.cwd, timeout=1200)
+                try:
+                    proc = subprocess.run(argv, capture_output=True, text=True, cwd=self.cwd, timeout=1200)
+                except FileNotFoundError as e:
+                    # Mirror `ensure_command`'s friendly message instead of leaking a raw
+                    # FileNotFoundError from deep inside subprocess (QA B-10).
+                    raise HarnessError(
+                        f"process install: {argv[0]!r} not found (check harness.install in agents.json)") from e
                 if proc.returncode != 0:
                     tail = " | ".join((proc.stderr or proc.stdout).strip().splitlines()[-3:])
                     raise HarnessError(f"process install failed: {tail[:400]}")
@@ -153,7 +174,9 @@ class Process(Harness):
 
     def command_path(self):
         from .tools import ensure_command
-        return ensure_command(self.label, {"command": self.cfg.get("command")}, None)
+        # Pass the whole harness cfg (not a fresh {"command": ...} dict) so options such as
+        # `auto_install`/`version` keep working; `Process` has no InstallSpec of its own.
+        return ensure_command(self.label, self.cfg, self.install_spec)
 
     def complete(self, system, messages, max_tokens=None, effort=None):
         self.setup()

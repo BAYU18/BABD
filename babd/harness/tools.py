@@ -199,7 +199,16 @@ def ensure_command(label, cfg, spec):
     """
     explicit = cfg.get("command")
     if explicit:
-        path = shutil.which(explicit) or (explicit if os.path.isabs(explicit) and os.access(explicit, os.X_OK) else None)
+        # A relative `command` (e.g. `scripts/researcher_adapter.py` in agents.json) is ROOT-relative:
+        # resolve it to an absolute path so a subprocess launched from any cwd finds the program
+        # (QA: `Process.command_path()` used to return the relative string, which only worked when
+        # cwd happened to be ROOT). An absolute path is used as given. A bare name (no separator)
+        # is looked up on PATH first, then as a ROOT-relative file.
+        candidate = explicit if os.path.isabs(explicit) else os.path.join(ROOT, explicit)
+        if os.sep in explicit:
+            path = candidate if os.access(candidate, os.X_OK) else None
+        else:
+            path = shutil.which(explicit) or (candidate if os.access(candidate, os.X_OK) else None)
         if not path:
             raise HarnessError(f"{label}: command {explicit!r} not found")
         return path

@@ -196,8 +196,31 @@ class Harness:
         except OSError as e:
             raise HarnessError(f"{self.label}: cannot start {argv[0]}: {e}") from e
         _register_proc(proc)
-        # Watchdog: kill the process group the moment the task is stopped, even if the loop below is
-        # blocked inside communicate(); without this a stopped step could leave an orphan program
+        # Read stdout/stderr in our own threads. communicate() is single-use: feeding stdin from a
+        # thread and then polling communicate(timeout=...) crashed with
+        # "ValueError: I/O operation on closed file" (and "_fileobj2output" on the second attempt)
+        # whenever the program exited before the feeder closed stdin. Reading the pipes ourselves
+        # makes polling, cancellation and the timeout independent of how fast the program reads.
+        out_chunks, err_chunks = [], []
+
+        def _drain(pipe, sink):
+            try:
+                for line in pipe:
+                    sink.append(line)
+            except (ValueError, OSError):
+                pass  # the pipe was closed under us while the program was killed
+            finally:
+                try:
+                    pipe.close()
+                except (ValueError, OSError):
+                    pass
+
+        readers = [threading.Thread(target=_drain, args=(proc.stdout, out_chunks), daemon=True),
+                   threading.Thread(target=_drain, args=(proc.stderr, err_chunks), daemon=True)]
+        for t in readers:
+            t.start()
+        # Watchdog: kill the process group the moment the task is stopped, even if we are blocked
+        # waiting for the program; without this a stopped step could leave an orphan program
         # running (it kept its agent slot, so the next task waited forever).
         if cancel is not None:
             def _watchdog():
@@ -206,8 +229,8 @@ class Harness:
                         _kill(proc)
                         return
             threading.Thread(target=_watchdog, daemon=True, name="harness-watchdog").start()
-        # Write stdin in a background thread. communicate() may only be called once with input=...,
-        # so feeding stdin ourselves lets us poll for cancellation/timeout freely afterwards.
+        # Write stdin in a background thread so a slow reader still gets the whole prompt while we
+        # poll for cancellation/timeout.
         if stdin_text is not None:
             def _feed():
                 try:
@@ -218,23 +241,28 @@ class Harness:
             threading.Thread(target=_feed, daemon=True).start()
         deadline = time.monotonic() + self.timeout
         try:
-            while True:
-                try:
-                    out, err = proc.communicate(timeout=0.5)
-                    break
-                except subprocess.TimeoutExpired:
-                    if cancel is not None and cancel.is_set():
-                        _kill(proc)
-                        raise HarnessError(f"{self.label}: stopped (task cancelled)")
-                    if time.monotonic() > deadline:
-                        _kill(proc)
-                        raise HarnessError(f"{self.label}: timed out after {self.timeout:.0f}s")
+            while proc.poll() is None:
+                if cancel is not None and cancel.is_set():
+                    _kill(proc)
+                    raise HarnessError(f"{self.label}: stopped (task cancelled)")
+                if time.monotonic() > deadline:
+                    _kill(proc)
+                    raise HarnessError(f"{self.label}: timed out after {self.timeout:.0f}s")
+                time.sleep(0.05)
+            proc.wait()
         finally:
             # the program is done (or killed): drop it from the registry, and if the task was
             # cancelled while we waited, make sure nothing of its process group survives.
             if cancel is not None and cancel.is_set():
                 _kill(proc)
+            for t in readers:
+                t.join(timeout=1)
             _unregister_proc(proc)
+        out, err = "".join(out_chunks), "".join(err_chunks)
+        if cancel is not None and cancel.is_set():
+            # The program died from our own kill (usually SIGTERM, so returncode -15). The caller
+            # asked to stop, so report that instead of a confusing "exit code -15".
+            raise HarnessError(f"{self.label}: stopped (task cancelled)")
         if proc.returncode != 0:
             # CLIs print errors on stdout or stderr; the first and last meaningful lines carry the story.
             lines = [ln.strip() for ln in ((out or "") + "\n" + (err or "")).splitlines()

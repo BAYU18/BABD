@@ -419,6 +419,72 @@
         "pr",
         "setup-pre-commit"
       ]
+    },
+    {
+      "id": "researcher",
+      "name": "RESEARCHER",
+      "short_name": "Researcher",
+      "color": "#c084fc",
+      "status": "idle",
+      "main_task": [
+        "RESEARCH",
+        "INTERNET"
+      ],
+      "sub_tasks": [
+        {
+          "name": "Search the web",
+          "state": "done"
+        },
+        {
+          "name": "Verify sources",
+          "state": "todo"
+        },
+        {
+          "name": "Report findings",
+          "state": "todo"
+        }
+      ],
+      "llm": {
+        "provider": "Custom",
+        "api": "openai",
+        "base_url": "http://43.134.238.213:20128/v1",
+        "model": "ag-hermes",
+        "api_key_env": "KEY1",
+        "effort": "high"
+      },
+      "harness": {
+        "type": "process",
+        "command": "scripts/researcher_adapter.py",
+        "args": [
+          "--json"
+        ],
+        "timeout_sec": 600,
+        "install": "scripts/researcher_setup.sh"
+      },
+      "permissions": "workspace",
+      "sandbox": "none",
+      "parallel": 1,
+      "telegram": {
+        "enabled": false,
+        "bot_username": "@babd_researcher_bot",
+        "token_env": "TELEGRAM_RESEARCHER_BOT_TOKEN"
+      },
+      "skills": [
+        "GBrain",
+        "Web Research",
+        "Internet Search",
+        "Source Citation"
+      ],
+      "superpowers": [
+        "using-superpowers",
+        "dispatching-parallel-agents",
+        "verification-before-completion"
+      ],
+      "mattpocock": [
+        "research",
+        "domain-modeling",
+        "handoff"
+      ]
     }
   ],
   "workflow": [

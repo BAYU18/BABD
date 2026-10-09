@@ -167,6 +167,10 @@ textarea:focus, input:focus, select:focus { border-color: var(--ceo); }
 .mem { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted);
   padding: 3px 10px; border-left: 2px dashed var(--stroke-2); margin-left: 12px; }
 .mem .who { font-size: 11.5px; }
+.mem .mem-act { font-weight: 700; color: #c9d4e6; }
+.mem .mem-kw { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+.mem .mem-empty { font-style: italic; }
+.mem .mem-found { flex-basis: 100%; color: var(--dim); font-size: 11px; }
 .mem-dot { width: 7px; height: 7px; border-radius: 2px; background: #c084fc; flex: none; }
 .mem.write .mem-dot { background: #f0abfc; }
 .memory .timeline { max-height: 300px; }
