@@ -88,5 +88,115 @@ class ResearcherRosterTest(unittest.TestCase):
             flow.task_options({"skip": ["nobody"]})
 
 
+class ResearcherAdapterTest(unittest.TestCase):
+    """Adapter adalah program di seam process-harness: prompt di stdin, JSON di stdout.
+
+    Diuji sebagai black box (subprocess), bukan dengan memanggil fungsi internalnya.
+    Aturan terpenting: adapter tidak pernah mengarang sumber. Bila tidak ada search
+    provider, ia gagal dengan exit code 2 dan pesan yang jelas.
+    """
+
+    ADAPTER = os.path.join(WORKTREE, "scripts", "researcher_adapter.py")
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="researcher-test-")
+        self._fake_home = os.path.join(self._tmp, "fake-venv-home")
+        self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
+
+    def run_adapter(self, stdin_text, env=None, args=("--json",), timeout=60):
+        e = {k: v for k, v in os.environ.items() if not k.startswith(("BABD_LLM", "OPENAI_", "RESEARCHER_"))}
+        e["PATH"] = os.environ.get("PATH", "")
+        e.update(env or {})
+        return subprocess.run([sys.executable, self.ADAPTER, *args], input=stdin_text,
+                              capture_output=True, text=True, env=e, timeout=timeout)
+
+    def test_adapter_exists_and_is_executable(self):
+        self.assertTrue(os.path.isfile(self.ADAPTER), "scripts/researcher_adapter.py is missing")
+        self.assertTrue(os.access(self.ADAPTER, os.X_OK), "adapter must be executable for the process harness")
+
+    def test_fake_mode_returns_the_agreed_json_shape(self):
+        prompt = "You are the RESEARCHER.\n\n---\n\nwhat is the latest httpx version?"
+        p = self.run_adapter(prompt, env={"RESEARCHER_FAKE": "1"})
+        self.assertEqual(p.returncode, 0, p.stderr)
+        first = p.stdout.split("\n---\n", 1)[0]
+        data = json.loads(first)
+        self.assertEqual(data["query"], "what is the latest httpx version?")
+        self.assertTrue(data["answer"].strip())
+        self.assertIsInstance(data["sources"], list)
+        self.assertTrue(data["local"])
+        self.assertIn("---", p.stdout)  # a short text summary follows the JSON
+
+    def test_no_search_provider_fails_loudly_instead_of_inventing_sources(self):
+        prompt = "You are the RESEARCHER.\n\n---\n\nsome question"
+        p = self.run_adapter(prompt, env={})          # no SearXNG, no DuckDuckGo opt-in
+        self.assertEqual(p.returncode, 2, f"stdout={p.stdout!r} stderr={p.stderr!r}")
+        self.assertIn("no search provider", (p.stderr + p.stdout).lower())
+        self.assertNotIn('"sources": [{"', p.stdout)   # never fake a finding
+
+    def test_query_is_taken_after_the_last_prompt_separator(self):
+        prompt = "SYSTEM persona with an --- in it\n\n---\n\nthe real question"
+        p = self.run_adapter(prompt, env={"RESEARCHER_FAKE": "1"})
+        data = json.loads(p.stdout.split("\n---\n", 1)[0])
+        self.assertEqual(data["query"], "the real question")
+
+    def test_plain_text_mode_prints_a_readable_report(self):
+        prompt = "RESEARCHER\n\n---\n\nwho wrote bash?"
+        p = self.run_adapter(prompt, env={"RESEARCHER_FAKE": "1"}, args=())
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("who wrote bash?", p.stdout)
+        self.assertNotIn('{"query"', p.stdout)
+
+    def test_vendored_gpt_researcher_interpreter_is_used_when_present(self):
+        """Adapter dipanggil sebagai `python scripts/researcher_adapter.py`, jadi `import
+        gpt_researcher` TIDAK menemukan library yang di-vendor (.babd/researcher/venv). Adapter
+        harus mengeksekusi ulang dirinya dengan interpreter venv itu. Kontraknya: mode
+        `--which-python` melaporkan interpreter yang akan dipakai (dan tidak menyentuh jaringan)."""
+        venv_python = os.path.join(WORKTREE, ".babd", "researcher", "venv", "bin", "python")
+        p = self.run_adapter("", env={}, args=("--which-python",))
+        self.assertEqual(p.returncode, 0, p.stderr)
+        if os.path.exists(venv_python):                      # vendor sudah disiapkan di mesin ini
+            self.assertEqual(p.stdout.strip(), venv_python)
+        else:
+            self.assertEqual(p.stdout.strip(), sys.executable)
+
+    def test_import_error_message_points_at_the_setup_script(self):
+        """Tanpa venv/vendor, adapter harus gagal dengan pesan yang menyebut cara memperbaikinya,
+        bukan dengan traceback mentah."""
+        venv_python = os.path.join(WORKTREE, ".babd", "researcher", "venv", "bin", "python")
+        if os.path.exists(venv_python):
+            self.skipTest("vendored gpt-researcher is installed here; the failure path needs it missing")
+        prompt = "RESEARCHER\n\n---\n\nsome question"
+        p = self.run_adapter(prompt, env={"RESEARCHER_SEARXNG_URL": "http://127.0.0.1:8888"})
+        self.assertEqual(p.returncode, 2, f"stdout={p.stdout!r} stderr={p.stderr!r}")
+        self.assertIn("researcher_setup.sh", (p.stderr + p.stdout))
+
+    def test_query_survives_the_venv_reexec(self):
+        """Regresi: `reexec_if_needed()` memanggil `os.execve`, dan proses baru mewarisi stdin
+        yang SUDAH habis dikonsumsi proses lama (`sys.stdin.read()` di `main()`). Kalau prompt
+        hanya hidup di stdin, proses baru membaca string kosong dan keluar rc=3
+        ("no question in the prompt") — agent tampak rusak padahal search provider-nya ada.
+
+        Test ini memakai venv tiruan berisi interpreter nyata (symlink ke sys.executable)
+        sehingga jalur re-exec benar-benar diambil, TANPA butuh gpt-researcher terpasang.
+        Adapter harus tetap membawa pertanyaannya melewati execve; kegagalan sesudah itu
+        boleh rc=2 (provider import), yang penting bukan rc=3 "stdin was empty"."""
+        venv_bin = os.path.join(self._fake_home, "venv", "bin")
+        os.makedirs(venv_bin, exist_ok=True)
+        fake_python = os.path.join(venv_bin, "python")
+        if not os.path.exists(fake_python):
+            os.symlink(sys.executable, fake_python)      # interpreter nyata, prefix berbeda
+        prompt = "SYSTEM persona\n\n---\n\nthe question that must survive re-exec"
+        p = self.run_adapter(prompt, env={"RESEARCHER_SEARXNG_URL": "http://127.0.0.1:8899",
+                                          "RESEARCHER_HOME": self._fake_home})
+        combined = (p.stderr + p.stdout).lower()
+        self.assertNotIn("stdin was empty", combined,
+                         f"prompt lost across re-exec: stdout={p.stdout!r} stderr={p.stderr!r}")
+        self.assertNotEqual(p.returncode, 3,
+                            f"rc=3 means the re-exec lost the prompt: stdout={p.stdout!r} stderr={p.stderr!r}")
+        # Setelah re-exec, adapter sampai ke tahap berikutnya (provider/library), bukan
+        # kembali mengeluh prompt kosong. rc=2 = provider tidak siap, itu perilaku jujur.
+        self.assertEqual(p.returncode, 2, f"stdout={p.stdout!r} stderr={p.stderr!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
