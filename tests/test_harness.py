@@ -196,6 +196,23 @@ class InstallTest(unittest.TestCase):
         self.assertTrue(tools.managed_path(spec).endswith(os.path.join("cc", "node_modules", ".bin", "claude")))
         self.assertEqual(spec.requirement("2.1.0"), "@anthropic-ai/claude-code@2.1.0")
 
+    def test_relative_command_is_resolved_against_root(self):
+        """`agents.json` memakai `command: scripts/researcher_adapter.py` (ROOT-relatif).
+
+        QA menemukan `Process.command_path()` mengembalikan path relatif apa adanya; itu hanya
+        kebetulan jalan kalau cwd == ROOT, dan gagal di run yang cwd-nya lain. Kontraknya: path
+        eksplisit relatif diresolusi ke absolut (ROOT-relatif), jadi anak `subprocess` selalu
+        menemukan programnya.
+        """
+        rel = "scripts/relative_probe.py"
+        target = os.path.join(tools.ROOT, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        write_exe(os.path.dirname(target), "relative_probe.py", "#!/bin/sh\necho hi\n")
+        self.addCleanup(os.remove, target)
+        path = tools.ensure_command("Probe", {"command": rel}, None)
+        self.assertTrue(os.path.isabs(path), f"command relatif harus jadi absolut: {path!r}")
+        self.assertEqual(path, target)
+
 
 class HarnessTest(unittest.TestCase):
     def setUp(self):

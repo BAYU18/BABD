@@ -137,10 +137,11 @@ Blok `harness` researcher (nilai dari plan Developer — sesuaikan bila Develope
 `permissions: "workspace"` (pola sama dengan developer/qa/devops), `parallel: 1`,
 `sandbox: "none"`, `telegram.enabled: false`.
 
-> **Catatan kontrak `command`:** `ensure_command` (`babd/harness/tools.py:200-205`) hanya
-> menerima path **absolut** atau nama di `PATH`. Bila Developer **belum** menambahkan resolusi
-> `ROOT`-relatif di `Process.command_path()` (`babd/harness/others.py:154-156`), nilai di atas
-> **gagal** dengan `HarnessError: … command '.babd/researcher/bin/research' not found`.
+> **Catatan kontrak `command` (DIPERBAIKI di fix-round 1):** `ensure_command`
+> (`babd/harness/tools.py`) kini **meresolusi** `command` relatif ke absolut terhadap `ROOT`
+> (dulu hanya menerima path absolut atau nama di `PATH`, sehingga `command: scripts/…` hanya
+> kebetulan jalan ketika cwd == ROOT — ditemukan QA). Regresi permanen:
+> `tests/test_harness.py::InstallTest::test_relative_command_is_resolved_against_root`.
 > Verifikasi wajib sebelum deploy:
 > ```bash
 > cd /home/serverbot/aidev
@@ -149,10 +150,10 @@ Blok `harness` researcher (nilai dari plan Developer — sesuaikan bila Develope
 > from babd.harness import create_harness
 > a=[x for x in load_config()['agents'] if x['id']=='researcher'][0]
 > print(create_harness(a).command_path())"
-> # diharapkan: /home/serverbot/aidev/.babd/researcher/bin/research
+> # diharapkan: path ABSOLUT ke scripts/researcher_adapter.py di bawah ROOT
 > ```
-> Bila gagal → minta Developer memperbaiki `Process.command_path()`, **jangan** tambal dengan
-> path absolut hardcoded di `agents.json` (tidak portabel antar worktree).
+> Bila gagal → jangan tambal dengan path absolut hardcoded di `agents.json` (tidak portabel
+> antar worktree); perbaiki `ensure_command`/`Process.command_path()` di kode.
 
 ---
 
