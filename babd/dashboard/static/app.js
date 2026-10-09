@@ -321,19 +321,24 @@ function renderTop() {
   $("#projectName").textContent = p.name;
   const lives = liveList();
   const live = lives.length ? lives : null;
+  // Fallback when nothing is running: show the latest finished run from history, not stale config.
+  const latest = (S.runs || [])[0] || null;
   const waitingCeo = lives.filter((r) => r.approval?.result === "pending").length;
-  const status = live ? (waitingCeo === lives.length ? "WAITING" : "RUNNING") : p.status;
-  const progress = live ? Math.round(lives.reduce((n, r) => n + (r.progress || 0), 0) / lives.length) : p.progress;
+  const status = live ? (waitingCeo === lives.length ? "WAITING" : "RUNNING") : (latest ? latest.status : p.status);
+  const progress = live ? Math.round(lives.reduce((n, r) => n + (r.progress || 0), 0) / lives.length)
+    : (latest ? (latest.progress ?? 0) : p.progress);
   const working = live ? S.agents.filter((a) => agentState(a) === "working").length
     : S.agents.filter((a) => a.status === "working").length;
-  const blockers = live ? lives.reduce((n, r) => n + (r.blockers || []).length, 0) : p.blockers;
+  const blockers = live ? lives.reduce((n, r) => n + (r.blockers || []).length, 0)
+    : (latest ? (latest.blockers || 0) : p.blockers);
+  const approval = live ? waitingCeo : (latest ? (latest.approval_needed ?? 0) : p.approval_needed);
   const queued = (S.queue || []).filter((q) => q.status === "queued").length;
   $("#kpis").innerHTML = `
     <div class="kpi"><div class="l">Status</div><div class="v">${pill(status, PROJECT_COLORS[status] || "var(--warn)", !!live)}</div></div>
-    <div class="kpi progress"><div class="l">Progres · ${progress}%${lives.length > 1 ? ` · ${lives.length} tasks` : ""}</div><div class="bar"><i style="width:${progress}%"></i></div></div>
+    <div class="kpi progress"><div class="l">Progres · ${progress}%${lives.length > 1 ? ` · ${lives.length} tasks` : (latest && !live ? ` · ${esc(latest.id)}` : "")}</div><div class="bar"><i style="width:${progress}%"></i></div></div>
     <div class="kpi"><div class="l">Tasks</div><div class="v">${lives.length}<span class="muted small"> running${queued ? ` · ${queued} queued` : ""}</span></div></div>
     <div class="kpi"><div class="l">Agen bekerja</div><div class="v">${working} / ${S.agents.length}</div></div>
-    <div class="kpi"><div class="l">Butuh persetujuan</div><div class="v" style="color:${(waitingCeo || (!live && p.approval_needed)) ? "var(--warn)" : "inherit"}">${live ? waitingCeo : p.approval_needed}</div></div>
+    <div class="kpi"><div class="l">Butuh persetujuan</div><div class="v" style="color:${approval ? "var(--warn)" : "inherit"}">${approval}</div></div>
     <div class="kpi"><div class="l">Hambatan</div><div class="v" style="color:${blockers ? "var(--bad)" : "inherit"}">${blockers}</div></div>
     <div class="kpi" title="${esc(brainTitle())}"><div class="l">Memori GBrain</div><div class="v">${brainPill()}</div></div>`;
 }

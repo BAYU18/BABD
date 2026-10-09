@@ -1,14 +1,14 @@
 {
   "project": {
     "name": "BABD AI Dev Team",
-    "status": "BLOCKED",
-    "progress": 45,
-    "current_goal": "Laporan kegiatan jadi jelas",
-    "active_task": "Tulis laporan CEO",
+    "status": "DONE",
+    "progress": 100,
+    "current_goal": "berati sekarang saya bisa langsung chat…",
+    "active_task": "Quick task",
     "approval_needed": 0,
-    "blockers": 1,
-    "recent_result": "Perbaikan selesai diperiksa",
-    "next_action": "Minta persetujuan Anda",
+    "blockers": 0,
+    "recent_result": "Answered",
+    "next_action": "Review the result",
     "require_approval": [
       "deploy"
     ],
@@ -182,11 +182,11 @@
       "sub_tasks": [
         {
           "name": "Rancang Struktur",
-          "state": "done"
+          "state": "todo"
         },
         {
           "name": "Tulis Spesifikasi",
-          "state": "done"
+          "state": "todo"
         }
       ],
       "llm": {
@@ -254,15 +254,15 @@
       "sub_tasks": [
         {
           "name": "Tulis Kode",
-          "state": "done"
+          "state": "todo"
         },
         {
           "name": "Tulis Tes",
-          "state": "done"
+          "state": "todo"
         },
         {
           "name": "Commit",
-          "state": "done"
+          "state": "todo"
         }
       ],
       "llm": {
@@ -315,7 +315,7 @@
       "name": "QA / TESTER",
       "short_name": "QA / Tester",
       "color": "#fbbf24",
-      "status": "blocked",
+      "status": "idle",
       "main_task": [
         "VALIDASI",
         "SOFTWARE"
@@ -323,15 +323,15 @@
       "sub_tasks": [
         {
           "name": "Verifikasi Kode",
-          "state": "done"
+          "state": "todo"
         },
         {
           "name": "Jalankan Tes",
-          "state": "done"
+          "state": "todo"
         },
         {
           "name": "Laporkan Verdict",
-          "state": "done"
+          "state": "todo"
         }
       ],
       "llm": {
@@ -389,7 +389,7 @@
       "name": "DEVOPS",
       "short_name": "DevOps",
       "color": "#f472b6",
-      "status": "waiting",
+      "status": "idle",
       "main_task": [
         "DEPLOY &",
         "OPERASIKAN"
@@ -486,7 +486,10 @@
           "--json"
         ],
         "timeout_sec": 600,
-        "install": "scripts/researcher_setup.sh"
+        "install": "scripts/researcher_setup.sh",
+        "env": {
+          "RESEARCHER_ALLOW_DUCKDUCKGO": "1"
+        }
       },
       "permissions": "workspace",
       "sandbox": "none",
@@ -523,17 +526,17 @@
     {
       "step": "DESIGN",
       "owner": "architect",
-      "state": "done"
+      "state": "todo"
     },
     {
       "step": "CODE",
       "owner": "developer",
-      "state": "done"
+      "state": "todo"
     },
     {
       "step": "TEST",
       "owner": "qa",
-      "state": "active"
+      "state": "todo"
     },
     {
       "step": "DEPLOY",

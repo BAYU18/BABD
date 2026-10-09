@@ -475,7 +475,8 @@ class Dashboard:
         return self.summary(self.last_run) if self.last_run else None
 
     def history(self, limit=20):
-        return [{k: s.get(k) for k in ("id", "goal", "status", "started_at", "finished_at", "verdict", "deployed")}
+        return [{k: s.get(k) for k in ("id", "goal", "status", "progress", "started_at", "finished_at",
+                                       "verdict", "deployed", "blockers")}
                 for s in self.saved_states(limit)]
 
     def saved_states(self, limit=20):
