@@ -32,7 +32,10 @@ Env:
   RESEARCHER_HOME               lokasi vendor+venv (default <root>/.babd/researcher)
   RESEARCHER_PROMPT             internal: prompt yang dibawa melewati re-exec venv
                                 (diisi otomatis oleh reexec_if_needed; jangan diisi manual)
-  BABD_LLM_BASE_URL/MODEL/API_KEY  LLM yang dipakai gpt-researcher
+  BABD_LLM_BASE_URL/MODEL/API_KEY  LLM yang dipakai gpt-researcher. Jalur harness mengisi ini
+                                lewat babd/harness/routing.py; jalur manual membacanya dari
+                                `.env` BABD (nama key mengikuti `api_key_env` di agents.json).
+                                Variabel lingkungan yang sudah ada tidak pernah ditimpa `.env`.
 """
 from __future__ import annotations
 
@@ -106,6 +109,110 @@ def extract_query(prompt: str) -> str:
     return parts[-1].strip()
 
 
+def load_babd_env(path: str | None = None) -> dict[str, str]:
+    """Muat `.env` BABD (default `<ROOT>/.env`) ke `os.environ` dan kembalikan yang dimuat.
+
+    Kenapa perlu: jalur normal melewati harness `process`, dan `babd/harness/routing.py` sudah
+    menyuntikkan `BABD_LLM_*`/`OPENAI_*` ke lingkungan anak. Tetapi jalur manual/diagnostik
+    (`echo ... | scripts/researcher_adapter.py`, `--json`, Setup/QA) tidak punya harness: key LLM
+    tim hidup di `.env` dengan nama dari `agents.json` (mis. `KEY1`), dan tanpa membaca file itu
+    adapter mati dengan `OpenAIError: Missing credentials` walau key-nya ada.
+
+    Lokasi bisa dialihkan lewat `RESEARCHER_ENV_FILE` (mis. instalasi yang menyimpan `.env` di
+    luar root, atau test yang memakai file sementara). Aturan yang sama dengan
+    `babd/config.load_dotenv()`: variabel yang SUDAH ada di lingkungan menang (harness tidak
+    boleh ditimpa `.env`). Tidak ada secret yang dicetak; nilai hanya dikembalikan ke pemanggil.
+    (QA B-13.)
+    """
+    path = path or os.environ.get("RESEARCHER_ENV_FILE") or os.path.join(ROOT, ".env")
+    loaded: dict[str, str] = {}
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return loaded          # tidak ada .env = tidak ada yang dimuat, bukan error
+    for line in lines:
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        loaded[key] = value
+        if value and not os.environ.get(key):
+            os.environ[key] = value
+    return loaded
+
+
+def ensure_ddg_shim() -> bool:
+    """Bila paket BARU `ddgs` tidak ada, daftarkan paket LAMA `duckduckgo_search` sebagai `ddgs`.
+
+    Kenapa perlu: retriever DuckDuckGo gpt-researcher memanggil `check_pkg('ddgs')` dan
+    `from ddgs import DDGS` di `__init__`, sementara `pyproject.toml` versi vendor ini justru
+    mendeklarasikan `duckduckgo_search>=4.1.1` (paket lama). Akibatnya agent researcher mati
+    `ImportError: Unable to import ddgs` sebelum sempat mencari (QA B-12). Kedua paket mengekspor
+    kelas `DDGS` dengan API `.text(query, ...)` yang sama, jadi alias ini aman: ia hanya menunjuk
+    ulang nama modul, tidak menyentuh kode vendor (yang akan hilang saat venv dibangun ulang).
+
+    Return True bila `import ddgs` berhasil setelah pemanggilan.
+    """
+    import importlib
+    import importlib.util
+    if importlib.util.find_spec("ddgs") is not None:
+        return True                       # paket baru sudah ada, tidak perlu apa-apa
+    try:
+        legacy = importlib.import_module("duckduckgo_search")
+    except ImportError:
+        return False                      # tidak ada keduanya: kegagalan jujur di pemanggil
+    # `check_pkg` memakai importlib.util.find_spec; daftarkan modul nyata ke sys.modules.
+    sys.modules.setdefault("ddgs", legacy)
+    return True
+
+
+# RETRIEVER gpt-researcher -> (nama env yang dibaca library, nilai env kita)
+RETRIEVER_ENV = {"searxng": ("SEARX_URL", "RETRIEVER"),
+                 "duckduckgo": (None, "RETRIEVER"),
+                 "tavily": ("TAVILY_API_KEY", "RETRIEVER")}
+RETRIEVER_NAME = {"searxng": "searx", "duckduckgo": "duckduckgo", "tavily": "tavily"}
+
+
+def llm_env_from_config(config_path: str | None = None, agent_id: str = "researcher") -> dict[str, str]:
+    """Petakan `llm` agent researcher di `agents.json` -> `BABD_LLM_*` (tanpa menimpa yang ada).
+
+    Kenapa perlu: di jalur manual tidak ada `babd/harness/routing.py`, dan `.env` menyimpan key
+    dengan nama yang ditunjuk `llm.api_key_env` (mis. `KEY1`), bukan `BABD_LLM_API_KEY`. Adapter
+    yang hanya tahu `BABD_LLM_*` jadi tetap mati `OpenAIError: Missing credentials` walau key-nya
+    ada di `.env` (QA B-14). Di sini nama itu diresolusi dari config yang sama yang dipakai BABD,
+    jadi instalasi yang mengganti nama env tetap bekerja tanpa mengubah kode.
+
+    Selalu mengembalikan dict; agent yang tidak ada / config tidak terbaca = dict kosong.
+    """
+    path = config_path or os.environ.get("RESEARCHER_CONFIG") or os.path.join(ROOT, "agents.json")
+    try:
+        with open(path) as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    agents = cfg.get("agents") or []
+    agent = next((a for a in agents if a.get("id") == agent_id), None)
+    if not agent:
+        return {}
+    llm = agent.get("llm") or {}
+    resolved = {
+        "BABD_LLM_BASE_URL": llm.get("base_url", ""),
+        "BABD_LLM_MODEL": llm.get("model", ""),
+        "BABD_LLM_PROVIDER": llm.get("provider", ""),
+    }
+    key = llm.get("api_key") or (os.environ.get(llm["api_key_env"]) if llm.get("api_key_env") else "")
+    if key:
+        resolved["BABD_LLM_API_KEY"] = key
+    for name, value in resolved.items():
+        if value and not os.environ.get(name):   # harness / lingkungan selalu menang
+            os.environ[name] = value
+    return {k: v for k, v in resolved.items() if v}
+
+
 def search_provider() -> tuple[str, str]:
     """(kind, value) provider pencarian. kind "" = tidak ada.
 
@@ -146,13 +253,6 @@ def fake_result(query: str) -> dict:
             "local": True}
 
 
-# RETRIEVER gpt-researcher -> (nama env yang dibaca library, nilai env kita)
-RETRIEVER_ENV = {"searxng": ("SEARX_URL", "RETRIEVER"),
-                 "duckduckgo": (None, "RETRIEVER"),
-                 "tavily": ("TAVILY_API_KEY", "RETRIEVER")}
-RETRIEVER_NAME = {"searxng": "searx", "duckduckgo": "duckduckgo", "tavily": "tavily"}
-
-
 def real_result(query: str, kind: str, value: str) -> dict:
     """Panggil gpt-researcher sebagai library lokal. Raise RuntimeError bila tidak bisa.
 
@@ -160,6 +260,18 @@ def real_result(query: str, kind: str, value: str) -> dict:
     get_source_urls sinkron). Diverifikasi terhadap versi yang di-vendor oleh
     scripts/researcher_setup.sh pada 2026-10-09.
     """
+    # LLM tim: jalur harness sudah mengisi BABD_LLM_*; jalur manual diisi dari `.env` BABD,
+    # lalu nama key-nya diresolusi dari agents.json (mis. KEY1 -> BABD_LLM_API_KEY).
+    # Keduanya idempoten dan tidak pernah menimpa variabel lingkungan yang sudah ada.
+    load_babd_env()
+    llm_env_from_config()
+
+    if kind == "duckduckgo":
+        # Retriever DuckDuckGo vendor bisa `import ddgs` (paket baru) padahal venv punya
+        # `duckduckgo_search` (paket lama). Shim ini harus aktif SEBELUM library memuatnya,
+        # kalau tidak riset mati `ImportError: Unable to import ddgs` (QA B-12).
+        ensure_ddg_shim()
+
     try:
         from gpt_researcher import GPTResearcher  # type: ignore
     except ImportError as e:
@@ -174,10 +286,20 @@ def real_result(query: str, kind: str, value: str) -> dict:
     if kind == "searxng":
         os.environ["SEARX_URL"] = value
     # gpt-researcher memakai klien OpenAI-compatible: teruskan LLM tim dari BABD_* ke OPENAI_*.
-    for src, dst in (("BABD_LLM_API_KEY", "OPENAI_API_KEY"), ("BABD_LLM_BASE_URL", "OPENAI_BASE_URL"),
-                     ("BABD_LLM_MODEL", "FAST_LLM"), ("BABD_LLM_MODEL", "SMART_LLM")):
+    # FAST_LLM/SMART_LLM WAJIB berformat '<provider>:<model>' (lihat Config.parse_llm), jadi
+    # nama model mentah seperti 'ag-hermes' harus diberi prefiks provider - kalau tidak riset
+    # selalu mati ValueError meski kredensial benar (QA B-15). BABD `provider: Custom` adalah
+    # endpoint OpenAI-compatible, jadi prefiksnya 'openai'.
+    for src, dst in (("BABD_LLM_API_KEY", "OPENAI_API_KEY"), ("BABD_LLM_BASE_URL", "OPENAI_BASE_URL")):
         if os.environ.get(src) and not os.environ.get(dst):
             os.environ[dst] = os.environ[src]
+    model = os.environ.get("BABD_LLM_MODEL") or ""
+    if model and ":" not in model:
+        model = f"openai:{model}"
+    if model:
+        for dst in ("FAST_LLM", "SMART_LLM"):
+            if not os.environ.get(dst):
+                os.environ[dst] = model
 
     async def run() -> tuple[str, list[str]]:
         researcher = GPTResearcher(query=query, report_type="research_report")
@@ -226,6 +348,9 @@ def main(argv: list[str] | None = None) -> int:
     if (os.environ.get("RESEARCHER_FAKE") or "").strip() in ("1", "true", "yes"):
         data = fake_result(query)
     else:
+        # `load_babd_env()` HARUS jalan sebelum re-exec supaya BABD_LLM_* ikut lewat os.execve
+        # (jalur harness sudah mengisinya; jalur manual/Diagnostik diisi dari `.env` BABD).
+        load_babd_env()
         reexec_if_needed([a for a in (argv if argv is not None else sys.argv[1:])], raw_prompt)
         kind, value = search_provider()
         if not kind:

@@ -203,6 +203,194 @@ class ResearcherAdapterTest(unittest.TestCase):
         # kembali mengeluh prompt kosong. rc=2 = provider tidak siap, itu perilaku jujur.
         self.assertEqual(p.returncode, 2, f"stdout={p.stdout!r} stderr={p.stderr!r}")
 
+    def test_duckduckgo_provider_does_not_die_on_the_ddgs_import(self):
+        """B-12 (QA round-3): dengan DuckDuckGo sebagai provider, adapter harus BISA memakai
+        retriever-nya, tanpa bergantung pada patch lokal di vendor.
+
+        Akar bug yang dibuktikan QA: `gpt_researcher/retrievers/duckduckgo/duckduckgo.py`
+        memanggil `check_pkg('ddgs')` di `__init__` dan hanya bisa mengimpor paket BARU `ddgs`,
+        sedangkan venv vendor memasang paket LAMA `duckduckgo_search` (>=4.1.1, yang memang
+        dideklarasikan `pyproject.toml` vendor ini). Yang melempar adalah saat retriever
+        di-INSTANSIASI, bukan saat modulnya diimpor - itu sebabnya sinyal `rc!=0` di adapter
+        saja tidak cukup.
+
+        Tes ini memanggil langsung jalur itu melalui fungsi adapter `ensure_ddg_shim()`
+        (di-inject sebagai alias `ddgs` bila perlu), lalu meng-instansiasi retriever vendor
+        SUNGGUHAN di venv vendor. Tanpa shim, `ImportError: Unable to import ddgs`.
+        """
+        prompt = "RESEARCHER\n\n---\n\nwhat is python"
+        e = {k: v for k, v in os.environ.items()
+             if not k.startswith(("BABD_LLM", "OPENAI_", "RESEARCHER_"))}
+        e.update({"PATH": os.environ.get("PATH", ""), "RESEARCHER_PROVIDER": "duckduckgo",
+                  "RESEARCHER_ALLOW_DUCKDUCKGO": "1"})
+
+        # 1) Tabel provider: permintaan eksplisit `duckduckgo` harus dihormati.
+        code = ("import importlib.util, sys; "
+                "sys.argv = ['researcher_adapter.py']; "
+                "spec = importlib.util.spec_from_file_location('adapter', %r); "
+                "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
+                "print(m.search_provider()[0])" % self.ADAPTER)
+        p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                           env=e, timeout=60)
+        self.assertEqual(p.stdout.strip(), "duckduckgo",
+                         f"provider tidak terdeteksi: stdout={p.stdout!r} stderr={p.stderr!r}")
+
+        # 2) Jalur NYATA: lewat `real_result()` (kode produksi) yang di dalamnya harus
+        #    mengaktifkan shim sebelum library memuat retriever DuckDuckGo. Retriever-nya
+        #    di-instansiasi langsung di venv vendor - itu titik yang melempar
+        #    `ImportError: Unable to import ddgs` sebelum perbaikan.
+        venv_python = os.path.join(WORKTREE, ".babd", "researcher", "venv", "bin", "python")
+        if not os.path.exists(venv_python):
+            self.skipTest("venv vendor tidak ada di mesin ini (jalur offline)")
+
+        probe = (
+            "import importlib.util, sys, json\n"
+            "spec = importlib.util.spec_from_file_location('adapter', %r)\n"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            # `real_result` memanggil gpt-researcher; kita hentikan tepat SEBELUM library
+            # benar-benar melakukan riset (tanpa jaringan, tanpa LLM) tapi SESUDAH shim
+            # diaktifkan, lalu instansiasi retriever DuckDuckGo yang asli.
+            "import types, gpt_researcher\n"
+            "def fake_get_researcher(*a, **k):\n"
+            "    import gpt_researcher.retrievers.duckduckgo.duckduckgo as dd\n"
+            "    dd.Duckduckgo('probe')\n"
+            "    raise RuntimeError('probe-stop')\n"
+            "gpt_researcher.GPTResearcher = fake_get_researcher\n"
+            "try:\n"
+            "    m.real_result('probe', 'duckduckgo', 'duckduckgo')\n"
+            "except RuntimeError as e:\n"
+            "    if 'probe-stop' not in str(e):\n"
+            "        raise\n"
+            "print(json.dumps({'ok': True}))\n"
+        ) % self.ADAPTER
+        p = subprocess.run([venv_python, "-c", probe], capture_output=True, text=True,
+                           env=e, timeout=120)
+        self.assertNotIn("Unable to import ddgs", p.stderr,
+                         f"retriever DuckDuckGo mati pada impor: {p.stderr!r}")
+        self.assertEqual(p.returncode, 0,
+                         f"instansiasi retriever gagal: stdout={p.stdout!r} stderr={p.stderr!r}")
+        self.assertTrue(json.loads(p.stdout.strip().splitlines()[-1])["ok"])
+
+    def test_adapter_loads_the_babd_env_file_for_the_llm(self):
+        """B-13 (QA round-3): di jalur manual/`--json` tidak ada harness yang mengisi
+        `BABD_LLM_*`; nilai itu hidup di `.env` BABD (dengan nama dari `agents.json`, mis.
+        `KEY1`). Adapter harus memuat `.env` itu lebih dulu, TANPA menimpa variabel yang
+        sudah di-set (harness selalu menang).
+
+        RED sebelum perbaikan: `.env` diabaikan sepenuhnya, sehingga adapter mati dengan
+        `OpenAIError: Missing credentials` meski key sudah ada di `.env`.
+        """
+        env_file = os.path.join(self._tmp, ".env")
+        with open(env_file, "w") as f:
+            f.write("KEY1=sk-from-dotenv\nBABD_LLM_BASE_URL=http://127.0.0.1:9/v1\n"
+                    "BABD_LLM_MODEL=model-from-dotenv\n")
+        code = ("import importlib.util, sys, os, json; "
+                "sys.argv = ['researcher_adapter.py']; "
+                "spec = importlib.util.spec_from_file_location('adapter', %r); "
+                "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
+                "m.load_babd_env(%r); "
+                "print(json.dumps({k: os.environ.get(k) for k in "
+                "('KEY1', 'BABD_LLM_BASE_URL', 'BABD_LLM_MODEL')}))"
+                % (self.ADAPTER, env_file))
+        e = {k: v for k, v in os.environ.items()
+             if not k.startswith(("BABD_LLM", "OPENAI_", "KEY1"))}
+        e["PATH"] = os.environ.get("PATH", "")
+        e["RESEARCHER_ENV_FILE"] = env_file
+        p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                           env=e, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        data = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(data.get("KEY1"), "sk-from-dotenv")
+        self.assertEqual(data.get("BABD_LLM_BASE_URL"), "http://127.0.0.1:9/v1")
+        self.assertEqual(data.get("BABD_LLM_MODEL"), "model-from-dotenv")
+
+        # Efek NYATA yang penting: `real_result()` sendiri harus memuat `.env`, meresolusi nama
+        # key dari agents.json (KEY1 -> OPENAI_API_KEY), sehingga adapter tidak lagi mati
+        # `OpenAIError: Missing credentials` di jalur manual. Probe menghentikan riset sebelum
+        # jaringan dengan mengganti GPTResearcher, lalu memeriksa lingkungannya. Config asli
+        # dipakai supaya `api_key_env: KEY1` benar-benar diuji.
+        probe = (
+            "import importlib.util, sys, os, json\n"
+            "spec = importlib.util.spec_from_file_location('adapter', %r)\n"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            "import gpt_researcher\n"
+            "def fake_get_researcher(*a, **k):\n"
+            "    raise RuntimeError('probe-stop')\n"
+            "gpt_researcher.GPTResearcher = fake_get_researcher\n"
+            "try:\n"
+            "    m.real_result('probe', 'searxng', 'http://127.0.0.1:1')\n"
+            "except RuntimeError:\n"
+            "    pass\n"
+            "print(json.dumps({k: os.environ.get(k) for k in "
+            "('OPENAI_API_KEY', 'OPENAI_BASE_URL')}))\n"
+        ) % self.ADAPTER
+        # Probe butuh vendor ada; kalau tidak, lewati (jalur offline).
+        venv_python = os.path.join(WORKTREE, ".babd", "researcher", "venv", "bin", "python")
+        if os.path.exists(venv_python):
+            e2 = dict(e)
+            e2["RESEARCHER_CONFIG"] = REAL_AGENTS_JSON
+            p = subprocess.run([venv_python, "-c", probe], capture_output=True, text=True,
+                               env=e2, timeout=120)
+            eff = json.loads(p.stdout.strip().splitlines()[-1])
+            self.assertEqual(eff.get("OPENAI_API_KEY"), "sk-from-dotenv",
+                             f"real_result tidak memuat .env / tidak meresolusi api_key_env: {p.stderr!r}")
+            self.assertEqual(eff.get("OPENAI_BASE_URL"), "http://127.0.0.1:9/v1")
+
+        # Variabel yang sudah ada di lingkungan TIDAK boleh ditimpa `.env` (harness menang).
+        e["BABD_LLM_MODEL"] = "model-from-harness"
+        p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                           env=e, timeout=60)
+        data = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(data.get("BABD_LLM_MODEL"), "model-from-harness")
+
+    def test_fast_and_smart_llm_use_provider_colon_model(self):
+        """B-15 (QA round-3): gpt-researcher mem-`parse_llm` FAST_LLM/SMART_LLM sebagai
+        `'<provider>:<model>'` dan MELEMPAR `ValueError` bila tidak ada titik dua. Adapter dulu
+        menyalin `BABD_LLM_MODEL` mentah (`ag-hermes`), sehingga riset selalu gagal
+        `ValueError: Set SMART_LLM or FAST_LLM = '<llm_provider>:<llm_model>'` bahkan setelah
+        kredensial benar.
+
+        RED sebelum perbaikan: FAST_LLM/SMART_LLM = 'ag-hermes' (tanpa titik dua).
+        """
+        env_file = os.path.join(self._tmp, ".env")
+        with open(env_file, "w") as f:
+            f.write("KEY1=sk-x\n")
+        probe = (
+            "import importlib.util, sys, os, json\n"
+            "spec = importlib.util.spec_from_file_location('adapter', %r)\n"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            "import gpt_researcher\n"
+            "def fake(*a, **k):\n"
+            "    raise RuntimeError('probe-stop')\n"
+            "gpt_researcher.GPTResearcher = fake\n"
+            "try:\n"
+            "    m.real_result('probe', 'searxng', 'http://127.0.0.1:1')\n"
+            "except RuntimeError:\n"
+            "    pass\n"
+            "from gpt_researcher.config.config import Config\n"
+            "print(json.dumps({k: os.environ.get(k) for k in ('FAST_LLM', 'SMART_LLM')}))\n"
+            "Config.parse_llm(os.environ.get('SMART_LLM'))\n"
+            "Config.parse_llm(os.environ.get('FAST_LLM'))\n"
+        ) % self.ADAPTER
+        venv_python = os.path.join(WORKTREE, ".babd", "researcher", "venv", "bin", "python")
+        if not os.path.exists(venv_python):
+            self.skipTest("venv vendor tidak ada di mesin ini (jalur offline)")
+        e = {k: v for k, v in os.environ.items()
+             if not k.startswith(("BABD_LLM", "OPENAI_", "KEY1", "FAST_LLM", "SMART_LLM"))}
+        e.update({"PATH": os.environ.get("PATH", ""), "RESEARCHER_ENV_FILE": env_file,
+                  "RESEARCHER_CONFIG": REAL_AGENTS_JSON})
+        p = subprocess.run([venv_python, "-c", probe], capture_output=True, text=True,
+                           env=e, timeout=120)
+        self.assertNotIn("ValueError", p.stderr,
+                         f"FAST_LLM/SMART_LLM tidak dalam format provider:model: {p.stderr!r}")
+        self.assertEqual(p.returncode, 0, f"stdout={p.stdout!r} stderr={p.stderr!r}")
+        data = json.loads(p.stdout.strip().splitlines()[-1])
+        for key in ("FAST_LLM", "SMART_LLM"):
+            self.assertIn(":", data.get(key, ""),
+                          f"{key} harus '<provider>:<model>', dapat {data.get(key)!r}")
+            self.assertTrue(data[key].endswith("ag-hermes"),
+                            f"{key} harus berakhir nama model dari agents.json: {data[key]!r}")
+
 
 if __name__ == "__main__":
     unittest.main()

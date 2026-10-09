@@ -39,6 +39,19 @@ if ! "$VENV/bin/pip" install --quiet -e "$VENDOR"; then
   exit 0
 fi
 
+# Retriever DuckDuckGo gpt-researcher meng-`import ddgs` (paket baru), sedangkan pyproject
+# versi vendor mendeklarasikan `duckduckgo_search` (paket lama). Pasang `ddgs` bila jaringan
+# mengizinkan supaya jalur tanpa key benar-benar bisa mencari; bila gagal, adapter tetap punya
+# shim `ensure_ddg_shim()` sebagai jaring pengaman (QA B-12).
+if ! "$VENV/bin/python" -c "import ddgs" >/dev/null 2>&1; then
+  if "$VENV/bin/pip" install --quiet "ddgs" >/dev/null 2>&1; then
+    echo "researcher-setup: paket 'ddgs' terpasang (provider DuckDuckGo siap)."
+  else
+    echo "researcher-setup: catatan: 'ddgs' tidak bisa dipasang (jaringan?). Adapter memakai"
+    echo "researcher-setup: shim ke 'duckduckgo_search' yang sudah terpasang, jadi tetap jalan."
+  fi
+fi
+
 # Symlink agar agents.json bisa memakai path relatif yang stabil.
 ln -sf "$ROOT/scripts/researcher_adapter.py" "$BIN/research"
 ln -sf "$ROOT/scripts/researcher_setup.sh" "$BIN/setup"
