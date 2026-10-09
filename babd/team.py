@@ -1,6 +1,8 @@
 """AI development team: agents built from agents.json, orchestrated by the Team Lead."""
 import datetime
 
+WIB = datetime.timezone(datetime.timedelta(hours=7), "WIB")
+
 from .config import load_skill_text
 from .flow import Run, extract_json  # noqa: F401  (extract_json re-exported for callers)
 from .gbrain import BrainError, GBrain, format_memory, one_line
@@ -33,13 +35,16 @@ class Agent:
         c = self.cfg
         subs = ", ".join(s["name"] for s in c["sub_tasks"])
         lines = [
-            f"You are the {c['name'].title()} of an AI software development team. "
-            "A human CEO supervises the team through the Team Lead.",
-            f"Your main task: {self.main_task}.",
-            f"Your sub-tasks: {subs}.",
+            f"Kamu adalah {c['name'].title()} dari sebuah tim pengembangan software AI. "
+            "Seorang CEO manusia mengawasi tim melalui Team Lead.",
+            "PENTING: Selalu jawab dan berkomunikasi dalam Bahasa Indonesia. Semua laporan, "
+            "penjelasan, komentar kode, dan pesan ke agen lain HARUS dalam Bahasa Indonesia. "
+            "Hanya nama teknis (fungsi, file, perintah, kode) yang boleh tetap dalam bahasa Inggris.",
+            f"Tugas utama kamu: {self.main_task}.",
+            f"Sub-tugas kamu: {subs}.",
         ]
         if c.get("skills"):
-            lines.append(f"Your skills: {', '.join(c['skills'])}.")
+            lines.append(f"Keahlian kamu: {', '.join(c['skills'])}.")
         for skill in c.get("skills", []):
             text = load_skill_text(skill)
             if text:
@@ -47,17 +52,19 @@ class Agent:
         section = skillpacks.system_section(self.skill_packs)
         if section:
             lines.append("\n" + section)
-        lines.append("\nWork concretely: produce the actual design, code, tests or steps, not a description "
-                     "of what you would do. Say plainly what is still missing or blocked.")
+        lines.append("\nBekerja secara konkret: hasilkan desain, kode, tes atau langkah yang sebenarnya, "
+                     "bukan deskripsi tentang apa yang akan kamu lakukan. Katakan dengan jelas apa yang masih "
+                     "kurang atau terhambat.")
         return "\n".join(lines)
 
     def light_system_prompt(self):
         """A short system prompt (no skill texts) for quick jobs: much less for the model to read."""
-        return (f"You are the {self.cfg['name'].title()} of an AI software development team (BABD). "
-                "A human CEO supervises the team through the Team Lead.\n"
-                f"Your main task: {self.main_task}.\n"
-                "This is a quick job: do it directly, without ceremony. Answer briefly with what you did and the "
-                "result. Say plainly what is missing or blocked.")
+        return (f"Kamu adalah {self.cfg['name'].title()} dari sebuah tim pengembangan software AI (BABD). "
+                "Seorang CEO manusia mengawasi tim melalui Team Lead.\n"
+                "PENTING: Selalu jawab dalam Bahasa Indonesia.\n"
+                f"Tugas utama kamu: {self.main_task}.\n"
+                "Ini pekerjaan cepat: kerjakan langsung tanpa basa-basi. Jawab singkat dengan apa yang kamu "
+                "kerjakan dan hasilnya. Katakan dengan jelas apa yang masih kurang atau terhambat.")
 
     def ask(self, message, system=None, **kwargs):
         """One request to the harness, no memory (used for pings and by work()); retried on temporary
@@ -203,7 +210,7 @@ class Agent:
 
 
 def now():
-    return datetime.datetime.now().isoformat(timespec="seconds")
+    return datetime.datetime.now(WIB).isoformat(timespec="seconds")
 
 
 class Team:

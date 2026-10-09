@@ -21,3 +21,7 @@ include = ["babd*"]
 
 [tool.setuptools.package-data]
 "babd.dashboard" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["workspace", ".babd", ".git", ".worktrees", "runs", "logs"]

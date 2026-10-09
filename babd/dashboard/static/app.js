@@ -23,7 +23,24 @@ async function api(method, path, body) {
 // ---- helpers -----------------------------------------------------------------------------
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "");
+const fmtTime = (iso) => {
+  if (!iso) return "";
+  // BABD menulis timestamp dengan Python `datetime.now().isoformat()` TANPA
+  // penanda zona. Proses dashboard yang sedang berjalan bisa saja memakai
+  // localtime UTC (mis. /etc/localtime diganti ke Asia/Jakarta SETELAH proses
+  // start), sehingga nilainya adalah UTC tanpa offset, mis. "2026-10-09T01:25:02".
+  // `new Date("2026-10-09T01:25:02")` di browser membacanya sebagai waktu LOKAL
+  // browser -> tampil 7 jam lebih awal dari WIB. Tempelkan 'Z' bila belum ada
+  // offset eksplisit, lalu render di Asia/Jakarta agar selalu = jam WIB.
+  let s = String(iso).trim();
+  if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) s += "Z";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-GB", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false, timeZone: "Asia/Jakarta",
+  });
+};
 const STATUS_COLORS = { working: "var(--good)", done: "var(--ceo)", waiting: "var(--warn)", blocked: "var(--bad)", idle: "var(--dim)", setup: "#c084fc", queued: "#7dd3fc" };
 const PROJECT_COLORS = { ACTIVE: "var(--good)", DONE: "var(--ceo)", BLOCKED: "var(--bad)" };
 
@@ -313,12 +330,12 @@ function renderTop() {
   const queued = (S.queue || []).filter((q) => q.status === "queued").length;
   $("#kpis").innerHTML = `
     <div class="kpi"><div class="l">Status</div><div class="v">${pill(status, PROJECT_COLORS[status] || "var(--warn)", !!live)}</div></div>
-    <div class="kpi progress"><div class="l">Progress · ${progress}%${lives.length > 1 ? ` · ${lives.length} tasks` : ""}</div><div class="bar"><i style="width:${progress}%"></i></div></div>
+    <div class="kpi progress"><div class="l">Progres · ${progress}%${lives.length > 1 ? ` · ${lives.length} tasks` : ""}</div><div class="bar"><i style="width:${progress}%"></i></div></div>
     <div class="kpi"><div class="l">Tasks</div><div class="v">${lives.length}<span class="muted small"> running${queued ? ` · ${queued} queued` : ""}</span></div></div>
-    <div class="kpi"><div class="l">Agents working</div><div class="v">${working} / ${S.agents.length}</div></div>
-    <div class="kpi"><div class="l">Approval needed</div><div class="v" style="color:${(waitingCeo || (!live && p.approval_needed)) ? "var(--warn)" : "inherit"}">${live ? waitingCeo : p.approval_needed}</div></div>
-    <div class="kpi"><div class="l">Blockers</div><div class="v" style="color:${blockers ? "var(--bad)" : "inherit"}">${blockers}</div></div>
-    <div class="kpi" title="${esc(brainTitle())}"><div class="l">GBrain memory</div><div class="v">${brainPill()}</div></div>`;
+    <div class="kpi"><div class="l">Agen bekerja</div><div class="v">${working} / ${S.agents.length}</div></div>
+    <div class="kpi"><div class="l">Butuh persetujuan</div><div class="v" style="color:${(waitingCeo || (!live && p.approval_needed)) ? "var(--warn)" : "inherit"}">${live ? waitingCeo : p.approval_needed}</div></div>
+    <div class="kpi"><div class="l">Hambatan</div><div class="v" style="color:${blockers ? "var(--bad)" : "inherit"}">${blockers}</div></div>
+    <div class="kpi" title="${esc(brainTitle())}"><div class="l">Memori GBrain</div><div class="v">${brainPill()}</div></div>`;
 }
 
 // ---- agent cards -------------------------------------------------------------------------
@@ -646,7 +663,7 @@ function renderRun() {
   const r = viewRun;
   const body = $("#runBody");
   if (!r) {
-    body.innerHTML = `<div class="empty">No run yet.<br>Give the team a goal to see the agents talk to each other here.</div>`;
+    body.innerHTML = `<div class="empty">Belum ada run.<br>Beri tim sebuah goal untuk melihat para agen saling berbicara di sini.</div>`;
     return;
   }
   const stages = S.flow.stages.map((s) => `<div class="step ${esc(r.stages?.[s.key] || "todo")}" title="${esc(nameOf(s.owner))}"><i></i>${esc(s.label)}</div>`).join("");
@@ -662,7 +679,7 @@ function renderRun() {
   const rep = r.report;
   const report = rep ? `
     <div class="report">
-      <div class="eyebrow">Report to the CEO</div>
+      <div class="eyebrow">Laporan ke CEO</div>
       <div class="report-grid">
         <div><div class="l">Status</div><div class="v">${esc(rep.status)}</div></div>
         <div><div class="l">QA</div><div class="v">${esc(rep.qa_verdict)}${rep.fix_rounds ? ` · ${rep.fix_rounds} fix` : ""}
@@ -670,7 +687,7 @@ function renderRun() {
         <div><div class="l">Deployed</div><div class="v">${rep.deployed ? "Yes" : "No"}</div></div>
         <div><div class="l">Recent</div><div class="v">${esc(rep.recent_result || "—")}</div></div>
         <div><div class="l">Next</div><div class="v">${esc(rep.next_action || "—")}</div></div>
-        <div><div class="l">Blockers</div><div class="v">${esc(rep.blockers ?? 0)}</div></div>
+        <div><div class="l">Hambatan</div><div class="v">${esc(rep.blockers ?? 0)}</div></div>
       </div>
       ${rep.summary ? `<div class="small">${esc(rep.summary)}</div>` : ""}
       ${(rep.blocker_list || []).map((b) => `<div class="small" style="color:var(--bad)">● ${esc(b)}</div>`).join("")}
@@ -685,7 +702,7 @@ function renderRun() {
       ${r.status === "running" && !r.paused ? `<button type="button" class="btn small ghost" style="margin-top:8px" data-pause-run="${esc(r.id)}" title="The steps already working finish; the next ones wait">⏸ Pause</button>` : ""}
       ${isLive(r) && (r.paused || r.status === "paused") ? `<button type="button" class="btn small good" style="margin-top:8px" data-unpause-run="${esc(r.id)}">▶ Resume</button>` : ""}
       ${RESUMABLE.includes(r.status) ? `<button type="button" class="btn small" style="margin-top:8px" data-resume-run="${esc(r.id)}">Resume from the last finished step</button>` : ""}
-      ${!isLive(r) && r.finished_at ? `<button type="button" class="btn small ghost" style="margin-top:8px" data-export-run="${esc(r.id)}">Export report (.md)</button>` : ""}
+      ${!isLive(r) && r.finished_at ? `<button type="button" class="btn small ghost" style="margin-top:8px" data-export-run="${esc(r.id)}">Ekspor laporan (.md)</button>` : ""}
     </div>
     <div class="stepper">${stages}</div>
     ${packagesBlock(r)}
@@ -770,9 +787,13 @@ $("#btnSetup").addEventListener("click", async () => {
 });
 
 // ---- activity log + jobs -----------------------------------------------------------------
-function logLine(source, msg, cls = "") {
+function logLine(source, msg, cls = "", at = null) {
   const li = document.createElement("li");
-  li.innerHTML = `<span class="t">${new Date().toLocaleTimeString()}</span><span class="s">${esc(source)}</span><span class="${cls}">${esc(msg)}</span>`;
+  // at kosong -> pakai jam SERVER (atNow). Kalau server belum diketahui, TULIS "—"
+  // (jangan pernah jam OS klien: itu akar "beda dengan jam WIB").
+  const t = (at === null || at === undefined || at === "") ? atNow() : at;
+  const stamp = (t === null || t === undefined || t === "") ? "—" : (hhmmISO(t) || "—");
+  li.innerHTML = `<span class="t">${stamp}</span><span class="s">${esc(source)}</span><span class="${cls}">${esc(msg)}</span>`;
   const list = $("#activity");
   list.appendChild(li);
   while (list.children.length > 400) list.firstChild.remove();
@@ -800,12 +821,12 @@ function onJob(job) {
     if (job.status === "done") {
       for (const [id, r] of Object.entries(job.result)) {
         if (job.kind === "check") checks[id] = r;
-        logLine(job.kind, `${id}: ${r.ok ? "OK" : "FAIL"} ${r.summary}`, r.ok ? "ok" : "bad");
+        logLine(job.kind, `${id}: ${r.ok ? "OK" : "FAIL"} ${r.summary}`, r.ok ? "ok" : "bad", atNow());
       }
       const failed = Object.values(job.result).filter((r) => !r.ok).length;
       toast(`${job.kind === "check" ? "Check" : "Setup"} finished${failed ? ` · ${failed} failed (see Activity)` : " · all OK"}`, failed ? "bad" : "ok");
     } else {
-      logLine(job.kind, job.error, "bad");
+      logLine(job.kind, job.error, "bad", atNow());
       toast(job.error, "bad");
     }
     refreshSoon();
@@ -855,7 +876,7 @@ function renderConfig() {
       <div class="row2">${field("Name", text("name", f.name))}${field("Short name", text("short_name", f.short_name))}</div>
       <div class="row2">${field("Main task · line 1", text("main0", f.main_task[0]))}${field("Main task · line 2", text("main1", f.main_task[1]))}</div>
       ${f.sub_tasks.map((s, i) => field(`Sub-task ${i + 1}`, `<div class="sub-row">${text(`sub${i}`, s.name)}${select(`substate${i}`, s.state, [["todo", "To do"], ["active", "Active"], ["done", "Done"]])}</div>`)).join("")}
-      ${field("Status on the dashboard", select("status", f.status, [["idle", "Idle"], ["working", "Working"], ["waiting", "Waiting"], ["blocked", "Blocked"]]))}
+      ${field("Status on the dashboard", select("status", f.status, [["idle", "Idle"], ["working", "Bekerja"], ["waiting", "Menunggu"], ["blocked", "Terhambat"]]))}
       ${field("Parallel steps", `<input type="number" name="parallel" min="1" max="8" value="${esc(f.parallel ?? 2)}">`, "How many steps this agent works on at the same time, across all tasks (1–8). More = faster with many tasks, but more LLM calls at once.")}
       <div class="note">Main task and sub-tasks also go into the agent's system prompt.</div>`;
   } else if (drawer.tab === "llm") {
@@ -1256,6 +1277,12 @@ const TASK_LABELS = { waiting_answer: "question for you", paused: "paused", runn
 const RESUMABLE = ["failed", "cancelled", "interrupted"];
 const ms = (iso) => (iso ? new Date(iso).getTime() : NaN);
 const serverNow = () => Date.now() + boardOffset;
+// Jam otoritatif untuk baris activity log. boardOffset = jam server - jam browser
+// (di-set di loadBoard()). Kalau offset belum pernah di-set (board belum dimuat),
+// nilai 0 berarti "belum tahu" -> kita tandai dan lebih memilih timestamp eksplisit
+// dari server (mis. summary.updated_at) daripada jam OS klien.
+let serverOffsetKnown = false;
+const atNow = () => (boardOffset === 0 && !serverOffsetKnown ? null : (Date.now() + boardOffset)) / 1000;
 
 async function downloadReport(runId) {
   try {
@@ -1298,7 +1325,26 @@ function fmtDur(sec) {
   if (sec < 3600) return `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`;
   return `${Math.floor(sec / 3600)}h ${String(Math.floor(sec / 60) % 60).padStart(2, "0")}m`;
 }
-const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+// Timestamp BABD (ISO tanpa offset) = UTC; render di Asia/Jakarta.
+const toWib = (iso) => {
+  if (iso === null || iso === undefined || iso === "") return null;
+  // Backend mengirim `at` sebagai EPOCH DETIK (time.time()), bukan ISO. Angka tidak boleh
+  // ditempeli "Z" (-> Invalid Date -> jam kosong). Terima angka = detik/milidetik epoch.
+  if (typeof iso === "number") {
+    const d = new Date(iso < 1e12 ? iso * 1000 : iso);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (iso instanceof Date) return Number.isNaN(iso.getTime()) ? null : iso;
+  let s = String(iso).trim();
+  if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) s += "Z";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+// "en-GB" -> "08:25" (titik dua). "id-ID" -> "08.25" (titik) = beda dari jam WIB CEO.
+const hhmm = (iso) => toWib(iso)?.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Jakarta" }) ?? "";
+const wibNowTime = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Jakarta" });
+const hhmmISO = (iso) => { const d = toWib(iso); return d ? hhmm(iso) : ""; };
+const clock = (t) => hhmm(t);
 
 function setView(v) {
   view = v;
@@ -1324,6 +1370,7 @@ async function loadBoard() {
   try {
     B = await api("GET", `board?history=${historyLimit}`);
     boardOffset = ms(B.now) - Date.now();
+    if (isFinite(boardOffset)) serverOffsetKnown = true;   // jam server kini terkalibrasi
     renderBoard();
   } catch (err) { toast(err.message, "bad"); }
 }
@@ -1442,7 +1489,7 @@ function renderGantt() {
   const stepS = steps.find((s) => span / s <= (W < 560 ? 4 : 7)) || 21600;
   const ticks = [];
   for (let t = Math.ceil(start / (stepS * 1000)) * stepS * 1000; t <= end; t += stepS * 1000) {
-    ticks.push(`<line class="g-grid" x1="${x(t)}" x2="${x(t)}" y1="${axisH - 4}" y2="${y}"/><text class="g-tick" x="${x(t)}" y="12" text-anchor="middle">${stepS < 60 ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : clock(t)}</text>`);
+    ticks.push(`<line class="g-grid" x1="${x(t)}" x2="${x(t)}" y1="${axisH - 4}" y2="${y}"/><text class="g-tick" x="${x(t)}" y="12" text-anchor="middle">${stepS < 60 ? new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Jakarta" }) : clock(t)}</text>`);
   }
   box.innerHTML = `<svg width="${W}" height="${y + 2}" viewBox="0 0 ${W} ${y + 2}" role="img" aria-label="When each agent worked on which task">
     ${ticks.join("")}${rows.join("")}${end >= now - 1000 ? `<line class="g-now" x1="${x(end)}" x2="${x(end)}" y1="${axisH - 4}" y2="${y}"/>` : ""}</svg>
@@ -1502,7 +1549,7 @@ function renderTasks() {
       ${t.error ? `<div class="note warn">${esc(t.error)}</div>` : ""}
       ${open && t.documents?.length && t.status !== "queued" ? docChips(t.documents, t.id) : ""}
       ${open ? workspaceLine(t.workspace) + evidenceLine(t) : ""}
-      ${open ? `<div class="task-steps">${stepRows ? `<table><thead><tr><th>Agent</th><th>Step</th><th>Status</th><th>Waited</th><th>Tokens</th><th>Took</th></tr></thead><tbody>${stepRows}</tbody></table>` : '<div class="muted small">No steps yet.</div>'}</div>` : ""}
+      ${open ? `<div class="task-steps">${stepRows ? `<table><thead><tr><th>Agen</th><th>Langkah</th><th>Status</th><th>Menunggu</th><th>Token</th><th>Durasi</th></tr></thead><tbody>${stepRows}</tbody></table>` : '<div class="muted small">Belum ada langkah.</div>'}</div>` : ""}
     </article>`;
   }).join("");
 }
@@ -1745,30 +1792,32 @@ document.addEventListener("click", (e) => { const b = e.target.closest("[data-vi
 // ---- live events -------------------------------------------------------------------------
 function connect() {
   const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
-  es.addEventListener("log", (e) => { const d = JSON.parse(e.data); logLine(d.source, d.msg, /fail|error/i.test(d.msg) ? "bad" : ""); });
+  es.addEventListener("log", (e) => { const d = JSON.parse(e.data); logLine(d.source, d.msg, /fail|error/i.test(d.msg) ? "bad" : "", d.at); });
   es.addEventListener("job", (e) => onJob(JSON.parse(e.data)));
-  es.addEventListener("memory", (e) => { const m = JSON.parse(e.data); flashMemory(m.agent, m.op); logLine("gbrain", memoryLogText(nameOf(m.agent), m)); });
+  es.addEventListener("memory", (e) => { const m = JSON.parse(e.data); flashMemory(m.agent, m.op); logLine("gbrain", memoryLogText(nameOf(m.agent), m), "", atNow()); });
   es.addEventListener("config", () => refreshSoon());
-  es.addEventListener("approval", (e) => { toast(`Approval needed: ${JSON.parse(e.data).question}`); boardSoon(); });
+  es.addEventListener("approval", (e) => { toast(`Butuh persetujuan: ${JSON.parse(e.data).question}`); boardSoon(); });
   es.addEventListener("tasks", () => { refreshSoon(); boardSoon(); });
   es.addEventListener("agentlog", (e) => onAgentLog(JSON.parse(e.data)));
   es.addEventListener("run", (e) => {
     const d = JSON.parse(e.data);
+    // Timestamp otoritatif dari SERVER (ringkasan run) — jangan jam klien.
+    const evAt = (d.summary && d.summary.updated_at) || atNow();
     liveRuns[d.summary.id] = d.summary;
     reportLive(d.summary);
     if (!S.run || d.summary.id === S.run.id || (d.summary.started_at || "") >= (S.run.started_at || "")) S.run = d.summary;
     if (!viewingHistory) viewRun = pinnedRun ? liveRuns[pinnedRun] || viewRun : S.run;
     if (viewRun && viewRun.id === d.summary.id) viewRun = d.summary;
     boardSoon();
-    if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`);
+    if (d.event === "message") logLine("flow", `${nameOf(d.data.from)} → ${nameOf(d.data.to)}: ${d.data.kind}`, "", evAt);
     if (d.event === "memory") flashMemory(d.data.agent, d.data.op);
-    if (d.event === "route") logLine("route", `${d.data.route === "answer" ? "Team Lead answers directly" : d.data.route === "direct" ? "⚡ fast lane → " + nameOf(d.data.agent) : "team: " + (d.data.agents || []).map(nameOf).join(", ")}${d.data.reason ? " (" + d.data.reason + ")" : ""}`, "ok");
-    if (d.event === "question") { toast(`${nameOf(d.data.agent)} asks: ${d.data.question}`); logLine("question", `${nameOf(d.data.agent)} asks: ${d.data.question}`, "bad"); boardSoon(); }
-    if (d.event === "package") logLine("package", `${d.data.id} ${d.data.title} · ${nameOf(d.data.agent)}: ${d.data.status}`, d.data.status === "failed" ? "bad" : "ok");
-    if (d.event === "paused" || d.event === "unpaused") { logLine("task", d.event === "paused" ? "paused" : "continuing"); refreshSoon(); boardSoon(); }
-    if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok");
-    if (d.event === "memory") logLine("gbrain", memoryLogText(nameOf(d.data.agent), d.data));
-    if (d.event === "retry") logLine("retry", `${nameOf(d.data.agent)} ${d.data.kind}: ${d.data.fallback ? `trying fallback model ${d.data.fallback}` : `retry ${d.data.attempt}/${d.data.of} in ${d.data.wait}s`} (${d.data.error})`, "bad");
+    if (d.event === "route") logLine("route", `${d.data.route === "answer" ? "Team Lead answers directly" : d.data.route === "direct" ? "⚡ fast lane → " + nameOf(d.data.agent) : "team: " + (d.data.agents || []).map(nameOf).join(", ")}${d.data.reason ? " (" + d.data.reason + ")" : ""}`, "ok", evAt);
+    if (d.event === "question") { toast(`${nameOf(d.data.agent)} asks: ${d.data.question}`); logLine("question", `${nameOf(d.data.agent)} asks: ${d.data.question}`, "bad", evAt); boardSoon(); }
+    if (d.event === "package") logLine("package", `${d.data.id} ${d.data.title} · ${nameOf(d.data.agent)}: ${d.data.status}`, d.data.status === "failed" ? "bad" : "ok", evAt);
+    if (d.event === "paused" || d.event === "unpaused") { logLine("task", d.event === "paused" ? "paused" : "continuing", "", evAt); refreshSoon(); boardSoon(); }
+    if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok", evAt);
+    if (d.event === "memory") logLine("gbrain", memoryLogText(nameOf(d.data.agent), d.data), "", evAt);
+    if (d.event === "retry") logLine("retry", `${nameOf(d.data.agent)} ${d.data.kind}: ${d.data.fallback ? `trying fallback model ${d.data.fallback}` : `retry ${d.data.attempt}/${d.data.of} in ${d.data.wait}s`} (${d.data.error})`, "bad", evAt);
     if (d.event === "finished") { toast(`Task ${d.data.status}: ${d.summary.goal.slice(0, 50)}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
     renderTop(); renderAgents(); renderRun(); renderRunButtons(); renderNav();
   });
@@ -1829,10 +1878,13 @@ function renderLogAgents(sum) {
 }
 
 function fmtWhen(iso) {
-  const t = ms(iso);
-  if (!isFinite(t)) return "";
-  const d = new Date(t), today = new Date();
-  return d.toDateString() === today.toDateString() ? clock(t) : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const d = toWib(iso);
+  if (!d) return "";
+  const opts = { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Jakarta" };
+  const time = d.toLocaleTimeString("en-GB", opts); // en-GB -> "08:25"; id-ID -> "08.25" (salah)
+  const wibToday = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }); // YYYY-MM-DD
+  const day = d.toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+  return day === wibToday ? time : `${d.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", timeZone: "Asia/Jakarta" })} ${time}`;
 }
 
 function logItem(e) {
@@ -1935,24 +1987,24 @@ function renderReport(r) {
     </div>
     ${r.error ? `<div class="note warn">${esc(r.error)}</div>` : ""}
     <div class="rep-tiles">
-      ${tile("Status", esc(rep.status || (TASK_LABELS[r.status] || r.status)), `${r.progress ?? 0}% done`)}
+      ${tile("Status", esc(rep.status || (TASK_LABELS[r.status] || r.status)), `${r.progress ?? 0}% selesai`)}
       ${tile("Duration", took, `${steps.length} step(s)`)}
       ${tile("Who worked", esc(route), r.route?.reason ? esc(r.route.reason) : "")}
       ${tile("QA", esc(r.verdict || "—"), `${r.qa_rounds ? `${r.qa_rounds} fix round(s) · ` : ""}${ev.verified ? "✓ verified" : ev.note ? "unverified" : ""}`)}
       ${tile("Deploy", r.deployed ? "deployed" : "not deployed", r.approval ? `approval: ${esc(r.approval.result)}` : "no approval asked")}
       ${tile("Usage", esc(usageText(r.usage) || "—"), r.usage?.calls ? `${r.usage.calls} LLM call(s)` : "")}
     </div>
-    ${rep.summary ? `<h3>Report to the CEO</h3><div class="rep-summary">${esc(rep.summary)}</div>` : ""}
-    ${(rep.blocker_list || r.blockers || []).length ? `<h3>Blockers</h3><ul>${(rep.blocker_list || r.blockers).map((b) => `<li class="bad">${esc(b)}</li>`).join("")}</ul>` : ""}
+    ${rep.summary ? `<h3>Laporan ke CEO</h3><div class="rep-summary">${esc(rep.summary)}</div>` : ""}
+    ${(rep.blocker_list || r.blockers || []).length ? `<h3>Hambatan</h3><ul>${(rep.blocker_list || r.blockers).map((b) => `<li class="bad">${esc(b)}</li>`).join("")}</ul>` : ""}
     <h3>Stages</h3><div class="stepper">${S.flow.stages.map((s) => `<div class="step ${esc(r.stages?.[s.key] || "todo")}"><i></i>${esc(s.label)}</div>`).join("")}</div>
     ${packagesBlock(r)}
     <h3>Per agent</h3>
-    <table class="rep-table"><thead><tr><th>Agent</th><th>Steps</th><th>Working time</th><th>Tokens</th><th>Problems</th></tr></thead><tbody>
-      ${Object.entries(byAgent).map(([id, a]) => `<tr><td><button type="button" class="linkish" data-log-of="${esc(id)}" title="Open this agent's log">${esc(nameOf(id))}</button></td><td>${a.steps}</td><td>${fmtDur(a.secs)}</td><td>${esc(usageText(sumUsage(a.list)) || "—")}</td><td>${a.failed ? `<span class="bad">${a.failed} failed</span> ` : ""}${a.retries ? `${a.retries} retr${a.retries > 1 ? "ies" : "y"}` : ""}${!a.failed && !a.retries ? "—" : ""}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No steps yet.</td></tr>'}
+    <table class="rep-table"><thead><tr><th>Agen</th><th>Langkah</th><th>Waktu kerja</th><th>Token</th><th>Masalah</th></tr></thead><tbody>
+      ${Object.entries(byAgent).map(([id, a]) => `<tr><td><button type="button" class="linkish" data-log-of="${esc(id)}" title="Open this agent's log">${esc(nameOf(id))}</button></td><td>${a.steps}</td><td>${fmtDur(a.secs)}</td><td>${esc(usageText(sumUsage(a.list)) || "—")}</td><td>${a.failed ? `<span class="bad">${a.failed} failed</span> ` : ""}${a.retries ? `${a.retries} retr${a.retries > 1 ? "ies" : "y"}` : ""}${!a.failed && !a.retries ? "—" : ""}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">Belum ada langkah.</td></tr>'}
     </tbody></table>
     <h3>Every step</h3>
-    <table class="rep-table"><thead><tr><th>#</th><th>Agent</th><th>Step</th><th>Task</th><th>Status</th><th>Started</th><th>Waited</th><th>Took</th><th>Tokens</th></tr></thead><tbody>
-      ${steps.map((s) => `<tr class="${s.status === "failed" ? "bad" : ""}"><td>${s.n}</td><td>${esc(nameOf(s.agent))}</td><td>${esc(KIND_LABELS[s.kind] || s.kind)}</td><td class="wrap">${esc(s.task || "")}${s.last_error ? `<div class="bad small">${esc(s.last_error)}</div>` : ""}</td><td>${esc(s.status)}${s.fallback ? ` · fallback ${esc(s.fallback)}` : ""}</td><td>${esc(fmtWhen(s.started_at) || "—")}</td><td>${waited(s) > 1 ? fmtDur(waited(s)) : "—"}</td><td>${s.seconds != null ? fmtDur(s.seconds) : s.status === "working" ? "…" : "—"}</td><td>${esc(usageText(s.usage) || "—")}</td></tr>`).join("") || '<tr><td colspan="9" class="muted">No steps yet.</td></tr>'}
+    <table class="rep-table"><thead><tr><th>#</th><th>Agen</th><th>Langkah</th><th>Tugas</th><th>Status</th><th>Mulai</th><th>Menunggu</th><th>Durasi</th><th>Token</th></tr></thead><tbody>
+      ${steps.map((s) => `<tr class="${s.status === "failed" ? "bad" : ""}"><td>${s.n}</td><td>${esc(nameOf(s.agent))}</td><td>${esc(KIND_LABELS[s.kind] || s.kind)}</td><td class="wrap">${esc(s.task || "")}${s.last_error ? `<div class="bad small">${esc(s.last_error)}</div>` : ""}</td><td>${esc(s.status)}${s.fallback ? ` · fallback ${esc(s.fallback)}` : ""}</td><td>${esc(fmtWhen(s.started_at) || "—")}</td><td>${waited(s) > 1 ? fmtDur(waited(s)) : "—"}</td><td>${s.seconds != null ? fmtDur(s.seconds) : s.status === "working" ? "…" : "—"}</td><td>${esc(usageText(s.usage) || "—")}</td></tr>`).join("") || '<tr><td colspan="9" class="muted">Belum ada langkah.</td></tr>'}
     </tbody></table>
     ${ev.note || (r.tests || []).length ? `<h3>Tests and evidence</h3><div class="small">${ev.verified ? "✓ verified" : "not verified"}${ev.source ? ` (${esc(ev.source)})` : ""}: ${esc(ev.note || "")}</div>
       ${(r.tests || []).map((t) => `<details><summary>Round ${t.round}: <code>${esc(t.command)}</code> → exit ${t.exit}</summary><pre class="log-detail">${esc(t.output)}</pre></details>`).join("")}` : ""}

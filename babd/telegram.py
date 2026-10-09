@@ -144,7 +144,10 @@ def _dur(sec):
 def _ago(iso):
     import datetime
     try:
-        return (datetime.datetime.now() - datetime.datetime.fromisoformat(iso)).total_seconds()
+        # Timestamps may be naive (legacy on-disk rows, UTC) or offset-aware (new WIB rows);
+        # compare against the same naive-local "now" so rows with an explicit offset still work.
+        now = datetime.datetime.now(datetime.timezone.utc).astimezone().replace(tzinfo=None)
+        return (now - datetime.datetime.fromisoformat(iso).replace(tzinfo=None)).total_seconds()
     except (TypeError, ValueError):
         return 0
 
@@ -951,7 +954,21 @@ class CeoBot(Bot):
         if now.tm_hour >= self.daily_hour and self.last_daily != today:
             self.last_daily = today
             self.persist()
-            self.broadcast("📋 Daily report\n" + self.tasks_text(today=today))
+            hour = now.tm_hour
+            sapaan = ("Selamat pagi" if hour < 11 else "Selamat siang" if hour < 15
+                      else "Selamat sore" if hour < 19 else "Selamat malam")
+            hari_id = {"Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu",
+                       "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu",
+                       "Sunday": "Minggu"}.get(time.strftime("%A", now), time.strftime("%A", now))
+            bulan_id = {"January": "Januari", "February": "Februari", "March": "Maret",
+                        "April": "April", "May": "Mei", "June": "Juni", "July": "Juli",
+                        "August": "Agustus", "September": "September", "October": "Oktober",
+                        "November": "November", "December": "Desember"}.get(time.strftime("%B", now), time.strftime("%B", now))
+            tanggal = f"{hari_id}, {time.strftime('%d', now)} {bulan_id} {time.strftime('%Y', now)}"
+            head = (f"\U0001f4cb <b>Laporan Harian BABD</b>\n"
+                    f"{sapaan}, CEO \U0001f44b \u00b7 {tanggal}\n"
+                    f"\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
+            self.broadcast(head + "\n" + self.tasks_text(today=today))
 
     def status_text(self):
         b = self.dash.board(history=10)
@@ -968,13 +985,66 @@ class CeoBot(Bot):
         return "\n".join(lines)
 
     def tasks_text(self, today=None):
-        b = self.dash.board(history=15)
-        rows = []
-        for t in b["tasks"]:
-            if today and not (t.get("started_at") or t.get("queued_at") or "").startswith(today):
+        b = self.dash.board(history=50)
+        tasks = [t for t in b["tasks"]
+                 if not today or (t.get("started_at") or t.get("queued_at") or "").startswith(today)]
+        if not tasks:
+            return "Belum ada tugas hari ini. Tim sedang idle. \U0001f634"
+
+        ICON = {"done": "\u2705", "failed": "\u26a0\ufe0f", "cancelled": "\u26d4",
+                "interrupted": "\u23f8\ufe0f", "running": "\U0001f527", "paused": "\u23f8\ufe0f",
+                "waiting_approval": "\U0001f510", "waiting_answer": "\U0001f4ac",
+                "queued": "\U0001f551"}
+
+        def fmt_task(t):
+            icon = ICON.get(t["status"], "\u2022")
+            goal = _clip(t.get("goal") or "(tanpa judul)", 90)
+            extra = ""
+            if t["status"] == "running":
+                extra = f" \u2014 {t.get('progress') or 0}%"
+                if t.get("stage"):
+                    extra += f" ({t['stage']})"
+            elif t["status"] == "done" and t.get("verdict"):
+                extra = f" \u2014 {t['verdict']}"
+            elif t["status"] in ("failed", "cancelled", "interrupted"):
+                why = _clip(t.get("error") or "", 70)
+                if why:
+                    extra = f"\n     \u21b3 {why}"
+            return f"{icon} {goal}{extra}"
+
+        groups = [
+            ("\U0001f527 Sedang berjalan", ("running", "paused")),
+            ("\U0001f510 Menunggu persetujuan", ("waiting_approval", "waiting_answer")),
+            ("\U0001f551 Dalam antrian", ("queued",)),
+            ("\u2705 Selesai", ("done",)),
+            ("\u26a0\ufe0f Gagal", ("failed",)),
+            ("\u26d4 Dibatalkan", ("cancelled",)),
+            ("\u23f8\ufe0f Terhenti", ("interrupted",)),
+        ]
+
+        lines = []
+        for label, statuses in groups:
+            items = [t for t in tasks if t["status"] in statuses]
+            if not items:
                 continue
-            rows.append(f"• [{t['status']}] {t['goal'][:60]} ({t['id']})")
-        return "\n".join(rows) or "No tasks."
+            lines.append(f"<b>{label} ({len(items)})</b>")
+            for t in items[:8]:
+                lines.append(f"  {fmt_task(t)}")
+            if len(items) > 8:
+                lines.append(f"  \u2026 dan {len(items) - 8} lainnya")
+            lines.append("")
+
+        done = sum(1 for t in tasks if t["status"] == "done")
+        bad = sum(1 for t in tasks if t["status"] in ("failed", "cancelled", "interrupted"))
+        busy = sum(1 for t in tasks if t["status"] == "running")
+        lines.append("<b>Ringkasan</b>")
+        lines.append(f"  \u2705 {done} selesai \u00b7 \U0001f527 {busy} berjalan \u00b7 "
+                     f"\u26a0\ufe0f {bad} bermasalah \u00b7 total {len(tasks)} tugas")
+        if busy:
+            who = [f"{a['name']} ({a['active']}/{a['capacity']})" for a in b["agents"] if a.get("active")]
+            if who:
+                lines.append(f"  \U0001f465 Agen aktif: {', '.join(who)}")
+        return "\n".join(lines).rstrip()
 
 
 class AgentBot(Bot):

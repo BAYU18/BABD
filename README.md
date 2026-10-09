@@ -579,6 +579,37 @@ and *View document* opens what the team received.
   still running are marked *interrupted* and, with `project.auto_resume` (default on), queued again
   to continue. A run still alive in another BABD process (e.g. `babd run`) is left alone.
 
+## BABD updating itself
+
+BABD can change its own code. Two ways, both gated so the running installation is never overwritten
+by surprise:
+
+**`babd self-update`** pulls the upstream git repository into the installation:
+
+```
+.venv/bin/babd self-update --check      # is an update available?
+.venv/bin/babd self-update              # pull, test, keep a rollback
+.venv/bin/babd self-update --rollback   # undo the last self-update
+```
+
+The steps are: `git fetch` -> a code backup under `.babd/selfupdate/backups/` -> local edits to
+tracked files are stashed aside -> a **fast-forward-only** merge of `origin/<branch>` -> run the
+test command (project `self_test_command`, default `python -m pytest -q` when `tests/` exists). If a
+test fails the merge is undone and the team keeps running on the old commit. `.env`, `agents.json`,
+`workspace/`, `.babd/` and `logs/` are never touched by a pull. After a successful update, restart
+`babd dashboard` (and any running agent) to load the new code; `--rollback` returns to the previous
+commit recorded in `.babd/selfupdate/last.json`.
+
+**The `babd-self` project** lets the *agents* edit BABD's own code. Its repository is BABD itself
+(`agents.json` -> `projects`, id `babd-self`, `repo` = BABD's git URL). A task on that project runs
+in an isolated git worktree under `workspace/worktrees/babd-self/<run id>`, exactly like any other
+project: the Developer edits the code there, QA runs `python -m pytest -q` on the worktree, and the
+change reaches the installation only through the project's `merge` policy (`on_approval` here) - the
+CEO approves, BABD merges the task branch into the project's branch. Agents can read and write
+everything under `workspace/` but stay blocked from the installation's own `babd/`, `agents.json`,
+`.env` and `.git` (see `babd/permissions.py`, `babd_guards`), so self-modification always goes through
+a reviewed copy, never a live edit.
+
 ## QA evidence: no PASS without tests that ran
 
 A QA PASS has to rest on tests that really ran:

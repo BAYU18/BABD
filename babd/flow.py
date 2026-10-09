@@ -50,6 +50,10 @@ def specialist_roles(team):
     """
     return [r for r in ROLES[1:] if r in team.by_id]
 
+# All timestamps the dashboard shows (activity log, Live Run, Reports, History) are written in
+# WIB (Asia/Jakarta, UTC+7) with an explicit offset, so the browser never has to guess.
+WIB = datetime.timezone(datetime.timedelta(hours=7), "WIB")
+
 ROUTES = ({("ceo", "lead"), ("lead", "ceo")} | {(r, "lead") for r in ROLES[1:]} | {("lead", r) for r in ROLES[1:]}
 # teammates may ask each other directly (peer Q&A): the agent named on ASK: answers, so a
 # specialist never has to bother the CEO for something another specialist already knows.
@@ -258,8 +262,50 @@ def parse_verdict(text):
     return found[-1].upper() if found else "FAIL"
 
 
+def plain_summary(text, max_sentences=3):
+    """A short, plain-language CEO summary: strip markdown/sections, keep the first few sentences.
+
+    The report step is told to return one short paragraph, but models sometimes dump a long
+    technical write-up (headings, git hashes, skill lists). This keeps the CEO view readable no
+    matter what the model returned."""
+    s = (text or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"```.*?```", " ", s, flags=re.S)
+    # BABD prints review diffs as "┊ review diff\na/x -> b/x\n@@ ...". Drop those blocks.
+    s = re.sub(r"[\u2502\u250a]\s*review diff.*?(?=(?:[\u2502\u250a]|\n\n|$))", " ", s, flags=re.S)
+    s = re.sub(r"(?m)^(?:diff --git|index [0-9a-f]{7}|@@|--- |\+\+\+ |[+-]{1,3}[^ ]).*$", "", s)
+    s = re.sub(r"`([^`]*)`", r"\1", s)
+    lines = []
+    for ln in s.splitlines():
+        ln = ln.strip()
+        if re.match(r"^#{1,6}\s", ln):  # a markdown heading line: drop it entirely
+            continue
+        ln = re.sub(r"^[-*+]\s+", "", ln)
+        ln = re.sub(r"^\d+[.)]\s+", "", ln)
+        if ln:
+            lines.append(ln)
+    s = " ".join(lines)
+    s = re.sub(r"\*\*|__", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    # Drop a leading meta/preamble fragment ("Re-pitched (wait-what): where we actually are Context.",
+    # "Status:", "Where we are:" ...). If the first sentence is short and reads like a label, skip it.
+    first, _, rest = s.partition(". ")
+    meta_marks = ("re-pitch", "repitch", "wait-what", "context", "status", "where we",
+                  "summary", "update", "here is", "here's", "overview", "report")
+    if rest and (":" in first or len(first) < 80) and any(m in first.lower() for m in meta_marks):
+        s = s[len(first) + 2:].lstrip()
+        # A surviving label like "Context." or "Where we actually are:" at the very start.
+        s = re.sub(r"^(status|context|summary|overview|update|where we[^.:]*)\s*[:.]\s*", "", s, flags=re.I)
+    parts = re.split(r"(?<=[.!?])\s+", s)
+    out = " ".join(parts[:max_sentences]).strip()
+    if len(out) > 400:
+        out = out[:397].rstrip() + "..."
+    return out
+
+
 def now():
-    return datetime.datetime.now().isoformat(timespec="seconds")
+    return datetime.datetime.now(WIB).isoformat(timespec="seconds")
 
 
 DEFAULT_PARALLEL = 2  # steps one agent works on at the same time, when agents.json does not say
@@ -680,6 +726,7 @@ class Run:
             # LLM unbounded (QA B-3: >1000 calls with a mock that always answers `ASK:`), which on
             # a real model burns the budget until timeout. The cap still allows the normal
             # ask -> answer -> work cycle, so real collaboration is unaffected.
+            peer_asked = 0
             while q:
                 peers = self.peer_targets(agent_id, q)
                 peer = None
@@ -693,9 +740,18 @@ class Run:
                                        f"(more than {self.max_peer_questions} peer turns this run)")
                     peer = self.ask_peer(agent_id, q, peers)
                 if peer:
+                    peer_asked += 1
+                    if peer_asked > self.max_peer_questions:
+                        self.emit("peer_question_limit", {
+                            "agent": agent_id, "asked": peer_asked,
+                            "limit": self.max_peer_questions, "goal": one_line(self.goal, 80)})
+                        break
                     out = self.work(agent_id, f"{prompt}\n\n### You asked your teammate {q['ask'][0]}\n"
                                     f"{q['question']}\n\n### Your teammate answered\n{peer}\n\n"
-                                    "Now do your task again, using this answer.", task, reply_kind, fact=fact, **work_kw)
+                                    f"Now do your task again, using this answer. You have used {peer_asked} of "
+                                    f"at most {self.max_peer_questions} peer questions for this task: finish now, "
+                                    "or ask the CEO if it is a business decision.",
+                                    task, reply_kind, fact=fact, **work_kw)
                     q = parse_question(out)
                     continue
                 if not self.can_ask():
@@ -1067,7 +1123,7 @@ class Run:
 
         # REPORT
         self.stage("report")
-        self.agent("lead", "working", "Report to the CEO")
+        self.agent("lead", "working", "Laporan ke CEO")
         ev = self.state.get("evidence") or {}
         no_deploy = "devops" in self.skip
         facts = (f"QA verdict: {verdict} after {rounds} fix round(s) "
@@ -1079,16 +1135,33 @@ class Run:
             outputs += f"\n\n### Deploy report\n{deploy}"
         report_text = self.step("report", lambda: self.work("lead",
             f"{self.goal_block}\n\nFacts: {facts}\n\nTeam output:\n\n{outputs}\n\n"
-            "Write the CEO report: high-level status only, no code. Answer with only a JSON object:\n"
-            '{"current_goal": "<max 4 words>", "active_task": "<max 3 words>", "recent_result": "<max 4 words>", '
-            '"next_action": "<max 4 words>", "summary": "<short paragraph for the CEO>", '
-            '"blocker_list": ["<blocker>"]}',
-            "Report to the CEO", "report",
+            "Tulis laporan untuk CEO (pembaca NON-TEKNIS, CEO mungkin tidak mengerti pemrograman sama sekali).\n"
+            "WAJIB dalam Bahasa Indonesia.\n"
+            "\"summary\" HARUS SATU paragraf pendek maksimal 3 kalimat (maks ~60 kata).\n"
+            "Aturan untuk summary:\n"
+            "- Bahasa sehari-hari yang sederhana, seperti menceritakan ke teman apa yang terjadi.\n"
+            "  Katakan \"halaman kontak sudah selesai dan diperiksa, tinggal butuh persetujuan Anda untuk tayang\" --\n"
+            "  BUKAN \"QA verdict PASS, 10/10 unit tests green, commit ecf1609\".\n"
+            "- Katakan apa yang DIBANGUN dan apa manfaatnya untuk pengguna.\n"
+            "- Jika ada yang belum selesai atau butuh CEO, katakan dalam satu kalimat sederhana.\n"
+            "- JANGAN pernah sertakan: kode, nama file, hash commit, nama branch, jumlah tes, perintah git,\n"
+            "  nama skill, nama tool, atau detail teknis apa pun. Itu semua milik log tim, bukan di sini.\n"
+            "- JANGAN jelaskan prosesmu dan JANGAN tulis bagian atau judul. Hanya paragrafnya.\n"
+            "Jawab hanya dengan objek JSON:\n"
+            '{"current_goal": "<maks 4 kata, bahasa sederhana>", '
+            '"active_task": "<maks 3 kata, bahasa sederhana>", '
+            '"recent_result": "<maks 4 kata, bahasa sederhana>", '
+            '"next_action": "<maks 4 kata, bahasa sederhana>", '
+            '"summary": "<2-4 kalimat sederhana yang dipahami CEO non-teknis>", '
+            '"blocker_list": ["<hambatan dalam bahasa sederhana>"]}',
+            "Laporan ke CEO", "report",
             skills_for="report_blocked" if self.state["blockers"] else "report",
             fact=lambda out: f"CEO report for '{one_line(goal, 80)}' ({facts}): "
                              f"{one_line((extract_json(out) or {}).get('summary') or out, 240)}"))
         rep = extract_json(report_text) or {"summary": report_text}
         rep.update(self._facts(verdict, bool(deploy)))
+        if rep.get("summary"):
+            rep["summary"] = plain_summary(rep["summary"], max_sentences=3)
         self.state["report"] = rep
         self.write("99-ceo-report.json", json.dumps(rep, indent=2, ensure_ascii=False))
         self.bus.send("lead", "ceo", "report", rep.get("summary") or report_text, report=rep)
@@ -1322,15 +1395,47 @@ class Run:
             self.finish_stage(k, "skipped")
 
     def _quick_report(self, text, who, result):
-        """The CEO report of a fast-lane task, from the work itself (no extra call)."""
+        """The CEO report of a fast-lane task: ask the Team Lead to summarise the work for a
+        non-technical CEO, then fall back to a cleaned-up excerpt of the raw work."""
         self.stage("report")
+        self.agent("lead", "working", "Laporan ke CEO")
+        goal = one_line(self.goal, 80)
+        raw = plain_summary(text, max_sentences=3)
+        summary = raw
+        got = {}
+        try:
+            out = self.work("lead",
+                f"{self.goal_block}\n\nThe team's raw work/output for this task:\n\n{text}\n\n"
+                "Tulis laporan untuk CEO (pembaca NON-TEKNIS, CEO mungkin tidak mengerti pemrograman sama sekali).\n"
+                "WAJIB dalam Bahasa Indonesia.\n"
+                "\"summary\" HARUS SATU paragraf pendek maksimal 3 kalimat (maks ~60 kata).\n"
+                "- Bahasa sehari-hari yang sederhana, seperti menceritakan ke teman apa yang terjadi.\n"
+                "- Katakan apa yang SUDAH DIKERJAKAN dan artinya bagi pengguna.\n"
+                "- Jika ada yang belum selesai atau butuh CEO, katakan dalam satu kalimat sederhana.\n"
+                "- JANGAN pernah sertakan: kode, nama file, hash commit, nama branch, jumlah tes, perintah,\n"
+                "  nama tool, atau detail teknis apa pun.\n"
+                "- JANGAN jelaskan prosesmu dan JANGAN tulis bagian atau judul. Hanya paragrafnya.\n"
+                "Jawab hanya dengan objek JSON:\n"
+                '{"summary": "<2-4 kalimat sederhana yang dipahami CEO non-teknis>", '
+                '"blocker_list": ["<hambatan dalam bahasa sederhana>"]}',
+                "Laporan ke CEO", "report", light=True, memory=False)
+            got = extract_json(out) or {}
+            if (got.get("summary") or "").strip():
+                summary = plain_summary(got["summary"], max_sentences=3)
+        except Exception:
+            pass  # keep the cleaned-up raw excerpt
+        if not summary:
+            summary = raw or f"{result}: {goal}"
+        blockers = []
+        if isinstance(got, dict) and isinstance(got.get("blocker_list"), list):
+            blockers = [str(b) for b in got["blocker_list"] if str(b).strip()]
         rep = {"current_goal": one_line(self.goal, 40), "active_task": "Quick task", "recent_result": result,
-               "next_action": "Review the result", "summary": text, "blocker_list": [],
+               "next_action": "Review the result", "summary": summary, "blocker_list": blockers,
                "route": self.state["route"]["route"], "agent": self.team.by_id[who].name}
         rep.update(self._facts(None, False))
         self.state["report"] = rep
         self.write("99-ceo-report.json", json.dumps(rep, indent=2, ensure_ascii=False))
-        self.bus.send("lead", "ceo", "report", text, report=rep, route=self.state["route"]["route"], agent=who)
+        self.bus.send("lead", "ceo", "report", summary, report=rep, route=self.state["route"]["route"], agent=who)
         self.agent("lead", "done")
         self.finish_stage("report")
 

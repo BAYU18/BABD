@@ -20,6 +20,8 @@
   python -m babd report <run id> [-o report.md]   a task as a Markdown report
   python -m babd resume <run id> [--approve]  continue a failed / stopped / interrupted task from its
                                                last finished step
+  python -m babd self-update [--check] [--rollback] [--no-test]
+                                               update BABD itself from its upstream git repo
 """
 import argparse
 import json
@@ -87,6 +89,12 @@ def main(argv=None):
     rs = sub.add_parser("resume", help="continue a failed, stopped or interrupted task from its last finished step")
     rs.add_argument("run_id")
     rs.add_argument("--approve", action="store_true", help="approve the deploy without asking")
+    su = sub.add_parser("self-update", help="update BABD itself from its upstream git repo (pull + test + keep a rollback)")
+    su.add_argument("--check", action="store_true", help="only report whether an update is available")
+    su.add_argument("--rollback", action="store_true", help="undo the last self-update")
+    su.add_argument("--no-test", action="store_true", help="do not run the test command after the pull")
+    su.add_argument("--branch", default=None, help="upstream branch (default: the tracking branch)")
+    su.add_argument("--remote", default="origin", help="git remote to pull from (default: origin)")
     args = p.parse_args(argv)
 
     if args.cmd == "harnesses":
@@ -119,6 +127,43 @@ def main(argv=None):
             return 2
         print(f"saved (as a PBKDF2 hash in .env, {HASH_ENV}); restart `babd dashboard` to use it")
         return 0
+
+    if args.cmd == "self-update":
+        from . import selfupdate
+        try:
+            if args.rollback:
+                r = selfupdate.rollback()
+                print(f"rolled back to {r['restored'][:10]} (now at {r['after'][:10]})")
+                print("restart `babd dashboard` to load the previous code")
+                return 0
+            if args.check:
+                s = selfupdate.status(remote=args.remote)
+                print(f"installation  {s['installation']}")
+                print(f"branch        {s['branch']} @ {(s['commit'] or '?')[:10]}")
+                print(f"remote        {s['remote']}")
+                print(f"behind        {s['behind']} commit(s)   ahead {s['ahead']}")
+                print(f"test command  {s['test_command'] or '(none)'}")
+                if s['dirty']:
+                    print(f"local edits   {len(s['dirty'])} file(s): {', '.join(s['dirty'][:8])}")
+                if s['behind']:
+                    print("\nan update is available: run `python -m babd self-update`")
+                else:
+                    print("\nthe installation is up to date")
+                return 0
+            report = selfupdate.update(remote=args.remote, branch=args.branch, do_test=not args.no_test)
+            print(selfupdate.format_report(report))
+            if report.get("ok"):
+                if report.get("updated"):
+                    print(f"\nupdated {(report['before'] or '?')[:10]} -> {(report['after'] or '?')[:10]}")
+                    print("restart `babd dashboard` (and any running agent) to load the new code")
+                else:
+                    print("\nalready up to date")
+                return 0
+            print(f"\nerror: {report.get('error', 'update failed')}", file=sys.stderr)
+            return 1
+        except selfupdate.SelfUpdateError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
 
     cfg = load_config()
     agents = {a["id"]: a for a in cfg["agents"]}

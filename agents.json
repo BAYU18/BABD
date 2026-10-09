@@ -1,14 +1,14 @@
 {
   "project": {
     "name": "BABD AI Dev Team",
-    "status": "DONE",
-    "progress": 100,
-    "current_goal": "Create a file hello.txt with the text h…",
-    "active_task": "Quick task",
+    "status": "BLOCKED",
+    "progress": 45,
+    "current_goal": "Laporan kegiatan jadi jelas",
+    "active_task": "Tulis laporan CEO",
     "approval_needed": 0,
-    "blockers": 0,
-    "recent_result": "Done by Developer",
-    "next_action": "Review the result",
+    "blockers": 1,
+    "recent_result": "Perbaikan selesai diperiksa",
+    "next_action": "Minta persetujuan Anda",
     "require_approval": [
       "deploy"
     ],
@@ -64,9 +64,22 @@
       ],
       "allow_groups": false,
       "daily_report_hour": 18
-    }
+    },
+    "self_test_command": "python -m pytest -q",
+    "max_peer_questions": 2
   },
-  "projects": [],
+  "projects": [
+    {
+      "id": "babd-self",
+      "name": "BABD (self)",
+      "repo": "git@github.com:BAYU18/BABD.git",
+      "branch": "",
+      "merge": "on_approval",
+      "push": false,
+      "test_command": "python3 -m pytest -q",
+      "notes": "Repo BABD sendiri: agent boleh mengubah kode BABD di worktree terisolasi; perubahan masuk instalasi hanya lewat approval CEO + merge."
+    }
+  ],
   "agents": [
     {
       "id": "lead",
@@ -75,20 +88,20 @@
       "color": "#9b8cff",
       "status": "idle",
       "main_task": [
-        "MANAGE",
-        "PROJECT"
+        "KELOLA",
+        "PROYEK"
       ],
       "sub_tasks": [
         {
-          "name": "Plan Work",
+          "name": "Rencanakan Pekerjaan",
           "state": "done"
         },
         {
-          "name": "Assign Agents",
+          "name": "Tugaskan Agen",
           "state": "done"
         },
         {
-          "name": "Coordinate Results",
+          "name": "Koordinasi Hasil",
           "state": "done"
         }
       ],
@@ -120,55 +133,59 @@
       },
       "skills": [
         "GBrain",
+        "Perencanaan",
+        "Routing Tugas",
+        "Pelaporan",
+        "Self-Modification",
         "Planning",
         "Task Routing",
         "Reporting"
       ],
       "superpowers": [
-        "using-superpowers",
         "brainstorming",
-        "writing-plans",
-        "subagent-driven-development",
-        "dispatching-parallel-agents",
-        "requesting-code-review",
-        "verification-before-completion",
-        "finishing-a-development-branch",
         "diagnosing-superpowers",
+        "dispatching-parallel-agents",
+        "finishing-a-development-branch",
+        "requesting-code-review",
+        "subagent-driven-development",
+        "using-superpowers",
+        "verification-before-completion",
+        "writing-plans",
         "writing-skills"
       ],
       "mattpocock": [
+        "ask-matt",
+        "chief-of-staff",
         "grilling",
+        "handoff",
+        "implement-spec",
+        "retro",
+        "to-questionnaire",
         "to-spec",
         "to-tickets",
-        "implement-spec",
         "triage",
-        "wayfinder",
-        "chief-of-staff",
-        "handoff",
-        "to-questionnaire",
         "wait-what",
-        "retro",
-        "writing-for-agents",
-        "ask-matt"
+        "wayfinder",
+        "writing-for-agents"
       ]
     },
     {
       "id": "architect",
-      "name": "ARCHITECT",
+      "name": "ARSITEK",
       "short_name": "Architect",
       "color": "#38bdf8",
       "status": "idle",
       "main_task": [
-        "DESIGN",
-        "SYSTEM"
+        "RANCANG",
+        "SISTEM"
       ],
       "sub_tasks": [
         {
-          "name": "Design HTML Structure",
+          "name": "Rancang Struktur",
           "state": "done"
         },
         {
-          "name": "Write Spec",
+          "name": "Tulis Spesifikasi",
           "state": "done"
         }
       ],
@@ -200,20 +217,24 @@
       },
       "skills": [
         "GBrain",
+        "Desain Sistem",
+        "Riset Web",
+        "Diagram",
+        "Self-Modification",
+        "Diagrams",
         "System Design",
-        "Web Research",
-        "Diagrams"
+        "Web Research"
       ],
       "superpowers": [
-        "using-superpowers",
         "brainstorming",
-        "writing-plans",
-        "dispatching-parallel-agents"
+        "dispatching-parallel-agents",
+        "using-superpowers",
+        "writing-plans"
       ],
       "mattpocock": [
-        "grilling",
-        "domain-modeling",
         "codebase-design",
+        "domain-modeling",
+        "grilling",
         "improve-codebase-architecture",
         "prototype",
         "research",
@@ -227,16 +248,16 @@
       "color": "#34d399",
       "status": "idle",
       "main_task": [
-        "BUILD",
+        "BANGUN",
         "SOFTWARE"
       ],
       "sub_tasks": [
         {
-          "name": "Write index.html",
+          "name": "Tulis Kode",
           "state": "done"
         },
         {
-          "name": "Write Tests",
+          "name": "Tulis Tes",
           "state": "done"
         },
         {
@@ -267,7 +288,8 @@
         "GBrain",
         "Python",
         "TypeScript",
-        "Git"
+        "Git",
+        "Self-Modification"
       ],
       "superpowers": [
         "using-superpowers",
@@ -293,22 +315,22 @@
       "name": "QA / TESTER",
       "short_name": "QA / Tester",
       "color": "#fbbf24",
-      "status": "idle",
+      "status": "blocked",
       "main_task": [
-        "VALIDATE",
+        "VALIDASI",
         "SOFTWARE"
       ],
       "sub_tasks": [
         {
-          "name": "Verify HTML",
+          "name": "Verifikasi Kode",
           "state": "done"
         },
         {
-          "name": "Run Tests",
+          "name": "Jalankan Tes",
           "state": "done"
         },
         {
-          "name": "Report Verdict",
+          "name": "Laporkan Verdict",
           "state": "done"
         }
       ],
@@ -340,21 +362,25 @@
       },
       "skills": [
         "GBrain",
+        "Unit Test",
+        "E2E Test",
+        "Triase Bug",
+        "Self-Modification",
         "Unit Tests",
-        "E2E Tests",
-        "Bug Triage"
+        "Bug Triage",
+        "E2E Tests"
       ],
       "superpowers": [
-        "using-superpowers",
-        "test-driven-development",
-        "systematic-debugging",
         "requesting-code-review",
+        "systematic-debugging",
+        "test-driven-development",
+        "using-superpowers",
         "verification-before-completion"
       ],
       "mattpocock": [
-        "tdd",
         "code-review",
         "diagnosing-bugs",
+        "tdd",
         "triage"
       ]
     },
@@ -363,10 +389,10 @@
       "name": "DEVOPS",
       "short_name": "DevOps",
       "color": "#f472b6",
-      "status": "idle",
+      "status": "waiting",
       "main_task": [
         "DEPLOY &",
-        "OPERATE"
+        "OPERASIKAN"
       ],
       "sub_tasks": [
         {
@@ -404,7 +430,8 @@
         "GBrain",
         "Docker",
         "CI/CD",
-        "Monitoring"
+        "Monitoring",
+        "Self-Modification"
       ],
       "superpowers": [
         "using-superpowers",
@@ -433,7 +460,7 @@
       "sub_tasks": [
         {
           "name": "Search the web",
-          "state": "done"
+          "state": "todo"
         },
         {
           "name": "Verify sources",
@@ -496,7 +523,7 @@
     {
       "step": "DESIGN",
       "owner": "architect",
-      "state": "todo"
+      "state": "done"
     },
     {
       "step": "CODE",
@@ -506,7 +533,7 @@
     {
       "step": "TEST",
       "owner": "qa",
-      "state": "todo"
+      "state": "active"
     },
     {
       "step": "DEPLOY",

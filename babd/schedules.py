@@ -20,6 +20,9 @@ DAYS = {"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
 FIELDS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 6))
 MODES = ("auto", "quick", "full")
 
+# WIB (Asia/Jakarta, UTC+7) — cron fields and timestamps are in this machine's local time.
+WIB = datetime.timezone(datetime.timedelta(hours=7), "WIB")
+
 
 class ScheduleError(Exception):
     pass
@@ -101,6 +104,7 @@ def next_run(cron, after=None):
     """The next minute (after `after`, default now) the schedule fires, or None within a year."""
     parse(cron)
     t = (after or datetime.datetime.now()).replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
+    t = t.replace(tzinfo=None)  # compare naive local wall-clock, whether `after` was aware or not
     for _ in range(366 * 24 * 60):
         if matches(cron, t):
             return t
@@ -163,7 +167,7 @@ class Book:
 
 def due(cfg, book, now=None):
     """The schedules to start now (each once per matching minute); marks them in the book."""
-    now = (now or datetime.datetime.now()).replace(second=0, microsecond=0)
+    now = (now or datetime.datetime.now(WIB)).replace(second=0, microsecond=0)
     stamp = now.isoformat(timespec="minutes")
     data = book.load()
     out = []

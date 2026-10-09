@@ -8,3 +8,5 @@ workspace/
 .worktrees/
 worktrees/
 logs/
+*.bak
+*.pre-*
