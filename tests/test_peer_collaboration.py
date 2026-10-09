@@ -12,6 +12,7 @@ bukan pada ROUTES statis, supaya loop peer benar-benar dieksekusi.
 Run: python -m unittest tests.test_peer_collaboration -v
 """
 import copy
+import json
 import os
 import shutil
 import sys
@@ -137,10 +138,53 @@ class PeerLoopBoundTest(unittest.TestCase):
 class ResearcherPackageKindTest(unittest.TestCase):
     """B-4: riset bukan pekerjaan kode."""
 
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        p = mock.patch.object(flow, "RUNS_DIR", os.path.join(self.tmp, "runs"))
+        p.start()
+        self.addCleanup(p.stop)
+        self.cfg = fixture_with_researcher(load_config(FIXTURE))
+
     def test_package_kind_for_researcher_is_not_code(self):
         self.assertIn("researcher", flow.PACKAGE_KIND)
         self.assertNotEqual(flow.PACKAGE_KIND["researcher"], "code",
                             "researcher work packages must not be labelled as code")
+
+    def test_researcher_package_is_dispatched_with_its_own_kind(self):
+        """B-4 (perilaku, bukan tabel statis): `PACKAGE_KIND["researcher"]` benar-benar dipakai.
+
+        `run_packages()` mengambil `kind = PACKAGE_KIND.get(p["agent"], "code")` dan meneruskannya
+        sebagai `reply_kind` ke `delegate()` -> `write_files()` + event `files`. Tes statis di atas
+        bisa tetap hijau walau tabelnya salah baca; tes ini mengunci perilaku nyata: paket
+        researcher HARUS dieksekusi dengan kind selain `"code"`. RED bila penelitian dilabeli
+        sebagai pekerjaan kode lagi.
+        """
+        plan = {"plan_summary": "Riset lalu bangun.",
+                "assignments": {"architect": "Rancang", "developer": "Bangun",
+                                "researcher": "Cari versi httpx", "qa": "Uji"},
+                "work_packages": [
+                    {"id": "p1", "title": "build", "agent": "developer",
+                     "task": "build it", "depends_on": []},
+                    {"id": "p2", "title": "search", "agent": "researcher",
+                     "task": "find the latest httpx version", "depends_on": []}]}
+        seen = {}
+
+        def fake_delegate(self, agent_id, kind, task, prompt, reply_kind, **kw):
+            seen[agent_id] = reply_kind
+            return f"{agent_id} did its part"
+
+        def ask_once(agent, prompt, **kw):
+            return json.dumps(plan) if agent.id == "lead" else "ok\nVERDICT: PASS"
+
+        with mock.patch.object(Agent, "ask", ask_once), \
+                mock.patch.object(flow.Run, "delegate", fake_delegate):
+            state = flow.Run(Team(self.cfg, log=quiet), "Research then build").execute()
+
+        self.assertEqual(state["status"], "done", state.get("error"))
+        self.assertIn("researcher", seen, f"researcher never dispatched: {seen}")
+        self.assertNotEqual(seen["researcher"], "code",
+                            f"the researcher package was run as code: {seen}")
 
 
 class BackwardsCompatibilityTest(unittest.TestCase):
