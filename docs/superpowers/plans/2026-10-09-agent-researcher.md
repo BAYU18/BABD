@@ -32,7 +32,7 @@
 ---
 
 ### Task 1: Roster dinamis, landmine plan, dan entri agent researcher
-**Status: SELESAI** — commit `426a30d`: roster + `agents.json` + kamus skill/permission + `specialist_roles()` + `PEER_WHO`/`ASK_INSTRUCTION`. Suite hijau.
+**Status: SELESAI** — commit `ddbe350` (roster + `agents.json` + kamus skill/permission + `specialist_roles()` + `PEER_WHO`/`ASK_INSTRUCTION`; lihat juga `426a30d` untuk irisan awal). Suite hijau.
 
 **Catatan test file baru:** `tests/test_researcher.py` perlu header seperti `tests/test_team.py:1-22`:
 `sys.path.insert(0, <root>)` sebelum import `babd`, lalu `import copy, json, os, subprocess, sys, unittest`,
@@ -466,3 +466,47 @@ p3 Task3 (adapter) boleh paralel dengan p2 Task2 setelah p1
 3. **Type consistency:** `specialist_roles(team)` dipakai konsisten di 5 situs + 3 test; `SKIPPABLE`, `PEER_WHO`, `ASK_INSTRUCTION` namanya sama di plan dan test.
 4. **Review Focus:** 5 baris, masing-masing punya test di task pemiliknya (T1 #1, T3 #2 #3, T2 #4, T1/T5 #5).
 5. **Proportion:** plan lebih pendek dari kode yang dihasilkan; blok kode hanya untuk test dan nilai exact.
+
+---
+
+## Fix round 2 — penutupan blocker QA round 1 (Developer)
+
+QA round 1 menilai **FAIL** dengan 6 blocker. Semua sudah ditutup **dan terverifikasi di worktree ini**
+(perintah dijalankan oleh Developer pada commit `ddbe350` + `6946f89` + `bd46df3`):
+
+| Blocker | Inti | Fix | Tes permanen | Bukti RED |
+|---|---|---|---|---|
+| **B-1** | `Run.is_skipped()` tak ada | helper generik di `flow.py` (tahan `str`/`None`/`set`) | `tests/test_peer_collaboration.py::test_is_skipped_and_has_tools_regression` | kode lama → **ERROR** |
+| **B-2** | `Process.has_tools` tak ada | properti di `harness/others.py` | tes yang sama | kode lama → **ERROR** |
+| **B-3** | `delegate()` `while q:` cabang peer **tanpa batas** → hang | `project.max_peer_questions` + `Run.peer_budget_left()` + `PeerLoop` ditangkap jadi blocker | `::test_asks_are_bounded_when_the_agent_never_stops_asking` + `::test_a_single_peer_answer_closes_the_loop` | kode lama (`ac1d6c1`) → **hang, RC=124** |
+| **B-4** | `PACKAGE_KIND["researcher"]="code"` | diubah jadi `"research"` | `::test_package_kind_for_researcher_is_not_code` | — |
+| **B-5** | fix uncommitted, tanpa tes | `flow.py`+`others.py` di-commit di `ddbe350`; working tree bersih | grep `is_skipped`/`has_tools` di `tests/` > 0 | — |
+| **B-6** | tak ada E2E kolaborasi di suite | jalur peer dieksekusi nyata via `flow.Run.execute` | `tests/test_researcher_e2e.py::test_peer_question_is_routed_to_researcher_and_answered_back` (+5 E2E lain) | — |
+
+**Perintah verifikasi & output nyata (Developer, commit ini):**
+
+```
+$ python -m unittest discover -s tests -q
+Ran 321 tests in 94.569s
+OK (skipped=3)
+
+$ python -m unittest tests.test_peer_collaboration -v
+Ran 5 tests  ... OK
+
+$ python -m unittest tests.test_researcher tests.test_researcher_e2e tests.test_evidence
+Ran 16 tests ... OK (skipped=1)   # + 14 E2E/evidence OK
+
+$ echo "versi terbaru httpx" | python scripts/researcher_adapter.py   # tanpa provider
+researcher: no search provider: ... Refusing to invent sources.
+EXIT=2
+```
+
+**RED nyata (bukti tes menangkap bug):** `git show ac1d6c1:babd/flow.py > babd/flow.py` lalu
+`python -m unittest tests.test_peer_collaboration -v` →
+`test_is_skipped_and_has_tools_regression ... ERROR` dan
+`test_asks_are_bounded_when_the_agent_never_stops_asking ... <timeout RC=124>` (persis bug B-3 QA).
+Kode fix dipulihkan → 5 OK.
+
+**Serah-terima ke QA (round 2):** jalankan `python -m unittest discover -s tests -q` (harap 321 OK) dan
+E2E kolaborasi termock. E2E **berkredensial/provider pencarian nyata tetap NOT RUN** (tidak ada SearXNG
+di mesin ini; adapter jujur `exit 2` tanpa provider) — itu pekerjaan DevOps (Task 6), bukan klaim Developer.
