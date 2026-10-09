@@ -539,3 +539,53 @@ VERDICT: PASS (cap honoured, no overshoot)
 **Masih terbuka (bukan milik Developer):** E2E dengan search provider nyata + vendor penuh — QA sudah
 ``ASK: devops`` untuk ini; butuh kunci API dan jaringan, tetap **NOT RUN**.
 
+## Developer round 4 — menutup sisa fix yang menggantung + diagnosis flakiness suite
+
+Diminta menutup lagi blocker QA round-1. Semua blocker **B-1..B-6 sudah tertutup** di commit
+`ddbe350`/`6946f89`/`bd46df3`/`89f7df2` (dan B-7/B-8 di `f74c0c7`). Dua hal nyata ditemukan Developer
+pada putaran ini:
+
+| # | Temuan | Akar masalah | Tindakan |
+|---|---|---|---|
+| **B-9** | `install: scripts/researcher_setup.sh` (relatif) mati dengan `FileNotFoundError` saat `cwd` = workspace | `Process.setup()` menjalankan argv apa adanya dengan `cwd=self.cwd`; hanya `command` yang di-ROOT-relatif-kan di `ensure_command` | `install` relatif diresolusi ROOT-relatif persis seperti `command` (commit `df202f2`) |
+| **B-10** | `install` yang tidak ada melempar `FileNotFoundError` mentah dari dalam `subprocess` | Jalur install tak pernah memeriksa keberadaan program | `setup()` menangkap `FileNotFoundError` → `HarnessError` ramah yang menamai program (commit `df202f2`) |
+
+Fix B-9/B-10 sudah ada sebagai perubahan **belum ter-commit** di worktree (ditulis sesi sebelumnya);
+putaran ini memverifikasinya RED→GREEN sendiri lalu **meng-commit-nya** (`df202f2`), karena perubahan
+yang menggantung persis itulah yang membuat suite terlihat flaky (lihat catatan metode).
+
+**Catatan metode (flakiness yang saya selidiki & buktikan bukan bug produksi):**
+Saat loop suite 4x, run ke-4 melaporkan `errors=2` di `tests/test_harness.py` dan jumlah tes berubah
+(323 -> 325 -> 326). Investigasi (systematic-debugging) menunjukkan penyebabnya: **dua proses
+`python -m unittest discover` berjalan bersamaan** di worktree yang sama saat fixing belum ter-commit,
+ditambah `install` relatif yang belum diresolusi membuat `subprocess` gagal dengan cwd non-ROOT.
+Setelah (a) fix B-9/B-10 di-commit, (b) tidak ada suite lain yang berjalan, satu run terisolasi:
+`Ran 325 tests ... OK (skipped=2)`. Jadi suite tidak flaky pada state bersih — ia sensitif terhadap
+(1) perubahan menggantung dan (2) dua suite paralel menulis `__pycache__`/file kerja yang sama.
+
+**Bukti Developer round 4 (output nyata, dijalankan di worktree):**
+
+```
+$ python -m unittest tests.test_peer_collaboration tests.test_researcher -v
+Ran 22 tests ... OK
+
+$ python -m unittest tests.test_researcher_e2e -v
+Ran 8 tests ... OK
+
+$ python -m unittest tests.test_harness -q
+Ran 28 tests ... OK
+
+$ python -m unittest discover -s tests -q        # state ter-commit, tanpa suite lain
+Ran 325 tests in 94.958s
+OK (skipped=2)
+
+$ python -m pytest -q tests/test_peer_collaboration.py tests/test_researcher.py tests/test_researcher_e2e.py
+31 passed in 4.89s
+```
+
+**RED nyata yang saya lihat sendiri (bukan klaim):**
+- B-3: guard peer dihapus -> `test_asks_are_bounded_when_the_agent_never_stops_asking` **hang** (timeout);
+  guard ada -> `ok` 0.322s.
+- B-9: resolusi ROOT dihapus -> `FileNotFoundError: 'scripts/relative_install_probe.sh'` (FAILED).
+- B-10: `try/except FileNotFoundError` dihapus -> `FileNotFoundError: 'no-such-installer-xyz'` (FAILED).
+
