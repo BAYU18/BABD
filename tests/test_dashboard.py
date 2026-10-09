@@ -117,6 +117,30 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("hermes_local", state["harnesses"])
         self.assertEqual([s["key"] for s in state["flow"]["stages"]][0], "plan")
 
+    def test_board_shows_the_researcher_agent(self):
+        """agents.json memuat researcher -> ia harus tampil di board seperti agent lain."""
+        cfg = load_config(self.cfg_path)
+        cfg["agents"].append({
+            "id": "researcher", "name": "RESEARCHER", "short_name": "Researcher", "color": "#c084fc",
+            "main_task": ["RESEARCH", "INTERNET"],
+            "sub_tasks": [{"name": "Search the web", "state": "todo"}],
+            "llm": {"provider": "Custom", "api": "openai", "model": "m", "api_key_env": "KEY1",
+                    "base_url": "http://localhost:11434/v1"},
+            "harness": {"type": "direct"}, "permissions": "workspace"})
+        with open(self.cfg_path, "w") as f:
+            json.dump(cfg, f)
+        status, raw = self.call("GET", "/api/board")
+        self.assertEqual(status, 200)
+        researcher = [a for a in raw["agents"] if a["id"] == "researcher"]
+        self.assertEqual(len(researcher), 1, "researcher is missing from the board")
+        self.assertEqual(researcher[0]["name"], "Researcher")
+        self.assertEqual(researcher[0]["color"], "#c084fc")
+
+    def test_skip_box_exists_for_researcher(self):
+        """Target skip per task di dashboard harus mengenal researcher (tanpa itu, riset selalu jalan)."""
+        src = read(os.path.join(ROOT, "babd", "dashboard", "static", "app.js"))
+        self.assertIn('name="skip" value="researcher"', src)
+
     def test_keys_never_leave_the_server(self):
         cfg = load_config(self.cfg_path)
         cfg["agents"][4]["llm"]["api_key"] = "sk-inline-secret"

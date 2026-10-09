@@ -148,7 +148,8 @@ function renderTaskOptions() {
       <label class="check"><input type="radio" name="mode_${box.dataset.opts}" value="full"> Whole team: plan, design, code, test, approval, deploy</label>
       <label class="check"><input type="checkbox" name="skip" value="architect"> No Architect: small change, the Team Lead's plan is the design</label>
       <label class="check"><input type="checkbox" name="skip" value="devops"> No DevOps: no deploy, stop after QA and the report</label>
-      <label class="check"><input type="checkbox" name="skip" value="prep"> No parallel preparation (QA and DevOps don't prepare while the Developer builds)</label>
+      <label class="check"><input type="checkbox" name="skip" value="researcher"> No Researcher: nothing to look up outside, no internet sources needed</label>
+      <label class="check"><input type="checkbox" name="skip" value="prep"> No parallel preparation (QA don't prepare while the Developer builds)</label>
       <div class="help">Model for this task only (empty = the agent's own):</div>
       <div class="opt-models">${S.agents.map((a) => `<label>${esc(a.short_name || a.name)}
         <input type="text" name="model_${esc(a.id)}" list="modelList" placeholder="${esc(a.llm.model)}"></label>`).join("")}</div>
