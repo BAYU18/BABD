@@ -425,17 +425,17 @@ git commit -m "feat(dashboard): show and allow skipping the researcher agent"
 
 **Files:** none (verifikasi). Boleh tambah `tests/test_researcher_e2e.py`.
 
-- [ ] Jalankan `python -m unittest discover -s tests -q` dan `python -m pytest -q` (bila tersedia). Tempel output **nyata**.
-- [ ] E2E kolaborasi (fixture salinan berisi researcher, mock LLM): assert (a) researcher menerima step; (b) `parse_question("ASK: researcher\nQUESTION: apa versi terbaru X")` → `ask == ["researcher"]`; (c) `ask_peer("developer", ...)` merutekan ke researcher dan balik ke penanya; (d) `board()` memuat researcher; (e) report markdown memuat researcher.
-- [ ] Buktikan Review Focus #1: `_flow()` pada fixture 5 agent (tanpa researcher) **tidak** melempar `FlowError`.
-- [ ] Buktikan Review Focus #5: plan Team Lead yang menyebut researcher tidak `KeyError` (jalankan `_flow()` dengan mock plan memuat assignment researcher).
-- [ ] Verifikasi jam activity log researcher memakai skrip **terbaru** (`verify_live_wib.mjs` / `verify_live_tz_locale.mjs`), **bukan** `verify_live_clock.mjs` yang sudah dihapus.
-- [ ] Laporan wajib berakhir `VERDICT: PASS` atau `VERDICT: FAIL` + bagian `EVIDENCE:` berisi perintah dan output asli. FAIL → kembali ke Developer.
+- [x] Jalankan `python -m unittest discover -s tests -q` dan `python -m pytest -q` (bila tersedia). Tempel output **nyata**.
+- [x] E2E kolaborasi (fixture salinan berisi researcher, mock LLM): assert (a) researcher menerima step; (b) `parse_question("ASK: researcher\nQUESTION: apa versi terbaru X")` → `ask == ["researcher"]`; (c) `ask_peer("developer", ...)` merutekan ke researcher dan balik ke penanya; (d) `board()` memuat researcher; (e) report markdown memuat researcher.
+- [x] Buktikan Review Focus #1: `_flow()` pada fixture 5 agent (tanpa researcher) **tidak** melempar `FlowError`.
+- [x] Buktikan Review Focus #5: plan Team Lead yang menyebut researcher tidak `KeyError` (jalankan `_flow()` dengan mock plan memuat assignment researcher).
+- [!] Verifikasi jam activity log researcher memakai skrip **terbaru** (`verify_live_wib.mjs` / `verify_live_tz_locale.mjs`), **bukan** `verify_live_clock.mjs` yang sudah dihapus. *(Skrip `.mjs` itu TIDAK ada di repo ini; penggantinya permanen: `tests/test_researcher_e2e.py::test_activity_log_time_is_local_server_wall_clock`.)*
+- [x] Laporan wajib berakhir `VERDICT: PASS` atau `VERDICT: FAIL` + bagian `EVIDENCE:` berisi perintah dan output asli. FAIL → kembali ke Developer.
 
 ### Task 6: DevOps — operasional lokal + rollback (blocked by Task 5 PASS)
 
-- [ ] `docs/researcher/RUNBOOK.md`: cara `setup`, start manual, cek sehat (`printf 'x\n' | .babd/researcher/bin/research` + exit code), baca log, rollback = `git revert` commit agent + hapus `.babd/researcher/`.
-- [ ] Konfirmasi researcher **tidak** masuk `servers[].agents` dan tidak butuh `TELEGRAM_*`.
+- [x] `docs/researcher/RUNBOOK.md`: cara `setup`, start manual, cek sehat (`printf 'x\n' | .babd/researcher/bin/research` + exit code), baca log, rollback = `git revert` commit agent + hapus `.babd/researcher/`. *(Ditambah `docs/researcher/DEPLOY.env.example` — kini TERLACAK git; dijaga `tests/test_deploy_env.py`.)*
+- [x] Konfirmasi researcher **tidak** masuk `servers[].agents` dan tidak butuh `TELEGRAM_*`. *(diverifikasi: tidak ada di server mana pun; `telegram.enabled=False`.)*
 - [ ] Deploy hanya setelah **CEO menyetujui**.
 
 ---
