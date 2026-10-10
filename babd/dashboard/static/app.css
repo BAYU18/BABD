@@ -591,6 +591,7 @@ button.chip { font-family: inherit; cursor: pointer; }
 .log-time { color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .log-type { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 2px 6px; border: 1px solid var(--stroke); border-radius: 6px; justify-self: start; }
 .log-type.t-step { color: var(--good); } .log-type.t-message { color: var(--ceo); } .log-type.t-retry { color: var(--bad); }
+.log-type.t-continue { color: var(--warn); }
 .log-type.t-memory { color: #c084fc; } .log-type.t-package { color: var(--warn); } .log-type.t-route { color: var(--telegram); }
 .log-text { min-width: 0; overflow-wrap: anywhere; }
 .log-text .linkish { margin-left: 6px; }

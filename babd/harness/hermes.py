@@ -49,14 +49,55 @@ def python_of(script):
     return shlex.split(first[2:])
 
 
+# Hermes prints this warning line when the --max-turns iteration budget runs out. Hermes then
+# asks the model for a final summary and exits 0, so a budget-exhausted step looks like a normal
+# success to the caller. We must not mistake a summary for a finished task: the agent's own turn
+# limit was hit, so the work is very likely incomplete. This constant is the contract between the
+# harness (which detects the line) and the flow (which reads the marker and tells the Team Lead).
+MAX_TURNS_MARKER = "[[BABD:MAX_TURNS_REACHED]]"
+
+# Matches the whole warning line, e.g. "⚠️  Reached maximum iterations (3). Requesting summary..."
+_MAX_TURNS_RE = re.compile(r"^.*reached\s+maximum\s+iterations.*$", re.IGNORECASE | re.MULTILINE)
+_TRUNCATED_MARKER = "[[BABD:OUTPUT_TRUNCATED]]"
+
+
+def _max_turns_reached(stdout):
+    """True when Hermes reported hitting its --max-turns iteration budget."""
+    return bool(_MAX_TURNS_RE.search(stdout))
+
+
 def clean_hermes_output(stdout):
     """Response text from `hermes chat -Q`: everything before the trailing `session_id:` line,
-    minus tool / status / warning noise lines (Paperclip's cleanResponse filters, plus Hermes' "⚠" warnings)."""
+    minus tool / status / warning noise lines (Paperclip's cleanResponse filters, plus Hermes' "⚠" warnings).
+
+    Special case: when Hermes hits `--max-turns`, it prints the `session_id:` line first, then
+    "⚠ ... Reached maximum iterations ... Requesting summary..." and THEN the model's summary. In
+    that case the answer is what follows the warning, not what precedes the session_id line. We
+    keep that summary and prepend MAX_TURNS_MARKER so the flow can tell the Team Lead the step was
+    cut short, not finished."""
+    budget_hit = _max_turns_reached(stdout)
+    keep = []
+    if budget_hit:
+        # The real answer is everything after the max-iterations warning line.
+        m = _MAX_TURNS_RE.search(stdout)
+        tail = stdout[m.end():] if m else stdout
+        # Drop a trailing session_id line if the summary is followed by one.
+        tail = re.sub(r"\nsession_id:\s*\S+\s*$", "", tail)
+        for line in tail.splitlines():
+            t = line.strip()
+            if t.startswith(("[tool]", "[hermes]", "session_id:")) or re.match(r"^\[\d{4}-\d{2}-\d{2}T", t):
+                continue
+            if t.startswith("⚠"):
+                continue
+            keep.append(re.sub(r"^\s*┊\s*💬\s*", "", line).rstrip())
+        cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(keep)).strip()
+        prefix = (f"{MAX_TURNS_MARKER} Hermes hit its --max-turns iteration budget for this step and "
+                  "returned a partial summary. The task is NOT confirmed finished.")
+        return f"{prefix}\n\n{cleaned}" if cleaned else prefix
     idx = stdout.rfind("\nsession_id:")
     if idx < 0 and stdout.startswith("session_id:"):
         idx = 0
     text = stdout[:idx] if idx >= 0 else stdout
-    keep = []
     for line in text.splitlines():
         t = line.strip()
         if t.startswith(("[tool]", "[hermes]", "session_id:", "⚠")) or re.match(r"^\[\d{4}-\d{2}-\d{2}T", t):

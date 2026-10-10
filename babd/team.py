@@ -6,7 +6,7 @@ WIB = datetime.timezone(datetime.timedelta(hours=7), "WIB")
 from .config import load_skill_text
 from .flow import Run, extract_json  # noqa: F401  (extract_json re-exported for callers)
 from .gbrain import BrainError, GBrain, format_memory, one_line
-from . import resilience, skillpacks
+from . import resilience, skill_evolution, skillpacks
 from .harness import create_harness
 
 
@@ -49,7 +49,8 @@ class Agent:
             text = load_skill_text(skill)
             if text:
                 lines.append(f"\n## Skill: {skill}\n{text}")
-        section = skillpacks.system_section(self.skill_packs)
+        mode = self.project.get("skills_mode") or "progressive"
+        section = skillpacks.system_section(self.skill_packs, agent_id=self.id, mode=mode)
         if section:
             lines.append("\n" + section)
         lines.append("\nBekerja secara konkret: hasilkan desain, kode, tes atau langkah yang sebenarnya, "
@@ -162,8 +163,9 @@ class Agent:
         skills = [s for s in skills if s in mine]
         if not skills:
             return self.ask(prompt, **kwargs)
-        lean = self.project.get("skills_mode") == "lean"
-        full = f"{skillpacks.step_block(skills, lean)}\n\n---\n\n{prompt}"
+        mode = self.project.get("skills_mode") or "progressive"
+        lean = mode == "lean"
+        full = f"{skillpacks.step_block(skills, lean, agent_id=self.id, mode=mode)}\n\n---\n\n{prompt}"
         out = self.ask(full, **kwargs)
         miss, retried = skillpacks.missing(out, skills), False
         if skillpacks.enforced(self.project, miss):
@@ -173,9 +175,14 @@ class Agent:
                            f"{'that skill' if len(miss) == 1 else 'those skills'}, and end with the "
                            f"\"Skills applied:\" section, one line for each of: {', '.join(skills)}.", **kwargs)
             miss = skillpacks.missing(out, skills)
+        applied = [s for s in skills if s not in miss]
+        try:
+            skill_evolution.record(self.id, skills, applied=applied)
+        except Exception:
+            pass
         if on_skills:
-            on_skills({"agent": self.id, "op": "skills", "skills": skills, "missing": miss, "retried": retried,
-                       "at": now()})
+            on_skills({"agent": self.id, "op": "skills", "skills": skills, "applied": applied,
+                       "missing": miss, "retried": retried, "mode": mode, "at": now()})
         return out
 
     def _brain_step(self, op, fn):

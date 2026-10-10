@@ -33,6 +33,8 @@ IRON_LAWS = {  # a line from each skill's own text, to prove the full skill reac
 
 def required(prompt):
     m = re.search(r"# Skills you must use for this step: (.*)", prompt)
+    if not m:  # progressive mode names the step's skills differently
+        m = re.search(r"# For this step you must use: (.*)", prompt)
     return [s.strip() for s in m.group(1).split(",")] if m else []
 
 
@@ -70,6 +72,7 @@ class SuperpowersTest(unittest.TestCase):
         self.cfg["project"]["gbrain"] = {"enabled": False}
         self.cfg["project"]["parallel_prep"] = False  # the parallel flow is covered in test_parallel.py
         self.cfg["project"]["mattpocock"] = {"enabled": False}  # covered in test_mattpocock.py
+        self.cfg["project"]["skills_mode"] = "full"  # this suite covers the full-text path
         for a in self.cfg["agents"]:
             a["harness"] = {"type": "direct"}
             a["llm"]["api_key"] = "test"

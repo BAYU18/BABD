@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import flow
 from ..config import ROOT, load_config, resolve_api_key, resolve_env, save_config, set_env_var
-from .. import permissions, projects, schedules, servers, skillpacks, taskdocs, telegram
+from .. import permissions, projects, schedules, servers, skill_evolution, skillpacks, taskdocs, telegram
 from .auth import Security, verify_password
 from ..gbrain import BrainError, GBrain
 from ..harness import HARNESS_OPTIONS, HARNESSES, create_harness, harness_config, select_harness
@@ -154,6 +154,7 @@ class Dashboard:
                             "enabled": sp.enabled(cfg["project"]), "enforce": sp.enforce(cfg["project"])}
                            for sp in skillpacks.packs()],
             "general_skills": skillpacks.GENERAL_RECOMMENDED,
+            "skill_evolution": {a["id"]: skill_evolution.summary(a["id"]) for a in cfg["agents"]},
             "telegram": self.telegram_state(cfg),
             "projects": projects.projects(cfg),
             "servers": self.server_list(cfg),
@@ -278,7 +279,7 @@ class Dashboard:
                         bd[k] = max(0.0, float(body["budget"][k] or 0))
             if "require_evidence" in body:
                 p["require_evidence"] = bool(body["require_evidence"])
-            if body.get("skills_mode") in ("full", "lean"):
+            if body.get("skills_mode") in ("full", "lean", "progressive", "catalog"):
                 p["skills_mode"] = body["skills_mode"]
             if body.get("pr_merge") in ("approve", "auto"):
                 p["pr_merge"] = body["pr_merge"]

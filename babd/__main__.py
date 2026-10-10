@@ -55,6 +55,9 @@ def main(argv=None):
     st.add_argument("agents", nargs="*")
     br = sub.add_parser("brain", help="the team's GBrain memory: status, or recall what it knows about some words")
     br.add_argument("words", nargs="*", help="words to recall (empty: show status)")
+    sk = sub.add_parser("skills", help="skill evolution: what each agent actually uses (and what went dormant)")
+    sk.add_argument("agent", nargs="?", help="one agent (default: all)")
+    sk.add_argument("--reset", action="store_true", help="forget the usage history (start over)")
     db = sub.add_parser("dashboard", help="open the web panel to configure, command and watch the agents")
     db.add_argument("--host", default="127.0.0.1")
     db.add_argument("--port", type=int, default=8800)
@@ -178,6 +181,28 @@ def main(argv=None):
         except BrainError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
+        return 0
+
+    if args.cmd == "skills":
+        from . import skill_evolution, skillpacks
+        cfg = load_config()
+        agent_ids = [args.agent] if args.agent else [a["id"] for a in cfg["agents"]]
+        if args.reset:
+            for aid in agent_ids:
+                skill_evolution.reset(aid)
+                print(f"{aid}: usage history cleared")
+            return 0
+        for aid in agent_ids:
+            s = skill_evolution.summary(aid)
+            print(f"\n{aid}: {s['applied']} applied / {s['offered']} offered  ({s['dormant']} dormant)")
+            bucket = skill_evolution._load().get("agents", {}).get(aid, {})
+            if not bucket:
+                print("  (no history yet — run a task)")
+                continue
+            for name in sorted(bucket, key=lambda n: -bucket[n].get("applied", 0)):
+                e = bucket[name]
+                tag = "HOT" if skill_evolution.is_hot(aid, name) else ("dormant" if skill_evolution.is_dormant(aid, name) else "")
+                print(f"  {name:35} applied={e.get('applied',0):3}  offered={e.get('uses',0):3}  {tag}")
         return 0
 
     if args.cmd in ("use", "setup"):

@@ -1134,6 +1134,7 @@ $("#btnSettings").addEventListener("click", () => {
       ${field("Skill texts in prompts", select("p_skills_mode", p.skills_mode || "full", [["full", "Full text (most reliable, most tokens)"], ["lean", "Lean: the start of each skill (~70% fewer skill tokens)"]]))}</div>
     <label class="check"><input type="checkbox" id="p_evidence" ${p.require_evidence ? "checked" : ""}> A QA PASS needs evidence (the project's tests passing, or QA's commands and outputs); without it the verdict is FAIL</label>
     ${field("QA fix rounds", `<input type="number" id="p_rounds" min="0" max="5" value="${esc(p.max_fix_rounds ?? 2)}">`, "How many times a failed QA report goes back to the Developer before the run is blocked.")}
+    ${field("Continue rounds", `<input type="number" id="p_controunds" min="0" max="5" value="${esc(p.max_continue_rounds ?? 2)}">`, "When an agent runs out of its step (iteration) budget, how many times the Team Lead asks it to continue from its partial summary before the run is blocked.")}
     <div class="field"><label>Parallel work</label>
       ${field("Tasks at the same time", `<input type="number" id="p_tasks" min="1" max="10" value="${esc(p.max_parallel_tasks ?? 3)}">`, "More tasks wait in the queue. A task waiting for your approval does not count.")}
       <label class="check"><input type="checkbox" id="p_prep" ${(p.parallel_prep ?? true) ? "checked" : ""}> While the Developer builds, QA writes the test plan and DevOps prepares the deploy</label>
@@ -1254,7 +1255,7 @@ $("#btnSettings").addEventListener("click", () => {
   };
   $("#p_save").onclick = async () => {
     try {
-      await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value),
+      await api("PUT", "project", { name: $('[name="p_name"]').value, require_approval: $("#p_approval").checked, max_fix_rounds: Number($("#p_rounds").value), max_continue_rounds: Number($("#p_controunds").value),
         max_parallel_tasks: Number($("#p_tasks").value), parallel_prep: $("#p_prep").checked, fast_lane: $("#p_fast").checked,
         retry: { attempts: Number($("#p_retries").value) }, require_evidence: $("#p_evidence").checked,
         budget: { tokens_per_task: Number($("#b_tt").value), cost_per_task: Number($("#b_ct").value), tokens_per_day: Number($("#b_td").value), cost_per_day: Number($("#b_cd").value) },
@@ -1823,6 +1824,8 @@ function connect() {
     if (d.event === "skills") logLine("skills", `${nameOf(d.data.agent)}: ${d.data.missing.length ? "skipped " + d.data.missing.join(", ") : "applied " + d.data.skills.join(", ")}`, d.data.missing.length ? "bad" : "ok", evAt);
     if (d.event === "memory") logLine("gbrain", memoryLogText(nameOf(d.data.agent), d.data), "", evAt);
     if (d.event === "retry") logLine("retry", `${nameOf(d.data.agent)} ${d.data.kind}: ${d.data.fallback ? `trying fallback model ${d.data.fallback}` : `retry ${d.data.attempt}/${d.data.of} in ${d.data.wait}s`} (${d.data.error})`, "bad", evAt);
+    if (d.event === "continue") logLine("continue", `${nameOf(d.data.agent)} ran out of steps on "${(d.data.task || "").slice(0, 60)}" \u2014 Lead asked it to continue (${d.data.round}/${d.data.max_rounds})`, "warn-text", evAt);
+    if (d.event === "continue_exhausted") logLine("retry", `${nameOf(d.data.agent)} still out of steps after ${d.data.rounds} continuation(s) on "${(d.data.task || "").slice(0, 60)}" \u2014 needs the Lead/CEO`, "bad", evAt);
     if (d.event === "finished") { toast(`Task ${d.data.status}: ${d.summary.goal.slice(0, 50)}`, d.data.status === "done" ? "ok" : "bad"); refreshSoon(); }
     renderTop(); renderAgents(); renderRun(); renderRunButtons(); renderNav();
   });
@@ -1853,7 +1856,7 @@ function loginPage(message = "") {
 let logAgent = null;
 let logEntries = [];
 let logTimer = null;
-const LOG_TYPES = { step: "step", message: "message", retry: "error", memory: "gbrain", skills: "skills", files: "files", package: "package", route: "triage" };
+const LOG_TYPES = { step: "step", message: "message", retry: "error", continue: "step", memory: "gbrain", skills: "skills", files: "files", package: "package", route: "triage" };
 
 async function loadLog(more = false) {
   if (!S) return;

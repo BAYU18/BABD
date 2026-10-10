@@ -37,6 +37,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from .config import ROOT
 from . import projects, qa_policy, servers, skillpacks, taskdocs
 from .gbrain import one_line, slugify
+from .harness.hermes import MAX_TURNS_MARKER
 
 RUNS_DIR = os.path.join(ROOT, "runs")
 ROLES = ("lead", "architect", "developer", "qa", "devops", "researcher")
@@ -776,10 +777,62 @@ class Run:
         except Exception:
             self.agent(agent_id, "blocked")
             raise
+        # When the agent's harness exhausts its iteration budget, Hermes returns a PARTIAL
+        # summary prefixed with MAX_TURNS_MARKER. The step is not a failure (exit 0, summary
+        # produced), but it is not finished either. Do what the Team Lead would do: acknowledge
+        # the partial work and direct the agent to CONTINUE from where it stopped, up to
+        # project.max_continue_rounds (default 2). Budget/cancel checks inside work() still apply.
+        out = self._continue_if_max_turns(agent_id, kind, task, prompt, reply_kind, out,
+                                          fact=fact, work_kw=work_kw)
         self.write_files(agent_id, out, reply_kind)
         self.bus.send(agent_id, "lead", reply_kind, out, seconds=round(time.monotonic() - started, 1))
         self.agent(agent_id, "done")
         return out
+
+    def _continue_if_max_turns(self, agent_id, kind, task, prompt, reply_kind, out, fact, work_kw):
+        """When `out` carries MAX_TURNS_MARKER, ask the agent to continue (bounded by a cap).
+
+        The marker is stripped from the final text so it never leaks into pages/reports; each
+        continuation is recorded as a `note` and emitted as a `continue` event so the dashboard and
+        the run history show a step was resumed rather than silently truncated."""
+        if MAX_TURNS_MARKER not in (out or ""):
+            return out
+        max_rounds = 2
+        try:
+            v = self.project.get("max_continue_rounds")
+            if v is not None:
+                max_rounds = int(v)
+        except (TypeError, ValueError):
+            max_rounds = 2
+        rounds = 0
+        while MAX_TURNS_MARKER in (out or "") and rounds < max_rounds:
+            rounds += 1
+            partial = out.replace(MAX_TURNS_MARKER, "").strip()
+            with self.lock:
+                self.state.setdefault("notes", []).append(
+                    f"{self.team.by_id[agent_id].name} hit its iteration budget on "
+                    f"'{one_line(task, 60)}' (continue {rounds}/{max_rounds}); asked to resume.")
+            self.emit("continue", {"agent": agent_id, "kind": kind, "task": task, "round": rounds,
+                                   "max_rounds": max_rounds, "goal": one_line(self.goal, 80)})
+            resume = (
+                f"{prompt}\n\n"
+                "### You ran out of steps before finishing\n"
+                "Your previous attempt hit the iteration limit for this step, so it stopped part-way. "
+                "Here is the summary of what you already did:\n\n"
+                f"{partial}\n\n"
+                "### Team Lead's direction\n"
+                "Continue from exactly where you stopped and FINISH this step. Do not repeat work that "
+                "is already done and listed above. If you still cannot finish within this step, say "
+                "clearly what remains and what is blocking you.")
+            out = self.work(agent_id, resume, task, reply_kind, fact=fact, **work_kw)
+        if MAX_TURNS_MARKER in (out or ""):
+            with self.lock:
+                self.state["blockers"].append(
+                    f"{self.team.by_id[agent_id].name} still hit its iteration budget after "
+                    f"{max_rounds} continuation(s) on '{one_line(task, 60)}'")
+            self.emit("continue_exhausted", {"agent": agent_id, "kind": kind, "task": task,
+                                             "rounds": max_rounds, "goal": one_line(self.goal, 80)})
+        return out.replace(MAX_TURNS_MARKER, "").strip()
 
     # -- questions: an agent asks a teammate first, the CEO only when nobody else can answer -----
 

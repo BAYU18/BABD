@@ -13,6 +13,7 @@
       "deploy"
     ],
     "max_fix_rounds": 2,
+    "max_continue_rounds": 2,
     "require_evidence": true,
     "max_parallel_tasks": 3,
     "parallel_prep": true,
@@ -30,7 +31,7 @@
       "task_limit_usd": 1.0,
       "warn_at_percent": 80
     },
-    "skills_mode": "enforce",
+    "skills_mode": "progressive",
     "gbrain": {
       "enabled": true,
       "strict": true,
