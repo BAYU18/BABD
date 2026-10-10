@@ -49,31 +49,31 @@ def markdown(state, messages, names=None):
     res = ws.get("result") or {}
     ev = state.get("evidence") or {}
     appr = state.get("approval") or {}
-    out = [f"# {state.get('goal', 'Tugas')}", "",
-           f"Tugas `{state.get('id')}` · **{str(state.get('status', '')).upper()}** · mulai {state.get('started_at') or '—'}"
-           f" · durasi {_dur(state.get('started_at'), state.get('finished_at'))}", ""]
+    out = [f"# {state.get('goal', 'Task')}", "",
+           f"Task `{state.get('id')}` · **{str(state.get('status', '')).upper()}** · started {state.get('started_at') or '—'}"
+           f" · took {_dur(state.get('started_at'), state.get('finished_at'))}", ""]
     if state.get("error"):
         out += [f"> **Error:** {state['error']}", ""]
-    rows = [("Verdict QA", f"{state.get('verdict') or '—'}"
-             + (f" setelah {state.get('qa_rounds')} putaran perbaikan" if state.get("qa_rounds") else "")),
-            ("Bukti", ("terverifikasi: " if ev.get("verified") else "tidak terverifikasi: ") + (ev.get("note") or "—") if ev else "—"),
-            ("Persetujuan CEO", f"{appr.get('result', '—')}" + (f" ({appr['note']})" if appr.get("note") else "") if appr else "belum diminta"),
-            ("Di-deploy", "ya" if state.get("deployed") else "tidak"),
-            ("Penggunaan", _tok(state.get("usage")))]
+    rows = [("QA verdict", f"{state.get('verdict') or '—'}"
+             + (f" after {state.get('qa_rounds')} fix round(s)" if state.get("qa_rounds") else "")),
+            ("Evidence", ("verified: " if ev.get("verified") else "not verified: ") + (ev.get("note") or "—") if ev else "—"),
+            ("CEO approval", f"{appr.get('result', '—')}" + (f" ({appr['note']})" if appr.get("note") else "") if appr else "not requested"),
+            ("Deployed", "yes" if state.get("deployed") else "no"),
+            ("Usage", _tok(state.get("usage")))]
     if ws.get("name"):
-        rows.append(("Proyek", f"{ws['name']} · branch `{ws.get('branch', '—')}`"
+        rows.append(("Project", f"{ws['name']} · branch `{ws.get('branch', '—')}`"
                      + (f" · digabung ke `{ws.get('base')}` ({res.get('commit')})" if res.get("merged") else "")
                      + (f" · {res['note']}" if res.get("note") else "")))
     if state.get("documents"):
-        rows.append(("Dokumen tugas", ", ".join(d.get("url") or d["name"] for d in state["documents"])))
+        rows.append(("Task documents", ", ".join(d.get("url") or d["name"] for d in state["documents"])))
     out += ["| | |", "| --- | --- |"] + [f"| {k} | {v} |" for k, v in rows] + [""]
     if rep.get("summary"):
-        out += ["## Laporan ke CEO", "", rep["summary"], ""]
+        out += ["## Report to the CEO", "", rep["summary"], ""]
     if rep.get("blocker_list"):
-        out += ["**Hambatan:**", ""] + [f"- {b}" for b in rep["blocker_list"]] + [""]
+        out += ["**Blockers:**", ""] + [f"- {b}" for b in rep["blocker_list"]] + [""]
     steps = state.get("steps") or []
     if steps:
-        out += ["## Langkah", "", "| # | Agen | Langkah | Status | Durasi | Token |", "| --- | --- | --- | --- | --- | --- |"]
+        out += ["## Steps", "", "| # | Agent | Step | Status | Took | Tokens |", "| --- | --- | --- | --- | --- | --- |"]
         for st in steps:
             took = f"{st['seconds']} s" if st.get("seconds") is not None else "—"
             extra = (f" (↻{st['retries']})" if st.get("retries") else "") + (f" (fallback {st['fallback']})" if st.get("fallback") else "")
@@ -82,7 +82,7 @@ def markdown(state, messages, names=None):
     for t in state.get("tests") or []:
         out += [f"### Project tests, round {t.get('round')}: exit {t.get('exit')}", "", f"```\n$ {t.get('command')}\n{t.get('output', '')}\n```", ""]
     if messages:
-        out += ["## Percakapan", ""]
+        out += ["## Conversation", ""]
         for m in messages:
             out += [f"### {who(m.get('from'))} → {who(m.get('to'))} · {m.get('kind')} · {m.get('at', '')}", "",
                     str(m.get("content") or "").strip(), ""]

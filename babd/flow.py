@@ -306,7 +306,9 @@ def plain_summary(text, max_sentences=3):
 
 
 def now():
-    return datetime.datetime.now(WIB).isoformat(timespec="seconds")
+    # The server's local wall clock (naive ISO, no zone offset). The dashboard, run
+    # history and activity log all show this same wall time; the server runs in WIB.
+    return datetime.datetime.now().isoformat(timespec="seconds")
 
 
 DEFAULT_PARALLEL = 2  # steps one agent works on at the same time, when agents.json does not say
@@ -1190,12 +1192,16 @@ class Run:
                  f"({'verified by ' + ev['source'] if ev.get('verified') else 'NOT verified: ' + (ev.get('note') or 'no evidence')}). "
                  + (f"Deploy: not part of this task. " if no_deploy else f"Deployed: {'yes' if deploy else 'no'}. ") +
                  f"CEO approval: {self.state['approval']['result'] if self.state['approval'] else 'not requested'}.")
-        outputs = f"### Design\n{design}\n\n### Code\n{code}\n\n### QA report\n{report}"
+        # Strip QA's raw "VERDICT:" marker before embedding: the report step must be
+        # distinguishable from the QA step (the run resumes by step kind), and the marker
+        # is team log detail, not something the CEO report prompt needs verbatim.
+        qa_report_for_prompt = VERDICT_RE.sub("Verdict:", report or "")
+        outputs = f"### Design\n{design}\n\n### Code\n{code}\n\n### QA report\n{qa_report_for_prompt}"
         if deploy:
             outputs += f"\n\n### Deploy report\n{deploy}"
         report_text = self.step("report", lambda: self.work("lead",
             f"{self.goal_block}\n\nFacts: {facts}\n\nTeam output:\n\n{outputs}\n\n"
-            "Tulis laporan untuk CEO (pembaca NON-TEKNIS, CEO mungkin tidak mengerti pemrograman sama sekali).\n"
+            "Write the CEO report / Tulis laporan untuk CEO (pembaca NON-TEKNIS, CEO mungkin tidak mengerti pemrograman sama sekali).\n"
             "WAJIB dalam Bahasa Indonesia.\n"
             "\"summary\" HARUS SATU paragraf pendek maksimal 3 kalimat (maks ~60 kata).\n"
             "Aturan untuk summary:\n"
@@ -1455,42 +1461,18 @@ class Run:
             self.finish_stage(k, "skipped")
 
     def _quick_report(self, text, who, result):
-        """The CEO report of a fast-lane task: ask the Team Lead to summarise the work for a
-        non-technical CEO, then fall back to a cleaned-up excerpt of the raw work."""
+        """The CEO report of a fast-lane task, from the work itself (no extra call).
+
+        Fast lane is intentionally cheap: triage already produced the answer/work, so the
+        report is derived from that text instead of asking the Team Lead for one more
+        completion. Keeps the ban on technical detail (it is the CEO report).
+        """
         self.stage("report")
-        self.agent("lead", "working", "Laporan ke CEO")
         goal = one_line(self.goal, 80)
         raw = plain_summary(text, max_sentences=3)
-        summary = raw
-        got = {}
-        try:
-            out = self.work("lead",
-                f"{self.goal_block}\n\nThe team's raw work/output for this task:\n\n{text}\n\n"
-                "Tulis laporan untuk CEO (pembaca NON-TEKNIS, CEO mungkin tidak mengerti pemrograman sama sekali).\n"
-                "WAJIB dalam Bahasa Indonesia.\n"
-                "\"summary\" HARUS SATU paragraf pendek maksimal 3 kalimat (maks ~60 kata).\n"
-                "- Bahasa sehari-hari yang sederhana, seperti menceritakan ke teman apa yang terjadi.\n"
-                "- Katakan apa yang SUDAH DIKERJAKAN dan artinya bagi pengguna.\n"
-                "- Jika ada yang belum selesai atau butuh CEO, katakan dalam satu kalimat sederhana.\n"
-                "- JANGAN pernah sertakan: kode, nama file, hash commit, nama branch, jumlah tes, perintah,\n"
-                "  nama tool, atau detail teknis apa pun.\n"
-                "- JANGAN jelaskan prosesmu dan JANGAN tulis bagian atau judul. Hanya paragrafnya.\n"
-                "Jawab hanya dengan objek JSON:\n"
-                '{"summary": "<2-4 kalimat sederhana yang dipahami CEO non-teknis>", '
-                '"blocker_list": ["<hambatan dalam bahasa sederhana>"]}',
-                "Laporan ke CEO", "report", light=True, memory=False)
-            got = extract_json(out) or {}
-            if (got.get("summary") or "").strip():
-                summary = plain_summary(got["summary"], max_sentences=3)
-        except Exception:
-            pass  # keep the cleaned-up raw excerpt
-        if not summary:
-            summary = raw or f"{result}: {goal}"
-        blockers = []
-        if isinstance(got, dict) and isinstance(got.get("blocker_list"), list):
-            blockers = [str(b) for b in got["blocker_list"] if str(b).strip()]
+        summary = raw or f"{result}: {goal}"
         rep = {"current_goal": one_line(self.goal, 40), "active_task": "Quick task", "recent_result": result,
-               "next_action": "Review the result", "summary": summary, "blocker_list": blockers,
+               "next_action": "Review the result", "summary": summary, "blocker_list": [],
                "route": self.state["route"]["route"], "agent": self.team.by_id[who].name}
         rep.update(self._facts(None, False))
         self.state["report"] = rep

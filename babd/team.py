@@ -64,7 +64,7 @@ class Agent:
                 "Seorang CEO manusia mengawasi tim melalui Team Lead.\n"
                 "PENTING: Selalu jawab dalam Bahasa Indonesia.\n"
                 f"Tugas utama kamu: {self.main_task}.\n"
-                "Ini pekerjaan cepat: kerjakan langsung tanpa basa-basi. Jawab singkat dengan apa yang kamu "
+                "Ini adalah quick job (pekerjaan cepat): kerjakan langsung tanpa basa-basi. Jawab singkat dengan apa yang kamu "
                 "kerjakan dan hasilnya. Katakan dengan jelas apa yang masih kurang atau terhambat.")
 
     def ask(self, message, system=None, **kwargs):
