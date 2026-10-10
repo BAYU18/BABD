@@ -82,10 +82,21 @@ def normalize(p):
     merge = p.get("merge", "on_approval")
     if merge not in MERGE_POLICIES:
         raise ProjectError(f"project {pid}: merge must be one of {', '.join(MERGE_POLICIES)}")
-    return {"id": pid, "name": p.get("name") or pid, "path": os.path.normpath(path), "repo": repo,
-            "branch": branch, "merge": merge, "push": bool(p.get("push", False)),
-            "test_command": (p.get("test_command") or "").strip(), "custom_path": bool(p.get("path")),
-            "github_repo": gh_repo}
+    out = {"id": pid, "name": p.get("name") or pid, "path": os.path.normpath(path), "repo": repo,
+           "branch": branch, "merge": merge, "push": bool(p.get("push", False)),
+           "test_command": (p.get("test_command") or "").strip(), "custom_path": bool(p.get("path")),
+           "github_repo": gh_repo}
+    # Optional per-project keys that downstream code reads (flow.check_evidence reads
+    # qa_policy; the fix loop reads project.max_fix_rounds; notes is documentation).
+    # Carried through verbatim so a project can opt into the flaky-as-pass policy
+    # without those settings being silently dropped by normalization.
+    if p.get("qa_policy"):
+        out["qa_policy"] = p["qa_policy"]
+    if p.get("max_fix_rounds") is not None:
+        out["max_fix_rounds"] = p["max_fix_rounds"]
+    if p.get("notes"):
+        out["notes"] = p["notes"]
+    return out
 
 
 def get(cfg, project_id=None):
@@ -232,6 +243,32 @@ def is_secret(root, rel):
         return False
 
 
+_FAIL_LINE_RE = re.compile(r"^\s*not ok\b.*$", re.IGNORECASE | re.MULTILINE)
+
+
+def extract_failures(full_output):
+    """Extract the lines that report individual test failures, from the FULL output.
+
+    Called before the output is truncated so the per-test failure names survive even when
+    the tail exceeds the 6000-char cap (a TAP suite with 800+ passing tests easily overflows
+    it, leaving only the `# fail N` summary). Returns a list of failing-line strings.
+    """
+    lines = [m.group(0).strip() for m in _FAIL_LINE_RE.finditer(full_output or "")]
+    if not lines:
+        # fallback: pytest/unittest style "FAILED ..." / "FAIL: ..." lines
+        for raw in (full_output or "").splitlines():
+            s = raw.strip()
+            if s.startswith(("FAILED ", "FAIL: ")) or s.startswith("FAILED"):
+                lines.append(s)
+    # de-dup, keep order
+    seen, out = set(), []
+    for l in lines:
+        if l not in seen:
+            seen.add(l)
+            out.append(l)
+    return out
+
+
 def run_tests(command, cwd, timeout=900):
     """Run the project's own test command in the task's worktree: {"command", "exit", "output", "seconds"}.
 
@@ -254,10 +291,12 @@ def run_tests(command, cwd, timeout=900):
         code, out = proc.returncode, (proc.stdout + ("\n" + proc.stderr if proc.stderr else ""))
     except subprocess.TimeoutExpired as e:
         code, out = 124, f"{(e.stdout or b'').decode(errors='replace') if isinstance(e.stdout, bytes) else (e.stdout or '')}\n[timed out after {timeout}s]"
+    failures = extract_failures(out)
     tail = out.strip()
     if len(tail) > 6000:
         tail = "[...]\n" + tail[-6000:]
-    return {"command": command, "exit": code, "output": tail, "seconds": round(time.monotonic() - started, 1)}
+    return {"command": command, "exit": code, "output": tail, "failures": failures,
+            "seconds": round(time.monotonic() - started, 1)}
 
 
 FILE_BLOCK_RE = re.compile(r"^```[^\n`]*?\bfile=([^\s`]+)[^\n]*\n(.*?)^```[ \t]*$", re.S | re.M)

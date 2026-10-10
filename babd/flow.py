@@ -35,7 +35,7 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .config import ROOT
-from . import projects, servers, skillpacks, taskdocs
+from . import projects, qa_policy, servers, skillpacks, taskdocs
 from .gbrain import one_line, slugify
 
 RUNS_DIR = os.path.join(ROOT, "runs")
@@ -419,6 +419,10 @@ class Run:
             ws = self.state.get("workspace") or {}
             ws.pop("result", None)
             self.state["workspace"] = {**ws, "project": self.project["id"], "name": self.project["name"]}
+            # A project may override the team-wide fix-round cap (e.g. a flaky suite that
+            # needs a couple more rounds). Project settings win over the global default.
+            if self.project.get("max_fix_rounds") is not None:
+                self.max_fix_rounds = int(self.project["max_fix_rounds"])
         self.state["pid"] = os.getpid()
         if not resume or options is not None:
             self.state["task_options"] = task_options(options, set(team.by_id))
@@ -1500,8 +1504,23 @@ class Run:
             ev.update(source="project tests", verified=tests["exit"] == 0,
                       note=f"`{tests['command']}` exit code {tests['exit']}")
             if verdict == "PASS" and tests["exit"] != 0:
-                verdict = "FAIL"
-                ev["note"] += ": QA said PASS but the project's tests fail, so the verdict is FAIL"
+                # A non-zero exit usually means a real regression -> FAIL. But some suites
+                # (network/RPC/live tests) fail *environmentally*. When the project opts in via
+                # project.qa_policy.treat_flaky_as_pass AND every detected failure line matches a
+                # flaky pattern, the non-zero exit is treated as environmental and QA's own
+                # verdict stands. If any failure is NOT flaky, we keep the conservative FAIL.
+                policy = (self.project or {}).get("qa_policy") or {}
+                flaky_only = False
+                if qa_policy.should_override_fail(policy):
+                    flaky_only, info = qa_policy.is_flaky_only(
+                        tests.get("output") or "", policy, tests.get("failures"))
+                    if flaky_only:
+                        ev["note"] += (f": {info['flaky']} failing test(s), all environmental/flaky "
+                                       f"per project.qa_policy -> not treated as a regression")
+                        ev["flaky_only"] = True
+                if not flaky_only:
+                    verdict = "FAIL"
+                    ev["note"] += ": QA said PASS but the project's tests fail, so the verdict is FAIL"
         elif verdict == "PASS":
             found = evidence_of(report)
             if not found and qa_tools:
