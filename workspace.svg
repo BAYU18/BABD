@@ -169,9 +169,11 @@
 <text x="64" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">RANCANG</text>
 <text x="64" y="980" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">SISTEM</text>
 <text x="64" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
-<rect x="65" y="1043" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="64" y="1042" width="18" height="18" rx="5" fill="#38bdf8" opacity="1" />
+<path d="M68 1051 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="94" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Rancang Struktur</text>
-<rect x="65" y="1073" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="64" y="1072" width="18" height="18" rx="5" fill="#38bdf8" opacity="1" />
+<path d="M68 1081 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="94" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Tulis Spesifikasi</text>
 <rect x="52" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="60" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
@@ -274,11 +276,14 @@
 <text x="385" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">BANGUN</text>
 <text x="385" y="980" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">SOFTWARE</text>
 <text x="385" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
-<rect x="386" y="1043" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="385" y="1042" width="18" height="18" rx="5" fill="#34d399" opacity="1" />
+<path d="M389 1051 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="415" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Tulis Kode</text>
-<rect x="386" y="1073" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="385" y="1072" width="18" height="18" rx="5" fill="#34d399" opacity="1" />
+<path d="M389 1081 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="415" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Tulis Tes</text>
-<rect x="386" y="1103" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="385" y="1102" width="18" height="18" rx="5" fill="#34d399" opacity="1" />
+<path d="M389 1111 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="415" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Commit</text>
 <rect x="373" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="381" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
@@ -364,19 +369,22 @@
 <rect x="102" y="86" width="36" height="6" rx="3" fill="#3a5078" opacity="1" />
 </g>
 <text x="706" y="864" font-size="14" fill="#fbbf24" font-weight="700" text-anchor="start" letter-spacing="1.6" opacity="1">04 · QA / TESTER</text>
-<rect x="892.36" y="847" width="62.64" height="24" rx="12" fill="#5a6c8a" opacity="0.16" />
-<circle cx="905.36" cy="859" r="4" fill="#5a6c8a"/>
-<text x="915.36" y="863.5" font-size="12" fill="#5a6c8a" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">IDLE</text>
+<rect x="867.88" y="847" width="87.12" height="24" rx="12" fill="#f87171" opacity="0.16" />
+<circle cx="880.88" cy="859" r="4" fill="#f87171"/>
+<text x="890.88" y="863.5" font-size="12" fill="#f87171" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">BLOCKED</text>
 <line x1="706" y1="878" x2="955" y2="878" stroke="#26385a"/>
 <text x="706" y="904" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">MAIN TASK</text>
 <text x="706" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">VALIDASI</text>
 <text x="706" y="980" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">SOFTWARE</text>
 <text x="706" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
-<rect x="707" y="1043" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="706" y="1042" width="18" height="18" rx="5" fill="#fbbf24" opacity="1" />
+<path d="M710 1051 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="736" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Verifikasi Kode</text>
-<rect x="707" y="1073" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="706" y="1072" width="18" height="18" rx="5" fill="#fbbf24" opacity="1" />
+<path d="M710 1081 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="736" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Jalankan Tes</text>
-<rect x="707" y="1103" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="706" y="1102" width="18" height="18" rx="5" fill="#fbbf24" opacity="1" />
+<path d="M710 1111 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="736" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Laporkan Verdict</text>
 <rect x="694" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="702" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
@@ -471,9 +479,9 @@
 <rect x="102" y="86" width="36" height="6" rx="3" fill="#3a5078" opacity="1" />
 </g>
 <text x="1027" y="864" font-size="14" fill="#f472b6" font-weight="700" text-anchor="start" letter-spacing="1.6" opacity="1">05 · DEVOPS</text>
-<rect x="1213.36" y="847" width="62.64" height="24" rx="12" fill="#5a6c8a" opacity="0.16" />
-<circle cx="1226.36" cy="859" r="4" fill="#5a6c8a"/>
-<text x="1236.36" y="863.5" font-size="12" fill="#5a6c8a" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">IDLE</text>
+<rect x="1188.88" y="847" width="87.12" height="24" rx="12" fill="#fbbf24" opacity="0.16" />
+<circle cx="1201.88" cy="859" r="4" fill="#fbbf24"/>
+<text x="1211.88" y="863.5" font-size="12" fill="#fbbf24" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">WAITING</text>
 <line x1="1027" y1="878" x2="1276" y2="878" stroke="#26385a"/>
 <text x="1027" y="904" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">MAIN TASK</text>
 <text x="1027" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">DEPLOY &amp;</text>
@@ -573,11 +581,14 @@
 <text x="1348" y="942" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">RESEARCH</text>
 <text x="1348" y="980" font-size="34" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0.5" opacity="1">INTERNET</text>
 <text x="1348" y="1026" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">SUB-TASKS</text>
-<rect x="1349" y="1043" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="1348" y="1042" width="18" height="18" rx="5" fill="#c084fc" opacity="1" />
+<path d="M1352 1051 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1378" y="1056" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Search the web</text>
-<rect x="1349" y="1073" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="1348" y="1072" width="18" height="18" rx="5" fill="#c084fc" opacity="1" />
+<path d="M1352 1081 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1378" y="1086" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Verify sources</text>
-<rect x="1349" y="1103" width="16" height="16" rx="5" fill="none" stroke="#5a6c8a" stroke-width="2" opacity="1" />
+<rect x="1348" y="1102" width="18" height="18" rx="5" fill="#c084fc" opacity="1" />
+<path d="M1352 1111 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1378" y="1116" font-size="16" fill="#8597b4" font-weight="400" text-anchor="start" letter-spacing="0" opacity="1">Report findings</text>
 <rect x="1336" y="1142" width="273" height="428" rx="14" fill="#0d1628" opacity="0.55" />
 <text x="1344" y="1166" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT CONFIG</text>
@@ -659,23 +670,24 @@
 <text x="1384" y="176" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">PROJECT</text>
 <text x="1384" y="202" font-size="20" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">BABD AI Dev Team</text>
 <text x="1856" y="176" font-size="11" fill="#8597b4" font-weight="700" text-anchor="end" letter-spacing="2" opacity="1">STATUS</text>
-<rect x="1793.36" y="186" width="62.64" height="24" rx="12" fill="#5b8cff" opacity="0.16" />
-<circle cx="1806.36" cy="198" r="4" fill="#5b8cff"/>
-<text x="1816.36" y="202.5" font-size="12" fill="#5b8cff" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">DONE</text>
+<rect x="1768.88" y="186" width="87.12" height="24" rx="12" fill="#f87171" opacity="0.16" />
+<circle cx="1781.88" cy="198" r="4" fill="#f87171"/>
+<text x="1791.88" y="202.5" font-size="12" fill="#f87171" font-weight="700" text-anchor="start" letter-spacing="0.8" opacity="1">BLOCKED</text>
 <rect x="1384" y="313.5" width="472" height="96" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="343.5" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">PROJECT PROGRESS</text>
-<text x="1836" y="359.5" font-size="44" fill="#e8eef8" font-weight="800" text-anchor="end" letter-spacing="0" opacity="1">100%</text>
+<text x="1836" y="359.5" font-size="44" fill="#e8eef8" font-weight="800" text-anchor="end" letter-spacing="0" opacity="1">45%</text>
 <rect x="1404" y="377.5" width="432" height="12" rx="6" fill="#2a3c5e" opacity="1" />
-<rect x="1404" y="377.5" width="432.0" height="12" rx="6" fill="#5b8cff" opacity="1" />
+<rect x="1404" y="377.5" width="194.4" height="12" rx="6" fill="#5b8cff" opacity="1" />
 <rect x="1384.0" y="493.0" width="230.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
 <rect x="1384.0" y="509.0" width="4" height="44" rx="2" fill="#5b8cff" opacity="1" />
 <text x="1402.0" y="523.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">CURRENT GOAL</text>
-<text x="1402.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">berati</text>
-<text x="1402.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">sekarang saya bisa langsung chat…</text>
+<text x="1402.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Bot</text>
+<text x="1402.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">trading meme coin</text>
 <rect x="1626.0" y="493.0" width="230.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
 <rect x="1626.0" y="509.0" width="4" height="44" rx="2" fill="#fbbf24" opacity="1" />
 <text x="1644.0" y="523.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">ACTIVE TASK</text>
-<text x="1644.0" y="551.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Quick task</text>
+<text x="1644.0" y="545.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Perbaikan</text>
+<text x="1644.0" y="563.0" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">dan pemeriksaan</text>
 <rect x="1384" y="652.5" width="472" height="72" rx="14" fill="#1b2a45" opacity="1" />
 <text x="1404" y="680.5" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">AGENT STATUS</text>
 <text x="1404" y="708.5" font-size="17" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">0 Working / 6 Waiting</text>
@@ -707,16 +719,16 @@
 <rect x="1626.0" y="983.5" width="230.0" height="92" rx="14" fill="#f87171" opacity="0.12" />
 <rect x="1626.0" y="983.5" width="230.0" height="92" rx="14" fill="none" stroke="#f87171" stroke-width="1.5" opacity="0.7" />
 <text x="1644.0" y="1013.5" font-size="11" fill="#f87171" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">BLOCKERS</text>
-<text x="1644.0" y="1059.5" font-size="40" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">0</text>
+<text x="1644.0" y="1059.5" font-size="40" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">1</text>
 <text x="1838.0" y="1057.5" font-size="14" fill="#f87171" font-weight="700" text-anchor="end" letter-spacing="0" opacity="1">Resolve</text>
 <rect x="1384" y="1159.0" width="472" height="56" rx="14" fill="#1b2a45" opacity="1" />
 <circle cx="1412" cy="1187.0" r="12" fill="#34d399"/>
 <path d="M1406 1187.0 l4 4 l7 -8" stroke="#0d1628" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="1436" y="1183.0" font-size="11" fill="#8597b4" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">RECENT RESULT</text>
-<text x="1436" y="1203.0" font-size="16" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Answered</text>
+<text x="1436" y="1203.0" font-size="16" fill="#e8eef8" font-weight="700" text-anchor="start" letter-spacing="0" opacity="1">Masih ada masalah kecil</text>
 <rect x="1384" y="1298.5" width="472" height="64" rx="14" fill="#5b8cff" opacity="1" />
 <text x="1404" y="1323.5" font-size="11" fill="#dbe6ff" font-weight="700" text-anchor="start" letter-spacing="2" opacity="1">NEXT ACTION</text>
-<text x="1404" y="1347.5" font-size="19" fill="#ffffff" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">Review the result</text>
+<text x="1404" y="1347.5" font-size="19" fill="#ffffff" font-weight="800" text-anchor="start" letter-spacing="0" opacity="1">Perbaiki lalu periksa ulang</text>
 <path d="M1816 1330.5 h22 m-8 -8 l8 8 l-8 8" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <rect x="1384" y="1446.0" width="472" height="112" rx="14" fill="#1b2a45" opacity="1" />
 <circle cx="1414" cy="1480.0" r="10" fill="#2aabee"/>
@@ -752,18 +764,19 @@
 <text x="443.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Architect · Up next</text>
 <line x1="632.0" y1="1706" x2="668.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M662.0 1700 L670.0 1706 L662.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="682.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />
-<circle cx="720.0" cy="1706" r="18" fill="#34d399" opacity="0.35"/>
+<rect x="682.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="1" />
+<circle cx="720.0" cy="1706" r="18" fill="#34d399" opacity="1"/>
 <text x="720.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">3</text>
-<text x="752.0" y="1704" font-size="24" fill="#8597b4" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">CODE</text>
-<text x="752.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Developer · Up next</text>
+<text x="752.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">CODE</text>
+<text x="752.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">Developer · Done</text>
 <line x1="941.0" y1="1706" x2="977.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M971.0 1700 L979.0 1706 L971.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="991.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />
-<circle cx="1029.0" cy="1706" r="18" fill="#fbbf24" opacity="0.35"/>
+<rect x="987.0" y="1664" width="255.0" height="84" rx="18" fill="#fbbf24" opacity="0.18" />
+<rect x="991.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" stroke="#fbbf24" stroke-width="2" opacity="1" />
+<circle cx="1029.0" cy="1706" r="18" fill="#fbbf24" opacity="1"/>
 <text x="1029.0" y="1712" font-size="16" fill="#0d1628" font-weight="800" text-anchor="middle" letter-spacing="0" opacity="1">4</text>
-<text x="1061.0" y="1704" font-size="24" fill="#8597b4" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">TEST</text>
-<text x="1061.0" y="1726" font-size="13" fill="#8597b4" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">QA / Tester · Up next</text>
+<text x="1061.0" y="1704" font-size="24" fill="#e8eef8" font-weight="800" text-anchor="start" letter-spacing="1" opacity="1">TEST</text>
+<text x="1061.0" y="1726" font-size="13" fill="#fbbf24" font-weight="600" text-anchor="start" letter-spacing="0" opacity="1">QA / Tester · In progress</text>
 <line x1="1250.0" y1="1706" x2="1286.0" y2="1706" stroke="#8597b4" stroke-width="2.5" stroke-linecap="round"/>
 <path d="M1280.0 1700 L1288.0 1706 L1280.0 1712" stroke="#8597b4" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 <rect x="1300.0" y="1668" width="247.0" height="76" rx="14" fill="#1b2a45" opacity="0.6" />

@@ -1,14 +1,14 @@
 {
   "project": {
-    "name": "Bot Trading Meme Coin (kardel)",
+    "name": "Kardel (Solana Sniper Bot)",
     "status": "ACTIVE",
-    "progress": 45,
-    "current_goal": "Perbaikan dokumentasi + verifikasi",
-    "active_task": "Menjalankan goal baru",
+    "progress": 20,
+    "current_goal": "Verifikasi dan rapikan dokumentasi proyek",
+    "active_task": "DESIGN",
     "approval_needed": 0,
     "blockers": 0,
-    "recent_result": "QA round 3 - loop diperbaiki (qa_policy)",
-    "next_action": "Tunggu goal selesai",
+    "recent_result": "fix(projects): qa_policy now carried through normalize()",
+    "next_action": "Tunggu run selesai",
     "require_approval": [
       "deploy"
     ],
