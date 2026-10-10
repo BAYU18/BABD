@@ -1155,6 +1155,85 @@ class Dashboard:
         names = {a["id"]: a.get("short_name") or a["name"] for a in self.load()["agents"]}
         return reports.markdown(state, messages, names)
 
+    # Labels for the downloadable .md artifacts a run leaves behind. Order matters:
+    # this is the order they appear in the dashboard's "Lampiran" section.
+    ARTIFACT_LABELS = [
+        ("00-task.md", "Tugas asli (brief)"),
+        ("01-plan.md", "Rencana (Team Lead)"),
+        ("01-plan.json", "Rencana — data (JSON)"),
+        ("01-route.md", "Rute tugas"),
+        ("01-answer.md", "Jawaban Team Lead"),
+        ("02-architect.md", "Desain (Architect)"),
+        ("03-developer.md", "Implementasi (Developer)"),
+        ("03-direct.md", "Hasil langsung (Developer)"),
+        ("03-qa-test-plan.md", "Rencana tes (QA)"),
+        ("03-devops-prep.md", "Persiapan deploy (DevOps)"),
+        ("04-qa-round0.md", "Laporan QA — putaran 0"),
+        ("05-devops.md", "Deploy (DevOps)"),
+        ("99-ceo-report.json", "Laporan CEO (JSON)"),
+    ]
+
+    @staticmethod
+    def _artifact_kind(name):
+        """Coarse role of an artifact, for badges in the UI."""
+        low = name.lower()
+        if low.startswith("00-"):
+            return "task"
+        if "plan" in low or low.startswith("01-"):
+            return "plan"
+        if "architect" in low or "design" in low:
+            return "design"
+        if "qa" in low or "test" in low:
+            return "qa"
+        if "devops" in low or "deploy" in low:
+            return "deploy"
+        if "developer" in low or "direct" in low:
+            return "code"
+        if "proposal" in low:
+            return "proposal"
+        if "report" in low:
+            return "report"
+        return "doc"
+
+    def attachments(self, run_id):
+        """List every downloadable .md/.json artifact a run produced (the "Lampiran" for a task)."""
+        d = os.path.join(flow.RUNS_DIR, os.path.basename(run_id))
+        if not os.path.isdir(d):
+            raise ApiError(404, f"no run {run_id!r}")
+        present = {n: lab for n, lab in self.ARTIFACT_LABELS if os.path.isfile(os.path.join(d, n))}
+        # Any other top-level .md a run wrote itself (e.g. a proposal it named), except report.md.
+        for n in sorted(os.listdir(d)):
+            if n.endswith(".md") and n not in present and n != "report.md" and not n.startswith("."):
+                present[n] = n[:-3].replace("-", " ").replace("_", " ").strip().title()
+        out = []
+        for n in sorted(present, key=lambda x: (os.path.basename(x) not in [a[0] for a in self.ARTIFACT_LABELS], x)):
+            p = os.path.join(d, n)
+            try:
+                size = os.path.getsize(p)
+                mtime = os.path.getmtime(p)
+            except OSError:
+                continue
+            out.append({"name": n, "label": present[n], "kind": self._artifact_kind(n),
+                        "bytes": size, "modified_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(mtime))})
+        return {"run": os.path.basename(run_id), "attachments": out}
+
+    # run files that are internal bookkeeping, not deliverables for the CEO
+    INTERNAL_FILES = {"state.json", "messages.jsonl", "events.jsonl", "usage.json"}
+
+    def attachment_file(self, run_id, name):
+        """Return (text, filename) for one run artifact, guarding against path traversal."""
+        run = os.path.basename(run_id)
+        name = os.path.basename(name or "")
+        if not name or name.startswith(".") or name in self.INTERNAL_FILES:
+            raise ApiError(400, "invalid attachment name")
+        if not name.endswith((".md", ".json", ".txt")):
+            raise ApiError(400, "unsupported attachment type")
+        path = os.path.join(flow.RUNS_DIR, run, name)
+        if not os.path.isfile(path):
+            raise ApiError(404, f"no attachment {name!r} in run {run!r}")
+        with open(path, encoding="utf-8") as f:
+            return f.read(), f"{run}-{name}"
+
     def board(self, history=30, q=None):
         """Every task (queued, running, recent) and what each agent is doing, for the task board."""
         cfg = self.load()
@@ -1521,6 +1600,13 @@ def make_handler(dash, token, allowed_hosts, security=None):
                         raise ApiError(404, "this task has no task document")
                     with open(path, encoding="utf-8") as f:
                         return {"text": f.read()}
+                if method == "GET" and parts[2:] == ["attachments"]:
+                    return d.attachments(parts[1])
+                if method == "GET" and parts[2:] == ["attachment"]:
+                    name = parse_qs(urlparse(self.path).query).get("name", [""])[0]
+                    text, filename = d.attachment_file(parts[1], name)
+                    return self.send_text(text, "text/markdown" if filename.endswith(".md") else "application/json",
+                                          filename)
                 if method == "POST" and parts[2:] == ["approve"]:
                     b = self.body()
                     return d.resolve_approval(parts[1], b.get("approved"), b.get("note", ""))

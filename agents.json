@@ -1,25 +1,25 @@
 {
   "project": {
-    "name": "Kardel (Solana Sniper Bot)",
-    "status": "ACTIVE",
-    "progress": 20,
-    "current_goal": "Verifikasi dan rapikan dokumentasi proyek",
-    "active_task": "DESIGN",
+    "name": "BABD AI Dev Team",
+    "status": "DONE",
+    "progress": 100,
+    "current_goal": "saya tadi bertanya soal matematika apa?",
+    "active_task": "Quick task",
     "approval_needed": 0,
     "blockers": 0,
-    "recent_result": "fix(projects): qa_policy now carried through normalize()",
-    "next_action": "Tunggu run selesai",
+    "recent_result": "Answered",
+    "next_action": "Review the result",
     "require_approval": [
       "deploy"
     ],
     "max_fix_rounds": 2,
-    "max_continue_rounds": 2,
+    "max_continue_rounds": 3,
     "require_evidence": true,
     "max_parallel_tasks": 3,
     "parallel_prep": true,
     "fast_lane": true,
     "use_projects": true,
-    "default_project": "kardel",
+    "default_project": "default",
     "auto_resume": true,
     "retry": {
       "max_attempts": 3,
@@ -68,7 +68,7 @@
       "daily_report_hour": 18
     },
     "self_test_command": "python -m pytest -q",
-    "max_peer_questions": 12,
+    "max_peer_questions": 6,
     "max_questions": 3,
     "qa_policy": {
       "treat_flaky_as_pass": true,
@@ -110,12 +110,9 @@
       "id": "babd-self",
       "name": "BABD (self)",
       "repo": "git@github.com:BAYU18/BABD.git",
-      "branch": "",
       "merge": "on_pass",
       "push": true,
-      "test_command": "python3 -m pytest -q",
-      "notes": "Repo BABD sendiri: agent boleh mengubah kode BABD di worktree terisolasi; perubahan masuk instalasi hanya lewat approval CEO + merge.",
-      "github_repo": "BAYU18/BABD"
+      "test_command": "python3 -m pytest -q"
     },
     {
       "id": "kardel",
@@ -124,45 +121,15 @@
       "branch": "main",
       "merge": "on_approval",
       "push": false,
-      "test_command": "bash -c \"shopt -s globstar; node --test tests/**/*.test.js\"",
-      "notes": "Repo BAYU18/kardel - Solana sniper/MEV bot (Node.js >=20, sudah install Node 20.20.2). Agent kerja di worktree terisolasi; merge ke main hanya lewat approval CEO. Deploy key: babd-github-account@serverbot. Test: ~816/820 pass (4 fail pre-existing: ML/Python opsional). QA policy: flaky network failures tidak memaksa FAIL (treat_flaky_as_pass=true, max_fix_rounds=4).",
-      "qa_policy": {
-        "treat_flaky_as_pass": true,
-        "flaky_patterns": [
-          "network",
-          "socket",
-          "ECONNREFUSED",
-          "ECONNRESET",
-          "ETIMEDOUT",
-          "ENOTFOUND",
-          "EAI_AGAIN",
-          "fetch failed",
-          "timeout",
-          "timed out",
-          "getaddrinfo",
-          "connection refused",
-          "connection reset",
-          "Temporary failure in name resolution",
-          "rate limit",
-          "liveExecutor",
-          "jitoBundle",
-          "jupiter_quote",
-          "sell() quote network",
-          "sell() with no keypair",
-          "sell() price impact",
-          "predict_momentum",
-          "train_momentum",
-          "HAS_ML"
-        ],
-        "allow_failure_files": [
-          "fase_p0xl_no_price_pnl",
-          "fase_p0xq_label_quality",
-          "positionMonitor"
-        ],
-        "baseline_fail_count": 12,
-        "note": "Suite kardel ~10-12 kegagalan pre-existing/flaky: (a) jalur jaringan (executorV2 sell, jitoBundle, liveExecutor), (b) 4 file SqliteError no such table positions, (c) ML/Python opsional (predict/train_momentum). Semua terbukti TIDAK berubah vs baseline 4470a46. Regresi NYATA tetap -> FAIL."
-      },
-      "max_fix_rounds": 4
+      "test_command": "bash -c \"shopt -s globstar; node --test tests/**/*.test.js\""
+    },
+    {
+      "id": "dotbox",
+      "name": "dotbox",
+      "repo": "git@github-dotbox:BAYU18/dotbox.git",
+      "branch": "master",
+      "merge": "on_pass",
+      "push": true
     }
   ],
   "agents": [
@@ -204,8 +171,8 @@
           "terminal",
           "file"
         ],
-        "max_turns": 30,
-        "timeout_sec": 1200,
+        "max_turns": 60,
+        "timeout_sec": 1800,
         "yolo": false
       },
       "permissions": "plan",
@@ -288,8 +255,8 @@
           "web",
           "file"
         ],
-        "max_turns": 30,
-        "timeout_sec": 900,
+        "max_turns": 60,
+        "timeout_sec": 1800,
         "yolo": false
       },
       "permissions": "plan",
@@ -359,7 +326,9 @@
         "effort": "high"
       },
       "harness": {
-        "type": "hermes_local"
+        "type": "hermes_local",
+        "max_turns": 80,
+        "timeout_sec": 1800
       },
       "permissions": "workspace",
       "sandbox": "none",
@@ -400,7 +369,7 @@
       "name": "QA / TESTER",
       "short_name": "QA / Tester",
       "color": "#fbbf24",
-      "status": "blocked",
+      "status": "idle",
       "main_task": [
         "VALIDASI",
         "SOFTWARE"
@@ -433,8 +402,8 @@
           "terminal",
           "file"
         ],
-        "max_turns": 30,
-        "timeout_sec": 1200,
+        "max_turns": 60,
+        "timeout_sec": 1800,
         "yolo": false
       },
       "permissions": "workspace",
@@ -474,7 +443,7 @@
       "name": "DEVOPS",
       "short_name": "DevOps",
       "color": "#f472b6",
-      "status": "waiting",
+      "status": "idle",
       "main_task": [
         "DEPLOY &",
         "OPERASIKAN"
@@ -499,8 +468,8 @@
           "terminal",
           "file"
         ],
-        "max_turns": 30,
-        "timeout_sec": 1200,
+        "max_turns": 60,
+        "timeout_sec": 1800,
         "yolo": false
       },
       "permissions": "workspace",
@@ -570,11 +539,12 @@
         "args": [
           "--json"
         ],
-        "timeout_sec": 600,
+        "timeout_sec": 900,
         "install": "scripts/researcher_setup.sh",
         "env": {
           "RESEARCHER_ALLOW_DUCKDUCKGO": "1"
-        }
+        },
+        "max_turns": 50
       },
       "permissions": "workspace",
       "sandbox": "none",
@@ -616,12 +586,12 @@
     {
       "step": "CODE",
       "owner": "developer",
-      "state": "done"
+      "state": "todo"
     },
     {
       "step": "TEST",
       "owner": "qa",
-      "state": "active"
+      "state": "todo"
     },
     {
       "step": "DEPLOY",

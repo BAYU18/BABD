@@ -1301,6 +1301,57 @@ async function downloadReport(runId) {
   } catch (err) { toast(err.message, "bad"); }
 }
 
+async function downloadAttachment(runId, name) {
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/attachment?name=${encodeURIComponent(name)}`, { headers: { "X-BABD-Token": token } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement("a"), { href: url, download: `${runId}-${name}` });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+const ART_KIND_META = {
+  task:     { icon: "📥", label: "Tugas" },
+  plan:     { icon: "🗺️", label: "Rencana" },
+  design:   { icon: "📐", label: "Desain" },
+  code:     { icon: "💻", label: "Kode" },
+  qa:       { icon: "🧪", label: "QA" },
+  deploy:   { icon: "🚀", label: "Deploy" },
+  proposal: { icon: "📑", label: "Proposal" },
+  report:   { icon: "📊", label: "Laporan" },
+  doc:      { icon: "📄", label: "Dokumen" },
+};
+
+function fmtBytes(n) {
+  if (!n && n !== 0) return "";
+  return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+}
+
+function attachmentsBlock(runId, atts) {
+  if (!atts?.length) return "";
+  const rows = atts.map((a) => {
+    const m = ART_KIND_META[a.kind] || ART_KIND_META.doc;
+    const ext = (a.name.split(".").pop() || "").toLowerCase();
+    const canPreview = ext === "md" || ext === "json";
+    return `<li class="att-item">
+      <span class="att-icon" aria-hidden="true">${m.icon}</span>
+      <span class="att-body">
+        <span class="att-label">${esc(a.label)}</span>
+        <span class="muted small">${esc(m.label)} · <code>${esc(a.name)}</code> · ${esc(fmtBytes(a.bytes))} · ${esc(fmtWhen(a.modified_at))}</span>
+      </span>
+      <span class="att-actions">
+        ${canPreview ? `<button type="button" class="btn small ghost" data-att-view="${esc(runId)}|${esc(a.name)}" title="Pratinjau isi berkas">👁 Pratinjau</button>` : ""}
+        <button type="button" class="btn small" data-att-dl="${esc(runId)}|${esc(a.name)}" title="Unduh berkas .md ini">⬇ Unduh</button>
+      </span>
+    </li>`;
+  }).join("");
+  return `<h3>Lampiran (${atts.length})</h3>
+    <p class="muted small" style="margin:-4px 0 8px">Rencana, desain, laporan, dan proposal dari setiap agen — tersimpan sebagai berkas <code>.md</code> yang bisa diunduh atau dipratinjau.</p>
+    <ul class="att-list">${rows}</ul>`;
+}
+
 let searchTimer = null;
 $("#taskSearch").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
@@ -1770,6 +1821,15 @@ async function viewDocument(runId) {
   } catch (err) { toast(err.message, "bad"); }
 }
 
+async function previewAttachment(runId, name) {
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/attachment?name=${encodeURIComponent(name)}`, { headers: { "X-BABD-Token": token } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const text = await res.text();
+    openModal(`${name} · ${runId}`, `<pre class="doc-view">${esc(text)}</pre>`);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
 const projectName = (id) => (S.projects || []).find((p) => p.id === id)?.name || id;
 
 function evidenceLine(r) {
@@ -1953,7 +2013,13 @@ async function loadReports() {
 async function openReport(id, quiet = false) {
   repId = id;
   for (const b of document.querySelectorAll("#repItems [data-rep]")) b.classList.toggle("on", b.dataset.rep === id);
-  try { renderReport(await api("GET", `runs/${encodeURIComponent(id)}`)); }
+  try {
+    const [run, att] = await Promise.all([
+      api("GET", `runs/${encodeURIComponent(id)}`),
+      api("GET", `runs/${encodeURIComponent(id)}/attachments`).catch(() => ({ attachments: [] })),
+    ]);
+    renderReport(run, att.attachments || []);
+  }
   catch (err) { if (!quiet) toast(err.message, "bad"); }
 }
 
@@ -1963,7 +2029,7 @@ function sumUsage(steps) {
   return u;
 }
 
-function renderReport(r) {
+function renderReport(r, atts = []) {
   const steps = r.steps || [];
   const rep = r.report || {};
   const startMs = ms(r.started_at), endMs = isLive(r) ? serverNow() : ms(r.finished_at);
@@ -2003,6 +2069,7 @@ function renderReport(r) {
       ${tile("Usage", esc(usageText(r.usage) || "—"), r.usage?.calls ? `${r.usage.calls} LLM call(s)` : "")}
     </div>
     ${rep.summary ? `<h3>Laporan ke CEO</h3><div class="rep-summary">${esc(rep.summary)}</div>` : ""}
+    ${attachmentsBlock(r.id, atts)}
     ${(rep.blocker_list || r.blockers || []).length ? `<h3>Hambatan</h3><ul>${(rep.blocker_list || r.blockers).map((b) => `<li class="bad">${esc(b)}</li>`).join("")}</ul>` : ""}
     <h3>Stages</h3><div class="stepper">${S.flow.stages.map((s) => `<div class="step ${esc(r.stages?.[s.key] || "todo")}"><i></i>${esc(s.label)}</div>`).join("")}</div>
     ${packagesBlock(r)}
@@ -2032,6 +2099,10 @@ $("#repStatus").addEventListener("change", loadReports);
 $("#repMain").addEventListener("click", async (e) => {
   const lg = e.target.closest("[data-log-of]");
   if (lg) { logAgent = lg.dataset.logOf; setView("logs"); return; }
+  const dl = e.target.closest("[data-att-dl]");
+  if (dl) { const [rid, name] = dl.dataset.attDl.split("|"); return downloadAttachment(rid, name); }
+  const pv = e.target.closest("[data-att-view]");
+  if (pv) { const [rid, name] = pv.dataset.attView.split("|"); return previewAttachment(rid, name); }
   const b = e.target.closest("[data-rep-act]");
   if (!b || !repId) return;
   const act = b.dataset.repAct;

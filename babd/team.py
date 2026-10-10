@@ -10,6 +10,43 @@ from . import resilience, skill_evolution, skillpacks
 from .harness import create_harness
 
 
+# Every agent gets this. It teaches the team to write the plan/proposal/report as a
+# human-quality Markdown file in the run's attachment folder, so the CEO can read and
+# download it from the dashboard's "Lampiran" section — not just a raw JSON blob.
+DOC_QUALITY_INSTRUCTION = """
+## Dokumen untuk CEO (lampiran .md)
+
+Selain jawaban chat kamu, tulis dokumen yang enak dibaca manusia dalam Bahasa Indonesia dan
+simpan ke folder lampiran tugas ini (variabel lingkungan `BABD_RUN_DIR`, sama dengan
+`BABD_ATTACHMENTS_DIR`). Dokumen inilah yang muncul di tab **Reports → Lampiran** dan bisa
+diunduh CEO, jadi perlakukan seperti tulisan untuk atasan — bukan dump log atau JSON mentah.
+
+Tulis berkas dengan `write_file` / shell ke `$BABD_RUN_DIR/<nama>.md`. Nama yang dikenali
+dashboard (pakai ini bila cocok, kalau tidak pakai nama deskriptif seperti
+`PROPOSAL-<topik>.md`):
+
+- Team Lead: `01-plan.md` (rencana kerja) — dan `PROPOSAL-<topik>.md` bila tugasnya menghasilkan proposal.
+- Architect: `02-architect.md` (desain/spesifikasi).
+- Developer: `03-developer.md` (ringkasan implementasi + cara menjalankan).
+- QA: `03-qa-test-plan.md` dan `04-qa-round0.md` (laporan QA).
+- DevOps: `03-devops-prep.md` dan `05-devops.md` (persiapan & hasil deploy).
+
+Aturan menulis gaya humanis (wajib):
+
+1. **Judul + ringkasan dulu.** Mulai dengan `# <Judul jelas>` lalu 2–4 kalimat ringkasan
+   ("TL;DR") yang bisa dipahami tanpa membaca sisanya.
+2. **Struktur bernavigasi.** Pakai heading `##`, daftar, tabel, dan blok kode berpagar
+   (``` ). Satu ide per paragraf. Jangan dinding teks.
+3. **Kalimat utuh, bahasa manusia.** Hindari jargon berlebihan, hindari menempel JSON/log mentah.
+   Bila harus menampilkan data, ringkas dulu lalu lampirkan di blok kode.
+4. **Sebutkan keputusan dan alasannya** ("kami memilih X karena Y"), bukan hanya langkah.
+5. **Tutup dengan langkah berikutnya** dan pertanyaan terbuka (bila ada) yang butuh keputusan CEO.
+6. **Jujur soal status.** Katakan apa yang sudah selesai, apa yang belum, dan apa yang menghambat.
+7. **Tanpa rahasia.** Jangan pernah menulis API key, token, atau kata sandi di dokumen.
+"""
+
+
+
 class Agent:
     def __init__(self, cfg, brain=None, project=None):
         self.cfg = cfg
@@ -53,6 +90,7 @@ class Agent:
         section = skillpacks.system_section(self.skill_packs, agent_id=self.id, mode=mode)
         if section:
             lines.append("\n" + section)
+        lines.append(DOC_QUALITY_INSTRUCTION)
         lines.append("\nBekerja secara konkret: hasilkan desain, kode, tes atau langkah yang sebenarnya, "
                      "bukan deskripsi tentang apa yang akan kamu lakukan. Katakan dengan jelas apa yang masih "
                      "kurang atau terhambat.")

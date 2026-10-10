@@ -44,6 +44,49 @@ ROLES = ("lead", "architect", "developer", "qa", "devops", "researcher")
 CORE_ROLES = ROLES[:5]  # every agents.json must have these; extra roles (researcher) are optional
 
 
+def plan_markdown(goal, plan, raw):
+    """Render the Team Lead's plan as a document the CEO can read and download.
+
+    The Team Lead answers with a JSON object (plan_size / plan_summary / assignments /
+    work_packages). That JSON is fine for the orchestrator but unreadable for a person, so
+    turn it into a proper Markdown plan; if parsing failed, fall back to the raw text.
+    """
+    if not isinstance(plan, dict) or not plan:
+        return f"# Rencana: {goal}\n\n{str(raw or '').strip()}\n"
+    out = [f"# Rencana: {goal}", ""]
+    summary = str(plan.get("plan_summary") or "").strip()
+    if summary:
+        out += ["## Ringkasan", "", summary, ""]
+    size = str(plan.get("plan_size") or "").strip()
+    if size:
+        out += [f"**Ukuran tugas:** {size}", ""]
+    assignments = plan.get("assignments")
+    if isinstance(assignments, dict) and assignments:
+        out += ["## Pembagian tugas", "", "| Agen | Tugas |", "| --- | --- |"]
+        for role, task in assignments.items():
+            cell = str(task).replace("|", "\\|").strip()
+            out.append(f"| {role} | {cell} |")
+        out.append("")
+    packages = plan.get("work_packages")
+    if isinstance(packages, list) and packages:
+        out += ["## Paket kerja", "", "| # | Paket | Agen | Bergantung pada |", "| --- | --- | --- | --- |"]
+        for i, p in enumerate(packages, 1):
+            if not isinstance(p, dict):
+                continue
+            depends = p.get("depends_on")
+            dep = ", ".join(str(d) for d in depends) if isinstance(depends, list) and depends else "—"
+            out.append(f"| {i} | {str(p.get('title') or p.get('id') or '').strip()} | "
+                       f"{str(p.get('agent') or '').strip()} | {dep} |")
+        out.append("")
+        for i, p in enumerate(packages, 1):
+            if not isinstance(p, dict):
+                continue
+            out += [f"### {i}. {str(p.get('title') or p.get('id') or 'Paket').strip()} "
+                    f"({str(p.get('agent') or '').strip()})", "", str(p.get("task") or "").strip(), ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
+
 def specialist_roles(team):
     """The team's specialist ids, in ROLES order, skipping roles missing from this agents.json.
 
@@ -247,14 +290,87 @@ def over_budget(usage, tokens_limit, cost_limit):
 
 
 def extract_json(text):
-    """First JSON object in a model reply (tolerates ```json fences and surrounding prose)."""
-    m = re.search(r"\{.*\}", text or "", re.S)
-    if not m:
+    """First JSON object in a model reply (tolerates ```json fences, prose, and trailing junk)."""
+    t = text or ""
+    if not t.strip():
         return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+    # Strip markdown code fences first: the model often wraps its JSON in ```json ... ```
+    t = re.sub(r"```(?:json|JSON)?\s*", "", t)
+    t = t.replace("```", "")
+    # Collect every balanced {...} region (models sometimes emit two objects, or trail prose).
+    candidates = []
+    depth = 0
+    start = None
+    in_str = False
+    esc = False
+    for i, ch in enumerate(t):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    candidates.append(t[start:i + 1])
+                    start = None
+    # Prefer a candidate that actually carries report fields.
+    for blob in sorted(candidates, key=len, reverse=True):
+        try:
+            obj = json.loads(blob)
+        except json.JSONDecodeError:
+            # Tolerate raw newlines inside strings (common LLM slip).
+            try:
+                obj = json.loads(blob.replace("\n", " "))
+            except json.JSONDecodeError:
+                continue
+        if isinstance(obj, dict) and ("summary" in obj or "current_goal" in obj or "blocker_list" in obj):
+            return obj
+    # Fall back to the first parseable object of any shape.
+    for blob in sorted(candidates, key=len, reverse=True):
+        try:
+            return json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def synthesize_summary(goal, verdict, facts, outputs, blockers=None):
+    """Plain-language CEO summary built from REAL facts, used when the model reply is not JSON.
+
+    Never ships raw model prose (which can be a mid-thought fragment like
+    "The task is NOT confirmed finished"). Prefers a conclusion-looking sentence the model
+    wrote, and otherwise assembles one from the run's verified outcome.
+    """
+    verdict = (verdict or "").upper()
+    text = (outputs or "").strip()
+    picked = ""
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        s = sent.strip()
+        if not (20 <= len(s) <= 300):
+            continue
+        low = s.lower()
+        if any(bad in low for bad in ("not confirmed", "belum selesai", "tidak selesai",
+                                      "not finished", "not complete", "unclear")):
+            continue
+        if re.search(r"\b(sudah|telah|berhasil|selesai|done|complete|passed|lulus|pass)\b", low):
+            picked = s
+            break
+    lead = picked or ("Tim sudah menyelesaikan tugas ini dan hasilnya sudah diperiksa."
+                      if verdict == "PASS" else
+                      "Tim sudah mengerjakan tugas ini, tetapi pemeriksaan akhir belum lulus.")
+    tail = (" Hasil pemeriksaan QA: " + verdict + ".") if verdict in ("PASS", "FAIL") else ""
+    return (lead if lead.endswith((".", "!", "?")) else lead + ".") + tail
 
 
 def parse_verdict(text):
@@ -698,9 +814,16 @@ class Run:
         # tag every child program with the run id, so Stop can kill exactly this run's programs
         # even when they were not in the in-memory registry (the anti-orphan guarantee).
         agent.harness.extra_env["BABD_RUN_ID"] = self.id
+        # where to drop human-readable .md deliverables (plan/proposal/report) so the
+        # dashboard can list and download them as task attachments ("Lampiran").
+        agent.harness.extra_env["BABD_RUN_DIR"] = self.dir
+        agent.harness.extra_env["BABD_ATTACHMENTS_DIR"] = self.dir
         if getattr(agent, "fallback", None):
             try:
-                agent.fallback_harness().extra_env["BABD_RUN_ID"] = self.id
+                fb = agent.fallback_harness()
+                fb.extra_env["BABD_RUN_ID"] = self.id
+                fb.extra_env["BABD_RUN_DIR"] = self.dir
+                fb.extra_env["BABD_ATTACHMENTS_DIR"] = self.dir
             except Exception:
                 pass
         try:
@@ -1079,7 +1202,10 @@ class Run:
         with self.lock:
             self.state["plan_size"] = plan_size
         self.emit("plan_size", {"plan_size": plan_size})
-        self.write("01-plan.md", plan_text)
+        # 01-plan.md is what the CEO downloads, so write it as a readable document, not the raw
+        # JSON the orchestrator parses. The JSON itself still goes to 01-plan.json for the parser.
+        self.write("01-plan.md", plan_markdown(goal, plan, plan_text))
+        self.write("01-plan.json", plan_text)
         self.emit("plan", {"path": os.path.join(self.dir, "01-plan.md"), "goal": goal, "summary": summary})
         self.agent("lead", "waiting", "Coordinate results (waits for the team)")
         self.finish_stage("plan")
@@ -1232,7 +1358,9 @@ class Run:
             "- JANGAN pernah sertakan: kode, nama file, hash commit, nama branch, jumlah tes, perintah git,\n"
             "  nama skill, nama tool, atau detail teknis apa pun. Itu semua milik log tim, bukan di sini.\n"
             "- JANGAN jelaskan prosesmu dan JANGAN tulis bagian atau judul. Hanya paragrafnya.\n"
-            "Jawab hanya dengan objek JSON:\n"
+            "Jawab HANYA dengan SATU objek JSON. Tanpa penjelasan, tanpa kalimat pembuka, "
+            "tanpa pagar ```, tanpa teks apa pun sebelum atau sesudah JSON. "
+            "Karakter pertama jawaban HARUS '{' dan karakter terakhir HARUS '}'.\n"
             '{"current_goal": "<maks 4 kata, bahasa sederhana>", '
             '"active_task": "<maks 3 kata, bahasa sederhana>", '
             '"recent_result": "<maks 4 kata, bahasa sederhana>", '
@@ -1243,7 +1371,11 @@ class Run:
             skills_for="report_blocked" if self.state["blockers"] else "report",
             fact=lambda out: f"CEO report for '{one_line(goal, 80)}' ({facts}): "
                              f"{one_line((extract_json(out) or {}).get('summary') or out, 240)}"))
-        rep = extract_json(report_text) or {"summary": report_text}
+        rep = extract_json(report_text)
+        if not isinstance(rep, dict) or not rep:
+            # The model returned prose instead of JSON. Never ship that prose raw: it can be a
+            # mid-thought fragment ("The task is NOT confirmed finished"). Build a factual summary.
+            rep = {"summary": synthesize_summary(goal, verdict, facts, report_text)}
         rep.update(self._facts(verdict, bool(deploy)))
         if rep.get("summary"):
             rep["summary"] = plain_summary(rep["summary"], max_sentences=3)
