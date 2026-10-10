@@ -8,7 +8,7 @@ CEO bot (`project.ceo_telegram`): the CEO's line to the team.
   - /cancel <task id>        -> stop a task, or take it out of the queue
   - /resume <task id>        -> continue a failed, stopped or interrupted task
   - approvals arrive with Approve / Reject buttons; finished, failed and blocked tasks are reported
-    (`notify`: "Approvals", "Blockers", "Reports", "Daily Report")
+    (`notify`: "Plans", "Approvals", "Blockers", "Reports", "Daily Report")
 
 Agent bots (`agents[].telegram`): chat with that one agent, like the dashboard's Chat.
 
@@ -22,6 +22,7 @@ agents.json. Chats that may receive notifications are kept in .babd/telegram.jso
 import html
 import json
 import os
+import random
 import threading
 import time
 import urllib.error
@@ -33,7 +34,7 @@ from .log import log
 API_BASE = os.environ.get("BABD_TELEGRAM_API", "https://api.telegram.org")
 STATE_PATH = os.path.join(ROOT, ".babd", "telegram.json")
 MAX_TEXT = 4000
-NOTIFY = ("Progress", "Approvals", "Blockers", "Reports", "Daily Report")
+NOTIFY = ("Progress", "Plans", "Approvals", "Blockers", "Reports", "Daily Report")
 LOG_EVERY = 3          # seconds between live-log updates
 LOG_MINUTES = 10       # a live log follows the agent this long, then stops (send /log again)
 CARD_EVERY = 3         # seconds between updates of a task's progress card
@@ -273,6 +274,49 @@ class API:
     def send_html(self, chat_id, text, buttons=None, keyboard=None):
         return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True,
                          reply_markup={"inline_keyboard": buttons} if buttons else keyboard)
+
+    def send_document(self, chat_id, path, caption=None, timeout=60):
+        """Send a file (e.g. a plan .md) to the chat as a Telegram document. Builds the multipart
+        body by hand so there is no dependency on requests. Returns the sent message."""
+        import mimetypes
+        name = os.path.basename(path)
+        if not os.path.isfile(path):
+            raise TelegramError(f"file not found: {path}")
+        with open(path, "rb") as fh:
+            content = fh.read()
+        ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        boundary = "----babd" + "".join(random.choice("0123456789abcdef") for _ in range(16))
+        parts = []
+
+        def field(name_, value):
+            parts.append((f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name_}\"\r\n\r\n"
+                          + str(value) + "\r\n").encode())
+
+        field("chat_id", chat_id)
+        if caption:
+            field("caption", caption)
+            field("parse_mode", "HTML")
+        parts.append((f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; "
+                      f"filename=\"{name}\"\r\nContent-Type: {ctype}\r\n\r\n").encode())
+        parts.append(content)
+        parts.append(f"\r\n--{boundary}--\r\n".encode())
+        body = b"".join(parts)
+        req = urllib.request.Request(f"{self.base}/bot{self.token}/sendDocument", data=body,
+                                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                out = json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            try:
+                out = json.loads(e.read() or b"{}")
+            except ValueError:
+                out = {}
+            raise TelegramError(f"sendDocument: HTTP {e.code} {out.get('description', '')}".strip()) from e
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            raise TelegramError(f"sendDocument: {getattr(e, 'reason', e)}") from e
+        if not out.get("ok"):
+            raise TelegramError(f"sendDocument: {out.get('description', 'failed')}")
+        return out.get("result")
 
     def edit_html(self, chat_id, message_id, text, buttons=None):
         try:
@@ -795,6 +839,65 @@ class CeoBot(Bot):
             except TelegramError as e:
                 log(f"telegram ceo: could not notify {chat}: {e}", "telegram")
 
+    def _send_plan(self, data):
+        """Send the Team Lead's plan file (01-plan.md) to every CEO chat as a document."""
+        path = data.get("path")
+        goal = data.get("goal") or ""
+        summary = (data.get("summary") or "").strip()
+        if not self.chats:
+            return
+        if path and os.path.isfile(path):
+            caption = f"📋 <b>Plan</b> — {html.escape(_clip(goal, 120))}"
+            if summary:
+                caption += f"\n{html.escape(_clip(summary, 500))}"
+            sent = False
+            for chat in list(self.chats):
+                try:
+                    self.api.send_document(chat, path, caption=caption)
+                    sent = True
+                except TelegramError as e:
+                    log(f"telegram ceo: could not send the plan to {chat}: {e}", "telegram")
+            if sent:
+                return
+        # fallback: no file (or every upload failed) -> send the plan as text
+        if summary:
+            self.broadcast(f"📋 Plan — {goal}\n{summary}")
+
+    def _push_note(self, data):
+        """A short note when a task's work is committed/pushed (branch + commit + PR)."""
+        commit = str(data.get("commit") or "")
+        short = commit[:8]
+        bits = []
+        if data.get("pushed"):
+            bits.append("pushed")
+        if data.get("merged"):
+            bits.append("merged")
+        state = ", ".join(bits) or "committed"
+        text = f"📦 {state} · branch {data.get('branch', '-')} · <code>{html.escape(short)}</code>"
+        pr = data.get("pr") or {}
+        if pr.get("url"):
+            text += f"\nPR #{pr.get('number')}: {html.escape(str(pr.get('url')))}"
+        if data.get("note"):
+            text += f"\n{html.escape(_clip(str(data['note']), 300))}"
+        for chat in list(self.chats):
+            try:
+                self.api.send_html(chat, text)
+            except TelegramError as e:
+                log(f"telegram ceo: could not notify {chat}: {e}", "telegram")
+
+    def _stage_note(self, data):
+        """One short line when a stage finishes (kept quiet: only terminal stages and the CEO gate)."""
+        stage = data.get("stage")
+        result = data.get("result") or "done"
+        if stage not in ("code", "test", "approval", "deploy", "report") or result not in ("done", "rejected", "failed"):
+            return
+        if self.cards:  # a live progress card already shows this; keep the chat quiet
+            return
+        label = {"code": "CODE", "test": "TEST", "approval": "APPROVAL", "deploy": "DEPLOY",
+                 "report": "REPORT"}.get(stage, stage.upper())
+        icon = {"done": "✅", "rejected": "❌", "failed": "⚠️"}.get(result, "•")
+        self.broadcast(f"{icon} Stage {label} {result} (task {data.get('run', '-')})")
+
     def notify_loop(self):
         import queue
         while not self.stopping.is_set():
@@ -913,6 +1016,12 @@ class CeoBot(Bot):
     def on_event(self, kind, data):
         if kind == "run" and data.get("summary"):
             self.track(data["summary"], final=data.get("event") == "finished")
+        if kind == "plan" and "Plans" in self.notify:
+            self._send_plan(data)
+        if kind == "stage" and "Progress" in self.notify and self.chats:
+            self._stage_note(data)
+        if kind == "push" and "Reports" in self.notify and self.chats:
+            self._push_note(data)
         if kind == "pr" and "Reports" in self.notify and (data.get("state") != "open" or data.get("checks") in ("success", "failure")):
             for chat in list(self.chats):
                 try:

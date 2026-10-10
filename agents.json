@@ -57,7 +57,8 @@
         "Blockers",
         "Reports",
         "Daily Report",
-        "Progress"
+        "Progress",
+        "Plans"
       ],
       "allowed_users": [
         "@KelHuzad",
@@ -110,10 +111,11 @@
       "name": "BABD (self)",
       "repo": "git@github.com:BAYU18/BABD.git",
       "branch": "",
-      "merge": "on_approval",
-      "push": false,
+      "merge": "on_pass",
+      "push": true,
       "test_command": "python3 -m pytest -q",
-      "notes": "Repo BABD sendiri: agent boleh mengubah kode BABD di worktree terisolasi; perubahan masuk instalasi hanya lewat approval CEO + merge."
+      "notes": "Repo BABD sendiri: agent boleh mengubah kode BABD di worktree terisolasi; perubahan masuk instalasi hanya lewat approval CEO + merge.",
+      "github_repo": "BAYU18/BABD"
     },
     {
       "id": "kardel",

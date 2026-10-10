@@ -599,7 +599,7 @@ class Run:
                     self.state["stages"][k] = "done"
             self.state["stages"][key] = "active"
             self.state["stage"] = key
-        self.emit("stage", {"stage": key})
+        self.emit("stage", self._stage_event(key, "active"))
 
     def finish_stage(self, key, result="done"):
         with self.lock:
@@ -607,7 +607,16 @@ class Run:
             if result == "done" and (key != "report" or self.state["deployed"] or self.quick_route
                                      or ("devops" in getattr(self, "skip", ()) and self.state["verdict"] == "PASS")):
                 self.state["progress"] = max(self.state["progress"], STAGE_PROGRESS[key])
-        self.emit("stage", {"stage": key, "result": result})
+        self.emit("stage", self._stage_event(key, result))
+
+    def _stage_event(self, key, result):
+        """The payload of a stage event: which phase, its label, its owner and the result."""
+        label, owner = key.upper(), ""
+        for k, lbl, own, _p in STAGES:
+            if k == key:
+                label, owner = lbl, own
+                break
+        return {"stage": key, "label": label, "owner": owner, "result": result}
 
     @property
     def quick_route(self):
@@ -1048,20 +1057,30 @@ class Run:
                   "decisions the Developer needs into your plan.\n")
                + ("" if "devops" not in self.skip else "This task has no deploy.\n")) +
             "Plan the work and assign one concrete task to every agent.\n"
-            "If the task is complex, also split it into small work packages that agents can do AT THE SAME TIME "
-            "(for example backend, frontend, database, tests, deploy setup). Each package names one agent of the "
-            "team and lists in depends_on only the packages whose output it really needs; a package starts as "
-            "soon as those are done, the others run in parallel. Keep it to 2-8 packages; for a simple task leave "
-            "work_packages empty. Answer with only a JSON object:\n"
-            '{"plan_summary": "<2-4 sentences>", "assignments": {' + slots + '}, "work_packages": [{"id": "p1", '
-            '"title": "<short>", "agent": "<agent id>", "task": "<what exactly to do>", "depends_on": []}]}',
+            "First judge the size of the whole task and set plan_size: \"small\" (one agent, one file, a few "
+            "minutes of work), \"medium\" (2-4 independent parts), or \"large\" (5+ parts or several layers).\n"
+            "For medium and large tasks you MUST split the work into small packages that agents can do AT THE "
+            "SAME TIME (for example backend, frontend, database, tests, deploy setup): give 2-8 packages. Each "
+            "package names one agent of the team and lists in depends_on only the packages whose output it really "
+            "needs; a package starts as soon as those are done, the others run in parallel. For a small task "
+            "leave work_packages empty. Answer with only a JSON object:\n"
+            '{"plan_size": "small|medium|large", "plan_summary": "<2-4 sentences>", "assignments": {' + slots
+            + '}, "work_packages": [{"id": "p1", "title": "<short>", "agent": "<agent id>", '
+            '"task": "<what exactly to do>", "depends_on": []}]}',
             "Plan the work and assign agents", "plan",
             fact=lambda out: f"Team Lead plan for '{one_line(goal, 80)}': "
                              f"{one_line((extract_json(out) or {}).get('plan_summary') or out, 240)}"))
         plan = extract_json(plan_text) or {}
         assignments = plan.get("assignments") if isinstance(plan.get("assignments"), dict) else {}
         summary = plan.get("plan_summary") or plan_text
+        plan_size = str(plan.get("plan_size") or "").strip().lower()
+        if plan_size not in ("small", "medium", "large"):
+            plan_size = ""
+        with self.lock:
+            self.state["plan_size"] = plan_size
+        self.emit("plan_size", {"plan_size": plan_size})
         self.write("01-plan.md", plan_text)
+        self.emit("plan", {"path": os.path.join(self.dir, "01-plan.md"), "goal": goal, "summary": summary})
         self.agent("lead", "waiting", "Coordinate results (waits for the team)")
         self.finish_stage("plan")
 
@@ -1240,9 +1259,18 @@ class Run:
 
     def packages_of(self, plan):
         """The plan's work packages, cleaned: known agents that are on this task, unique ids, only known
-        dependencies, no cycles. Fewer than two packages = no split (the normal flow)."""
+        dependencies, no cycles. Fewer than two packages = no split (the normal flow). A medium/large plan
+        with no usable packages logs a warning and falls back to the normal flow (never crashes)."""
         raw = plan.get("work_packages") if isinstance(plan, dict) else None
+        plan_size = ""
+        if isinstance(plan, dict):
+            plan_size = str(plan.get("plan_size") or "").strip().lower()
+            if plan_size not in ("small", "medium", "large"):
+                plan_size = ""
         if not isinstance(raw, list):
+            if plan_size in ("medium", "large"):
+                print(f"[flow] run {self.id}: plan_size={plan_size} but no work_packages; "
+                      "falling back to the normal flow", flush=True)
             return []
         allowed = [r for r in specialist_roles(self.team) if r not in self.skip]
         out, ids = [], set()
@@ -1274,8 +1302,16 @@ class Run:
                 ordered.append(p)
                 pending.remove(p)
         if not any(p["agent"] == "developer" for p in ordered):
+            if plan_size in ("medium", "large"):
+                print(f"[flow] run {self.id}: plan_size={plan_size} but no developer package; "
+                      "falling back to the normal flow", flush=True)
             return []  # nothing gets built: the normal flow
-        return ordered if len(ordered) >= 2 else []
+        if len(ordered) < 2:
+            if plan_size in ("medium", "large"):
+                print(f"[flow] run {self.id}: plan_size={plan_size} but only {len(ordered)} usable package(s); "
+                      "falling back to the normal flow", flush=True)
+            return []
+        return ordered
 
     def run_packages(self, packages, context, plan_text):
         """Run the work packages: each one as soon as the packages it depends on are done, the rest at the
@@ -1323,7 +1359,13 @@ class Run:
         pending = {p["id"]: p for p in packages}
         running = {}
         errors = []
-        with ThreadPoolExecutor(max_workers=len(packages), thread_name_prefix=f"pkg-{self.id}") as pool:
+        agents_in = {p["agent"] for p in packages}
+        try:
+            limit = sum(parallel_of(self.team.by_id[a].cfg) for a in agents_in if a in self.team.by_id)
+        except Exception:
+            limit = len(packages)
+        workers = max(1, min(len(packages), limit or len(packages)))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"pkg-{self.id}") as pool:
             while pending or running:
                 if not errors:
                     for pid, p in list(pending.items()):
@@ -1601,6 +1643,11 @@ class Run:
         with self.lock:
             self.state["workspace"]["result"] = result
         self.emit("workspace", result)
+        if result.get("commit"):
+            self.emit("push", {"branch": result.get("branch"), "commit": result.get("commit"),
+                               "base": result.get("base"), "merged": bool(result.get("merged")),
+                               "pushed": bool(result.get("pushed")), "files": result.get("files"),
+                               "pr": result.get("pr"), "note": result.get("note")})
 
     def parallel(self, jobs):
         """Run {agent_id: fn} at the same time. Returns {agent_id: result}; re-raises the first error

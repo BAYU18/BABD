@@ -31,10 +31,10 @@ from ..team import Agent, Team, apply_run_to_config
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 EDITABLE_AGENT_FIELDS = ("name", "short_name", "status", "main_task", "sub_tasks", "skills", "telegram")
 DEFAULT_PARALLEL_TASKS = 3
-TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "progress", "started_at", "finished_at", "error", "verdict",
-               "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents", "workspace", "usage",
-               "evidence", "task_options", "route", "paused", "packages", "question", "questions",
-               "peer_questions")
+TASK_FIELDS = ("id", "goal", "status", "stage", "stages", "plan_size", "progress", "started_at", "finished_at",
+               "error", "verdict", "deployed", "qa_rounds", "blockers", "approval", "agents", "steps", "documents",
+               "workspace", "usage", "evidence", "task_options", "route", "paused", "packages", "question",
+               "questions", "peer_questions")
 LLM_FIELDS = ("provider", "api", "base_url", "model", "api_key_env", "effort", "max_tokens", "refusal_fallback", "fallback")
 FALLBACK_FIELDS = ("model", "base_url", "api", "api_key_env", "provider")
 
