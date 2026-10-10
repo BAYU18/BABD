@@ -165,23 +165,30 @@ def recommendation_status(agent_cfg):
     return out
 
 
-def system_section(skills_by_pack):
-    """The always-on part of the system prompt: the rule and the agent's catalog, pack by pack."""
+def system_section(skills_by_pack, agent_id=None, mode="progressive"):
+    """The always-on part of the system prompt: the rule and the agent's catalog, pack by pack.
+
+    mode "full"/"lean": the classic catalog (every skill name + description + pack source).
+    mode "progressive"/"catalog" (default): the compact catalog (hot-first, dormant dropped)."""
     if not all_names(skills_by_pack):
         return ""
+    names = all_names(skills_by_pack)
+    if agent_id and mode in ("progressive", "catalog"):
+        return progressive_catalog_for_agent(agent_id, names)
     lines = ["## Skills (always on)",
              "You have these skills. If there is even a small chance one applies to what you are doing, "
              "use it: announce \"Using <skill> to <purpose>\" and follow it exactly. Process skills "
              "(brainstorming, grilling, debugging) come first, then implementation skills."]
     for p in packs():
-        names = skills_by_pack.get(p.key) or []
-        if names:
+        mine = skills_by_pack.get(p.key) or []
+        if mine:
             lines.append(f"\n### {p.title} ({p.source})")
-            lines += [f"- {n}: {p.load(n)[0]['description']}" for n in names]
+            lines += [f"- {n}: {p.load(n)[0]['description']}" for n in mine]
     return "\n".join(lines)
 
 
 LEAN_CHARS = 1500
+CATALOG_MAX_LINES = 40  # token ceiling for the per-agent skill catalog
 
 
 def lean_text(body, path):
@@ -192,11 +199,17 @@ def lean_text(body, path):
     return body[:cut if cut > 400 else LEAN_CHARS].rstrip() + f"\n\n[... the rest of this skill is in {path}]"
 
 
-def step_block(names, lean=False):
-    """Prompt section for one step: each pack's adaptation notes and the text of each skill (in full, or
-    with `lean` (project.skills_mode "lean") only its start, to save tokens)."""
+def step_block(names, lean=False, agent_id=None, mode=None):
+    """Prompt section for one step. With `agent_id`+progressive mode: a compact catalog plus only the
+    step's skills (lean start). Without: the old full-text block (kept for compatibility/tests)."""
     if not names:
         return ""
+    if mode is None:
+        mode = "lean" if lean else "progressive"
+    # Only progressive/catalog use the compact on-demand path. full/lean keep the classic
+    # full-text block (with the original header) so existing behaviour and tests still hold.
+    if agent_id and mode in ("progressive", "catalog"):
+        return step_block_progressive(names, agent_id, lean=lean, mode=mode)
     parts = [f"# Skills you must use for this step: {', '.join(names)}"]
     for p in packs():
         mine = [n for n in names if n in p.skill_names()]
@@ -213,6 +226,155 @@ def step_block(names, lean=False):
                  "BABD checks this section.")
     return "\n\n".join(parts)
 
+
+def progressive_catalog(names, agent_id, lean=True, mode="progressive"):
+    """Compact catalog of the agent's skills: one line each, no full text.
+
+    This is the token-saving core. Instead of the full text of every skill (tens of thousands of
+    tokens), the prompt carries one line per skill with its description and where to read more.
+    The agent pulls a skill's full text on demand (file tool / skill_view).
+
+    Modes:
+      * "progressive" (default): catalog only; agent reads skills on demand.
+      * "lean": catalog + the first LEAN_CHARS of the skills that apply to this step.
+      * "enforce" / "full": catalog + full text (the old behaviour, kept as a fallback).
+
+    Hot skills (applied often) are marked and listed first; dormant ones are left out entirely.
+    """
+    from . import skill_evolution
+    if not names:
+        return ""
+    hot = [n for n in names if skill_evolution.is_hot(agent_id, n)]
+    ordered = [n for n in rank_skills(agent_id, names) if not skill_evolution.is_dormant(agent_id, n)]
+    lines = ["# Your skills",
+             "You have these skills. **Read a skill before you rely on it** — each line says where. "
+             "Use the one that fits: announce \"Using <skill> to <purpose>\" and follow it exactly. "
+             "Process skills (brainstorming, grilling, debugging) come first, then implementation."]
+    if hot:
+        lines.append(f"Used recently on this team: {', '.join(hot[:6])}.")
+    shown, hidden = 0, 0
+    for pack in packs():
+        mine = [n for n in ordered if n in pack.skill_names()]
+        if not mine:
+            continue
+        lines.append(f"\n### {pack.title}")
+        for n in mine:
+            if shown >= CATALOG_MAX_LINES:
+                hidden += 1
+                continue
+            meta = pack.load(n)[0]
+            path = f"skills/{pack.key}/{n}/SKILL.md"
+            lines.append(f"- **{n}** — {meta.get('description', '')}  _(read: {path})_")
+            shown += 1
+    if hidden:
+        lines.append(f"({hidden} more skills your role has; ask for one by name if you need it.)")
+    return "\n".join(lines)
+
+
+def rank_skills(agent_id, names):
+    from . import skill_evolution
+    try:
+        return skill_evolution.rank(agent_id, names)
+    except Exception:
+        return list(names)
+
+
+def step_block_progressive(names, agent_id, lean=False, mode="progressive"):
+    """Prompt section for one step in progressive mode: a compact shelf, plus the FULL text of the
+    few skills this step actually requires (the step's pick), so the agent starts with the right
+    book open but is not handed the whole library.
+
+    `mode` controls how much goes in:
+      * "progressive": catalog; only skills the step explicitly picks get their first LEAN_CHARS.
+      * "lean": catalog; the step's skills get their first LEAN_CHARS.
+      * "full": catalog; the step's skills get full text.
+    """
+    if not names:
+        return ""
+    from . import skill_evolution
+    catalog = progressive_catalog_for_agent(agent_id, names)
+    picked = [n for n in names if not skill_evolution.is_dormant(agent_id, n)]
+    parts = [catalog]
+    if picked and mode != "catalog":
+        # Which skills this step needs, and (except in pure-catalog mode) their opening text.
+        start = ", ".join(picked)
+        where = "\n".join(f"  - {n}: read `{p.key}/{n}` from your skills dir first."
+                           for n in picked for p in packs() if n in p.skill_names())
+        parts.append(f"# For this step you must use: {start}\n"
+                     f"Before you answer, READ each one and follow it:\n{where}")
+        if mode != "progressive":
+            # lean/full: also inline the text (progressive reads on demand instead).
+            for pack in packs():
+                mine = [n for n in picked if n in pack.skill_names()]
+                if not mine:
+                    continue
+                parts.append(pack.adaptation())
+                for n in mine:
+                    path = f"skills/{pack.key}/{n}/SKILL.md"
+                    body = pack.load(n)[1]
+                    text = body if mode == "full" else lean_text(body, path)
+                    parts.append(f"<skill name=\"{n}\" pack=\"{pack.source}\" path=\"{path}\">\n{text}\n</skill>")
+    parts.append("**End your answer with a section** `Skills applied:` **with one line for each of: "
+                 f"{', '.join(names)}** (`- <skill-name>: <what you did that this skill requires>`). "
+                 "BABD checks this section.")
+    return "\n\n".join(parts)
+
+
+def _known_skill_names():
+    """Every skill name across all packs (so we can tell a pack skill from a free-text one)."""
+    names = set()
+    for pack in packs():
+        names.update(pack.skill_names())
+    return names
+
+
+def progressive_catalog_for_agent(agent_id, names):
+    """Catalog honouring the pack layout of `names` (kept separate so tests can call it directly).
+
+    Every offered, non-dormant name ends up in the catalog: pack skills under their pack heading,
+    and any other name (a custom/free-text skill that lives in no pack) under an "Other skills"
+    heading. Dormant skills are dropped entirely.
+    """
+    from . import skill_evolution
+    if not names:
+        return ""
+    hot = [n for n in names if skill_evolution.is_hot(agent_id, n)]
+    ordered = [n for n in rank_skills(agent_id, names) if not skill_evolution.is_dormant(agent_id, n)]
+    lines = ["# Your skills (catalog)",
+             "Read a skill before you rely on it — each line names its file. Announce "
+             "\"Using <skill> to <purpose>\" and follow it exactly. Process skills first, then "
+             "implementation."]
+    if hot:
+        lines.append(f"Proven on this team: {', '.join(hot[:6])} — prefer these when they fit.")
+    shown = hidden = 0
+    in_a_pack = set()
+    for pack in packs():
+        mine = [n for n in ordered if n in pack.skill_names()]
+        if not mine:
+            continue
+        lines.append(f"\n### {pack.title}")
+        for n in mine:
+            in_a_pack.add(n)
+            if shown >= CATALOG_MAX_LINES:
+                hidden += 1
+                continue
+            meta = pack.load(n)[0]
+            path = f"skills/{pack.key}/{n}/SKILL.md"
+            lines.append(f"- **{n}** — {meta.get('description', '')}  _(read: {path})_")
+            shown += 1
+    # Names that live in no pack: still show them, so nothing offered silently disappears.
+    other = [n for n in ordered if n not in in_a_pack]
+    if other:
+        lines.append("\n### Other skills")
+        for n in other:
+            if shown >= CATALOG_MAX_LINES:
+                hidden += 1
+                continue
+            lines.append(f"- **{n}**")
+            shown += 1
+    if hidden:
+        lines.append(f"({hidden} more skills your role has; ask for one by name if you need it.)")
+    return "\n".join(lines)
 
 def missing(output, names):
     """Skills not accounted for in the answer's "Skills applied:" section."""
