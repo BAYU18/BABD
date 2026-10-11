@@ -10,6 +10,7 @@ import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -182,8 +183,15 @@ class TeamTest(unittest.TestCase):
         self.assertIn("Design from Architect", dev_prompt)
         self.assertEqual(MockLLM.requests[4]["path"], "/v1/chat/completions")  # DevOps: custom endpoint
         files = sorted(os.listdir(state["dir"]))
-        self.assertEqual(files[0], "01-plan.md")
+        # flow.py writes both: 01-plan.md (readable doc for the CEO download) and
+        # 01-plan.json (raw plan JSON the orchestrator parses).
+        self.assertIn("01-plan.md", files)
+        self.assertIn("01-plan.json", files)
         self.assertIn("99-ceo-report.json", files)
+        # The readable markdown doc must be the rendered plan, not the raw JSON blob.
+        plan_md = (Path(state["dir"]) / "01-plan.md").read_text(encoding="utf-8")
+        self.assertNotIn("assignments", plan_md)
+        self.assertTrue(plan_md.strip())
 
     def test_apply_report_to_dashboard(self):
         cfg = apply_report_to_dashboard(copy.deepcopy(self.cfg), REPORT)
