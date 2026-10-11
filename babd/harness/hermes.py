@@ -20,6 +20,15 @@ from .tools import HERMES
 
 SESSION_ID_RE = re.compile(r"^session_id:\s*(\S+)", re.M)
 
+# Terminal colour codes (Hermes renders some lines in colour). They must be stripped before the
+# text is shown on the dashboard or sent to the CEO, otherwise raw ESC sequences ("\x1b[32m") leak.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07")
+
+
+def strip_ansi(text):
+    """Remove ANSI/VT100 escape sequences (colour, cursor) from a string."""
+    return _ANSI_RE.sub("", text or "")
+
 # Linux refuses one command-line argument over 128 KiB ("Argument list too long"), and a step's prompt
 # (skills + team memory + the design and code it builds on) is often bigger. So the prompt goes in
 # through stdin: this launcher reads it and puts it into sys.argv inside the Hermes process itself.
@@ -75,6 +84,7 @@ def clean_hermes_output(stdout):
     that case the answer is what follows the warning, not what precedes the session_id line. We
     keep that summary and prepend MAX_TURNS_MARKER so the flow can tell the Team Lead the step was
     cut short, not finished."""
+    stdout = strip_ansi(stdout)
     budget_hit = _max_turns_reached(stdout)
     keep = []
     if budget_hit:

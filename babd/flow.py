@@ -293,6 +293,15 @@ SECRETS_RULE = ("Secrets you create or find (private keys, passwords, tokens) ne
                 "your answer: keep them in their usual place on this machine (for example ~/.ssh, mode 600) and "
                 "give only their path. Public keys may be shown in full.")
 
+# Team Lead must pass an agent's report through unchanged when it is the deliverable.
+# When it summarises or invents a closing note, the CEO sees fiction instead of the
+# researcher's finding (e.g. sources that were irrelevant get rewritten into a confident,
+# made-up conclusion).
+FIDELITY_RULE = ("When an agent (Researcher, Developer, ...) produced the answer, forward THAT text: "
+                 "do not rewrite it, do not summarise it into a new conclusion, and never invent "
+                 "findings the agent did not report. If the agent said its sources were irrelevant, "
+                 "say exactly that. You may add one short factual line of context, nothing more.")
+
 
 def task_options(options, agent_ids=None):
     """Validated per-task options: {"mode": ..., "skip": [...], "models": {agent: model}}."""
@@ -946,7 +955,7 @@ class Run:
                         break
                     out = self.work(agent_id, f"{prompt}\n\n### You asked your teammate {q['ask'][0]}\n"
                                     f"{q['question']}\n\n### Your teammate answered\n{peer}\n\n"
-                                    f"Now do your task again, using this answer. You have used {peer_asked} of "
+                                    f"Now do your task again, using this answer. {FIDELITY_RULE} You have used {peer_asked} of "
                                     f"at most {self.max_peer_questions} peer questions for this task: finish now, "
                                     "or ask the CEO if it is a business decision.",
                                     task, reply_kind, fact=fact, **work_kw)
@@ -1765,7 +1774,8 @@ class Run:
                   "Use the team memory above if it holds earlier decisions, facts or answers about this "
                   "goal; when it does, base your answer on it and say so. If the memory is empty or does "
                   "not cover the question, answer from what you know and say plainly what you are unsure "
-                  "about. Keep it short: the answer first, then anything the CEO must do.")
+                  "about. Keep it short: the answer first, then anything the CEO must do. "
+                  + FIDELITY_RULE)
         out = self.step("answer", lambda: self.work(
             "lead", prompt, "Answer the CEO", "answer", light=True))
         self.write("01-answer.md", out)
@@ -1784,7 +1794,7 @@ class Run:
         out = self.step("direct", lambda: self.delegate(
             agent_id, "assign", task,
             f"{self.goal_block}\n\nThe Team Lead gave this task straight to you as a quick job: no design, test or "
-            f"deploy rounds, so get it right yourself.\n\nYour task:\n{task}\n\n{how}\n{SECRETS_RULE}",
+            f"deploy rounds, so get it right yourself.\n\nYour task:\n{task}\n\n{how}\n{FIDELITY_RULE}\n{SECRETS_RULE}",
             "result", light=True))
         self.write("03-direct.md", out)
         self.finish_stage("code")

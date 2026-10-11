@@ -373,12 +373,33 @@ def _build_researcher(query, kind, value, report_type, extra_kwargs=None):
     os.environ.setdefault("CURATE_SOURCES", os.environ.get("RESEARCHER_CURATE_SOURCES", "False"))
     os.environ.setdefault("COMPRESSION_THRESHOLD",
                           os.environ.get("RESEARCHER_COMPRESSION_THRESHOLD", "60000"))
+    # >>> PARITY /study (Hermes) TAMBAHAN: knob yang dulu belum di-port. Tanpa ini
+    #     gpt-researcher memakai default upstream (subtopik 5, dsb) yang menghasilkan
+    #     laporan lebih lebar/berantakan dibanding /study.
+    #   MAX_SUBTOPICS=3                -> study.py pin 3 (batasi lebar, fokus)
+    #   MAX_SEARCH_RESULTS_PER_QUERY=5 -> study.py pin 5 (default upstream sudah 5)
+    os.environ.setdefault("MAX_SUBTOPICS", os.environ.get("RESEARCHER_MAX_SUBTOPICS", "3"))
+    os.environ.setdefault("MAX_SEARCH_RESULTS_PER_QUERY",
+                          os.environ.get("RESEARCHER_MAX_RESULTS_PER_QUERY", "5"))
 
     # >>> KUNCI PERBAIKAN: LLM tim ditulis ke FAST_LLM/SMART_LLM/OPENAI_* DI SINI, sebelum
     #     GPTResearcher() dibuat. Tanpa ini, Config memakai default 'o4-mini' -> 403.
     apply_llm_env()
 
-    kwargs = {"query": query, "report_type": report_type}
+    # PARITY /study (Hermes): study.py selalu memanggil
+    #   GPTResearcher(query=..., report_type=..., report_source="web", verbose=False)
+    # dan mem-pin MAX_SUBTOPICS=3. report_source default memang sudah "web", tetapi
+    # menuliskannya eksplisit mencegah default vendor berubah & menjaga paritas.
+    try:
+        max_sub = max(1, int(os.environ.get("MAX_SUBTOPICS") or 3))
+    except ValueError:
+        max_sub = 3
+    kwargs = {
+        "query": query,
+        "report_type": report_type,
+        "report_source": os.environ.get("REPORT_SOURCE", "web"),
+        "max_subtopics": max_sub,
+    }
     kwargs.update(extra_kwargs or {})
     return GPTResearcher(**kwargs)
 

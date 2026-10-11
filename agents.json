@@ -542,10 +542,9 @@
         "timeout_sec": 900,
         "install": "scripts/researcher_setup.sh",
         "env": {
-          "RESEARCHER_ALLOW_DUCKDUCKGO": "1",
-          "RESEARCHER_SEARXNG_URL": "http://localhost:8080",
-          "RESEARCHER_PROVIDER": "duckduckgo",
-          "RESEARCHER_DDGS_BACKENDS": "grokipedia,mojeek,startpage,wikipedia,yahoo"
+          "RESEARCHER_SEARXNG_URL": "http://127.0.0.1:8080",
+          "RESEARCHER_PROVIDER": "searxng",
+          "RESEARCHER_MAX_RESULTS": "8"
         },
         "max_turns": 50
       },
