@@ -200,5 +200,45 @@ class TeamTest(unittest.TestCase):
                          ("ACTIVE", 85, 1, "Approve Deploy"))
 
 
+class PlanMarkdownTest(unittest.TestCase):
+    """flow.plan_markdown renders the CEO-readable 01-plan.md document."""
+
+    def test_renders_summary_assignments_and_packages(self):
+        plan = {
+            "plan_size": "medium",
+            "plan_summary": "Ship a login page.",
+            "assignments": {"architect": "Design it", "developer": "Build it"},
+            "work_packages": [
+                {"title": "Design", "agent": "architect", "task": "Draw the spec"},
+                {"title": "Build", "agent": "developer", "depends_on": ["Design"], "task": "Write code"},
+            ],
+        }
+        md = flow.plan_markdown("Build a login page", plan, json.dumps(plan))
+        self.assertIn("# Rencana: Build a login page", md)
+        self.assertIn("## Ringkasan", md)
+        self.assertIn("Ship a login page.", md)
+        self.assertIn("**Ukuran tugas:** medium", md)
+        self.assertIn("## Pembagian tugas", md)
+        self.assertIn("| architect | Design it |", md)
+        self.assertIn("## Paket kerja", md)
+        self.assertIn("Build", md)
+        # The rendered doc must not leak the raw JSON structure.
+        self.assertNotIn('"plan_summary"', md)
+        self.assertNotIn('"assignments"', md)
+
+    def test_falls_back_to_raw_text_when_plan_unparsed(self):
+        md = flow.plan_markdown("Some goal", {}, "raw lead output")
+        self.assertIn("# Rencana: Some goal", md)
+        self.assertIn("raw lead output", md)
+
+    def test_escapes_pipes_in_table_cells(self):
+        plan = {"assignments": {"developer": "do a | b"}, "plan_summary": ""}
+        md = flow.plan_markdown("g", plan, "")
+        self.assertIn("do a \\| b", md)
+        # A raw unescaped pipe inside a cell would break the table row count.
+        row = [ln for ln in md.splitlines() if ln.startswith("| developer")][0]
+        self.assertNotIn("| do a | b |", row)
+
+
 if __name__ == "__main__":
     unittest.main()
