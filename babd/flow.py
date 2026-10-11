@@ -36,7 +36,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .config import ROOT
 from . import projects, qa_policy, servers, skillpacks, taskdocs
-from .gbrain import one_line, slugify
+from .gbrain import BrainError, one_line, slugify
 from .harness.hermes import MAX_TURNS_MARKER
 
 RUNS_DIR = os.path.join(ROOT, "runs")
@@ -1655,12 +1655,48 @@ class Run:
         self.agent("lead", "done")
         self.finish_stage("report")
 
+
+    def _remember_quick(self, who, out, kind="answer"):
+        """Fast-lane work never goes through work(), so it would otherwise never reach the team brain.
+        Save it here so the next task can recall what the CEO asked and what the team answered."""
+        if not self.team.brain:
+            return
+        goal_short = one_line(self.goal, 80)
+        ask = f"CEO asked the team: {self.goal}"
+        ans = f"{self.team.by_id[who].name} ({kind}) answered: {one_line(out, 220)}"
+        entry = {"agent": who, "op": "write", "entity": f"babd/goals/{slugify(self.goal)}",
+                 "kind": kind, "fact": ans, "at": now()}
+        try:
+            self.team.brain.remember(ans, entry["entity"],
+                                     f"babd run {self.id} · {self.team.by_id[who].name} · {kind}")
+            self.team.brain.put_page(f"babd/runs/{self.id}/{kind}", f"CEO: {goal_short}",
+                                     "## Goal\n\n" + ask + "\n\n## Answer\n\n" + out, tags=("babd", who))
+            entry["page"] = f"babd/runs/{self.id}/{kind}"
+        except BrainError as e:
+            entry["error"] = str(e)[:200]
+        with self.lock:
+            entry = {**entry, "after_seq": len(self.bus.messages)}
+            self.state["memory"].append(entry)
+        self.emit("memory", entry)
+
     def _answer(self, route):
+        # Triage picked "answer" WITHOUT memory (memory=False on the routing call), so the
+        # text it produced cannot recall earlier team work. Re-answer here through work(),
+        # which runs the full GBrain cycle (read -> answer -> write) so the Team Lead sees
+        # prior decisions/facts and this answer is remembered for the next task.
         self.agent("lead", "working", "Answer the CEO")
-        self.write("01-answer.md", route["answer"])
         self.finish_stage("plan")
         self._skip_stages("design", "code", "test", "approval", "deploy")
-        self._quick_report(route["answer"], "lead", "Answered")
+        prompt = (self.goal_block + "\n\nYou are the Team Lead. Answer the CEO directly and correctly.\n"
+                  "Use the team memory above if it holds earlier decisions, facts or answers about this "
+                  "goal; when it does, base your answer on it and say so. If the memory is empty or does "
+                  "not cover the question, answer from what you know and say plainly what you are unsure "
+                  "about. Keep it short: the answer first, then anything the CEO must do.")
+        out = self.step("answer", lambda: self.work(
+            "lead", prompt, "Answer the CEO", "answer", light=True))
+        self.write("01-answer.md", out)
+        self._remember_quick("lead", out, "answer")
+        self._quick_report(out, "lead", "Answered")
 
     def _direct(self, route):
         agent_id, task = route["agent"], route["task"]
@@ -1679,6 +1715,7 @@ class Run:
         self.write("03-direct.md", out)
         self.finish_stage("code")
         self._skip_stages("test", "approval", "deploy")
+        self._remember_quick(agent_id, out, "direct")
         self._quick_report(out, agent_id, f"Done by {self.team.by_id[agent_id].name}"[:40])
 
     # -- evidence: a PASS must rest on tests that really ran ------------------------------------

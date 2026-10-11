@@ -367,6 +367,29 @@ def _build_researcher(query, kind, value, report_type, extra_kwargs=None):
     return GPTResearcher(**kwargs)
 
 
+def _collect_source_urls(researcher) -> list[str]:
+    """Kumpulkan URL sumber dari DUA tempat, urut, tanpa duplikat.
+
+    `get_source_urls()` hanya berisi URL yang benar-benar di-scrape. Retriever yang
+    mengembalikan konten penuh (SearXNG, PubMed Central) mengisi `research_sources`
+    lewat jalur prefetched, jadi URL-nya TIDAK pernah masuk `visited_urls` dan
+    laporan kehilangan sumber nyata (model lalu mengarang `example.com`). Di sini
+    kita gabungkan keduanya.
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+    for u in (researcher.get_source_urls() or []):
+        if u and u not in seen:
+            seen.add(u)
+            urls.append(u)
+    for src in (researcher.get_research_sources() or []):
+        u = src.get("url") or src.get("href")
+        if u and u not in seen:
+            seen.add(u)
+            urls.append(u)
+    return urls
+
+
 def real_result(query: str, kind: str, value: str) -> dict:
     """Panggil gpt-researcher sebagai library lokal. Raise RuntimeError bila tidak bisa.
 
@@ -386,7 +409,7 @@ def real_result(query: str, kind: str, value: str) -> dict:
         researcher = _build_researcher(query, kind, value, "research_report")
         await researcher.conduct_research()
         answer = await researcher.write_report()
-        return answer or "", list(researcher.get_source_urls() or [])
+        return answer or "", _collect_source_urls(researcher)
 
     try:
         answer, urls = asyncio.run(run())
@@ -416,7 +439,7 @@ def write_report_only(query: str, kind: str, value: str) -> dict:
     async def run() -> tuple[str, list[str]]:
         researcher = _build_researcher(query, kind, value, "research_report")
         answer = await researcher.write_report()
-        return answer or "", list(researcher.get_source_urls() or [])
+        return answer or "", _collect_source_urls(researcher)
 
     try:
         answer, urls = asyncio.run(run())

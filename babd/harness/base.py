@@ -4,7 +4,9 @@ Modelled on Paperclip's adapters (packages/adapters/* in paperclipai/paperclip):
 the agent's own `llm` block and projects it into whatever that harness needs (SDK client,
 config file, environment variables), so each agent keeps its custom LLM whatever harness it uses.
 """
+import json
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -14,6 +16,7 @@ import weakref
 from ..config import ROOT
 from ..llm import LLMError
 
+
 DEFAULT_TIMEOUT_SEC = 1800
 DEFAULT_WORKSPACE = os.path.join(ROOT, "workspace")
 
@@ -21,6 +24,68 @@ DEFAULT_WORKSPACE = os.path.join(ROOT, "workspace")
 # step is between two calls (otherwise the program becomes an orphan and keeps holding its slot).
 _RUNNING_PROCS = weakref.WeakSet()
 _RUNNING_LOCK = threading.Lock()
+
+# --- process-output hygiene -------------------------------------------------------------------
+# A `process` harness returns whatever its command prints on stdout. Some adapters (e.g. the
+# bundled researcher_adapter.py) print a machine-readable JSON block, a `---` separator, and then
+# echo the incoming prompt before the human text. That metadata is for the caller, not for the CEO:
+# saved verbatim into runs/<id>/03-direct.md it turned a clean report into a file that began with a
+# raw JSON blob and the whole task prompt. Trim it here so every process harness yields the
+# human-facing part only.
+_JSON_BLOCK_RE = re.compile(r'^\s*[\{\[]".*"\s*[\}\]]\s*$')
+# Headers a process adapter prints when it echoes the prompt back (researcher_adapter.py prints
+# "Riset lokal untuk: <query>").
+_ECHO_HEADER_RE = re.compile(
+    r"^\s*(?:Riset lokal untuk:|Local research for:|Query:|CEO goal:)", re.IGNORECASE)
+
+
+def clean_process_output(text):
+    """Strip machine metadata a process harness may print around its human answer.
+
+    Contaminations observed in practice (runs/<id>/03-direct.md):
+      * ANSI colour escapes the adapter's logger emits;
+      * a JSON metadata line (``json.dumps`` output) followed by ``---`` and the echoed prompt,
+        after which the adapter repeats the answer;
+      * a bare echoed prompt.
+    Strategy: strip ANSI, then keep everything BEFORE the first standalone JSON metadata line -
+    the human answer always precedes it. When there is no JSON, drop a leading echo header block.
+    The remainder is returned verbatim.
+    """
+    if not text:
+        return text
+    text = _ANSI_RE.sub("", text)
+
+    lines = text.splitlines()
+    cut = None
+    # 1. Find a standalone JSON metadata line: starts with {" or [" and parses as a dict/list.
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s[:1] not in ("{", "[") or not s.endswith(("}", "]")):
+            continue
+        try:
+            obj = json.loads(s)
+        except ValueError:
+            continue
+        if isinstance(obj, (dict, list)):
+            cut = i
+            break
+    if cut is not None:
+        lines = lines[:cut]
+    else:
+        # 2. Drop a leading prompt-echo block if the answer did not come first.
+        echo_at = next((k for k, l in enumerate(lines) if _ECHO_HEADER_RE.match(l)), None)
+        if echo_at is not None:
+            seps = [k for k in range(echo_at, len(lines)) if lines[k].strip() == "---"]
+            if seps:
+                lines = lines[seps[-1] + 1:]
+            else:
+                heads = [k for k in range(echo_at + 1, len(lines)) if lines[k].startswith("#")]
+                lines = lines[heads[0]:] if heads else []
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
 
 
 def _register_proc(proc):

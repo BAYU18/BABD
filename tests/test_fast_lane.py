@@ -77,9 +77,12 @@ class FastLaneTest(unittest.TestCase):
 
     def test_answer_from_the_team_lead(self):
         state = self.run_with({"route": "answer", "answer": "Use ed25519 keys.", "reason": "a question"})
-        self.assertEqual(self.who(), ["lead"])
-        self.assertEqual((state["status"], state["report"]["summary"], state["report"]["status"]),
-                         ("done", "Use ed25519 keys.", "DONE"))
+        # The Lead is called twice: once to triage (no memory) and once to answer through
+        # work()/the GBrain cycle (read -> answer -> write) so earlier team work is recalled.
+        self.assertEqual(self.who(), ["lead", "lead"])
+        self.assertEqual((state["status"], state["report"]["status"]), ("done", "DONE"))
+        # The answer comes from the second (memory-aware) call, not the triage text.
+        self.assertIn("Use ed25519 keys", state["report"]["summary"])
         self.assertEqual(state["messages"][-1]["kind"], "report")
 
     def test_team_with_only_the_needed_agents(self):

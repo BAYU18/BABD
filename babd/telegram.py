@@ -839,6 +839,67 @@ class CeoBot(Bot):
             except TelegramError as e:
                 log(f"telegram ceo: could not notify {chat}: {e}", "telegram")
 
+    # Intermediate transcripts that stay in the run dir; never sent to the CEO.
+    _INTERNAL_MD = {
+        "01-plan.md", "01-route.md", "99-ceo-report.md",
+        "01-work-packages.json",
+    }
+    _INTERNAL_PREFIXES = ("01-", "02-", "03-", "04-", "05-")
+    _INTERNAL_SUFFIXES = (
+        "-plan.md", "-route.md", "-design.md", "-code.md",
+        "-test_plan.md", "-test_report.md", "-report.md", "-work-packages.json",
+    )
+
+    def _report_files(self, run_id):
+        """Markdown *deliverables* worth sending to the CEO for a finished task.
+
+        Keeps the direct/research answer (03-direct.md) and any hand-authored
+        .md artifact an agent wrote into the run dir (e.g. PROPOSAL-*.md).
+        Intermediate stage transcripts (plan/design/code/qa) are skipped.
+        """
+        d = os.path.join(ROOT, "runs", os.path.basename(str(run_id).strip()))
+        if not os.path.isdir(d):
+            return []
+        prefer = ("03-direct.md", "04-direct.md")
+        found = []
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            return []
+        for name in prefer:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                found.append(p)
+        for name in names:
+            if not name.endswith(".md"):
+                continue
+            if name in found or name in self._INTERNAL_MD:
+                continue
+            low = name.lower()
+            if name.startswith(self._INTERNAL_PREFIXES) and low.endswith(self._INTERNAL_SUFFIXES):
+                continue
+            if name.startswith(self._INTERNAL_PREFIXES):
+                continue  # numbered stage transcript
+            p = os.path.join(d, name)
+            if os.path.isfile(p) and p not in found:
+                found.append(p)
+        return found
+
+    def _send_report_files(self, run_id, goal=""):
+        """Send the finished task's .md report(s) to every CEO chat as documents."""
+        if not self.chats:
+            return
+        paths = self._report_files(run_id)
+        log(f"telegram ceo: report files for {run_id}: "
+            f"{[os.path.basename(p) for p in paths]}", "telegram")
+        for path in paths:
+            caption = f"\U0001f4c4 Report \u2014 {html.escape(_clip(goal, 120))}"
+            for chat in list(self.chats):
+                try:
+                    self.api.send_document(chat, path, caption=caption)
+                except TelegramError as e:
+                    log(f"telegram ceo: could not send report {path} to {chat}: {e}", "telegram")
+
     def _send_plan(self, data):
         """Send the Team Lead's plan file (01-plan.md) to every CEO chat as a document."""
         path = data.get("path")
@@ -1051,6 +1112,7 @@ class CeoBot(Bot):
                 foot = (f"⚡ fast lane: {rep.get('agent')}" if rep.get("route") in ("direct", "answer") else
                         f"QA {rep.get('qa_verdict', '-')} · deployed {'yes' if rep.get('deployed') else 'no'}")
                 self.broadcast(f"✅ Task done: {s.get('goal')}\n{rep.get('summary') or ''}\n{foot}")
+                self._send_report_files(s.get("id"), goal=s.get("goal") or "")
             elif "Blockers" in self.notify and (status in ("failed", "cancelled") or rep.get("status") == "BLOCKED"):
                 why = d.get("error") or "; ".join(rep.get("blocker_list") or []) or status
                 self.broadcast(f"⚠️ Task {status if status != 'done' else 'blocked'}: {s.get('goal')}\n{why}\ntask {s.get('id')}")

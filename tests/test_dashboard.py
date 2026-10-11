@@ -38,6 +38,9 @@ def scripted_ask(self, prompt, **kw):
     if self.id == "lead":
         if '"assignments"' in prompt:
             return json.dumps({"plan_summary": "p", "assignments": {}})
+        if "Answer the CEO" in prompt:
+            # fast-lane "answer" route: the Lead answers in plain text, not JSON
+            return "Use ed25519 keys: ssh-keygen -t ed25519 -C team -f ~/.ssh/team"
         return json.dumps({"next_action": "Monitor", "recent_result": "Shipped", "summary": "done"})
     if self.id == "qa":
         return "ok\nVERDICT: PASS"

@@ -3,11 +3,11 @@
     "name": "BABD AI Dev Team",
     "status": "DONE",
     "progress": 100,
-    "current_goal": "saya tadi bertanya soal matematika apa?",
+    "current_goal": "carikan saya informasi kapan dan negara…",
     "active_task": "Quick task",
     "approval_needed": 0,
     "blockers": 0,
-    "recent_result": "Answered",
+    "recent_result": "Done by Researcher",
     "next_action": "Review the result",
     "require_approval": [
       "deploy"
@@ -536,13 +536,13 @@
       "harness": {
         "type": "process",
         "command": "scripts/researcher_adapter.py",
-        "args": [
-          "--json"
-        ],
+        "args": [],
         "timeout_sec": 900,
         "install": "scripts/researcher_setup.sh",
         "env": {
-          "RESEARCHER_ALLOW_DUCKDUCKGO": "1"
+          "RESEARCHER_ALLOW_DUCKDUCKGO": "1",
+          "RESEARCHER_SEARXNG_URL": "http://localhost:8080",
+          "RESEARCHER_PROVIDER": "searxng"
         },
         "max_turns": 50
       },
@@ -586,7 +586,7 @@
     {
       "step": "CODE",
       "owner": "developer",
-      "state": "todo"
+      "state": "done"
     },
     {
       "step": "TEST",

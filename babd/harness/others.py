@@ -7,7 +7,7 @@ import subprocess
 
 from ..config import ROOT, resolve_api_key
 from ..llm import LLMClient
-from .base import Harness, HarnessError, render_prompt
+from .base import Harness, HarnessError, render_prompt, clean_process_output
 from .routing import claude_code_routing, generic_routing
 from . import tools
 from .tools import CLAUDE_CODE, log
@@ -189,4 +189,4 @@ class Process(Harness):
         text = self.run_process(argv, env, stdin_text=render_prompt(system, messages)).strip()
         if not text:
             raise HarnessError(f"process {self.cfg['command']}: empty output")
-        return text
+        return clean_process_output(text)
