@@ -113,6 +113,65 @@ STAGES = [  # (key, label, owner, progress when the stage is finished)
     ("report", "REPORT", "lead", 100),
 ]
 STAGE_PROGRESS = {k: p for k, _, _, p in STAGES}
+# Human-readable, per-step task descriptions for the dashboard "Every step" table.
+# Why: the Team Lead's plan sometimes leaves `assignments` empty (or the same text for
+# several roles), so every step showed the same generic sentence and the CEO could not
+# tell what each agent actually did. These helpers always produce a DISTINCT, concrete
+# line per (agent, kind, goal) so the report table reads like a real log.
+KIND_HUMAN = {
+    "plan": "menyusun rencana kerja",
+    "triage": "memutuskan siapa yang dibutuhkan",
+    "design": "merancang sistem",
+    "code": "membangun kode",
+    "test_plan": "menyiapkan rencana pengujian",
+    "test_report": "menguji hasil dan memberi vonis",
+    "fix": "memperbaiki bug yang ditemukan QA",
+    "deploy_prep": "menyiapkan deployment",
+    "deploy_report": "men-deploy dan memantau",
+    "report": "melaporkan hasil ke CEO",
+    "answer": "menjawab pertanyaan CEO",
+    "result": "mengerjakan tugas langsung",
+    "research": "melakukan riset",
+    "peer_answer": "menjawab pertanyaan rekan setim",
+    "assign": "mengerjakan tugas dari Team Lead",
+}
+
+ROLE_HUMAN = {
+    "lead": "Team Lead", "architect": "Architect", "developer": "Developer",
+    "qa": "QA/Tester", "devops": "DevOps", "researcher": "Researcher",
+}
+
+
+def human_task(agent_id, kind, goal, detail="", n=None):
+    """A concrete, unique one-line task for the "Every step" table.
+
+    `detail` (the Lead's own assignment text or a package title) wins when present,
+    because that is the most specific description of the work. Otherwise we build a
+    human sentence from the agent role and the step kind. The step number is always
+    included so two steps of the same kind never collapse into the same string, and
+    the goal is only appended when there is no concrete detail (keeping the table
+    short instead of repeating the same goal on every row).
+    """
+    detail = one_line(str(detail or "").strip(), 140)
+    # Skip the generic placeholders the old code produced - they carried no information.
+    if detail.lower().startswith(("do your part", "prepare the deployment while",
+                                  "write the test plan from the design")):
+        detail = ""
+    who = ROLE_HUMAN.get(agent_id, agent_id.title())
+    what = KIND_HUMAN.get(kind, kind.replace("_", " "))
+    base = f"{who} {what}"
+    if detail:
+        # Detail is specific enough that the goal would only add noise.
+        base += f": {detail}"
+    else:
+        goal_short = one_line(goal or "", 70)
+        if goal_short:
+            base += f" — {goal_short}"
+    if n is not None:
+        base = f"[langkah {n}] {base}"
+    return one_line(base, 200)
+
+
 VERDICT_RE = re.compile(r"VERDICT:\s*\**\s*(PASS|FAIL)", re.I)
 EVIDENCE_RE = re.compile(r"EVIDENCE\s*:?\**\s*\n?(.*?)(?=\n\s*\**VERDICT:|\Z)", re.I | re.S)
 
@@ -1210,8 +1269,20 @@ class Run:
         self.agent("lead", "waiting", "Coordinate results (waits for the team)")
         self.finish_stage("plan")
 
-        def task_for(role):
-            return str(assignments.get(role) or "") or f"Do your part ({team.by_id[role].main_task}) for the goal."
+        def task_for(role, kind=None, n=None):
+            """The assignment text for one agent step.
+
+            Prefer the Team Lead's own wording (assignments[role]). When the Lead left it
+            empty we no longer fall back to the same generic sentence for every role/step;
+            we build a distinct human sentence so the dashboard table is readable and each
+            step clearly differs from the next.
+            """
+            given = str(assignments.get(role) or "").strip()
+            if given:
+                return given
+            return human_task(role, kind or {"architect": "design", "developer": "code",
+                                             "qa": "test_report", "devops": "deploy_report"}.get(role, "assign"),
+                              goal, n=n)
 
         context = Live(lambda: f"{self.goal_block}\n\nTeam Lead plan:\n{summary}")  # picks up the CEO's answers
 
@@ -1225,27 +1296,28 @@ class Run:
                 self.finish_stage("design", "skipped")
             else:
                 self.stage("design")
-                design = self.step("design", lambda: self.delegate("architect", "assign", task_for("architect"),
-                                   f"{context}\n\nYour assignment:\n{task_for('architect')}", "design"))
+                design = self.step("design", lambda: self.delegate("architect", "assign",
+                                   task_for("architect", "design", self.steps + 1),
+                                   f"{context}\n\nYour assignment:\n{task_for('architect', 'design', self.steps + 1)}", "design"))
                 self.write("02-architect.md", design)
                 self.finish_stage("design")
 
             # CODE, with QA's test plan and DevOps' deploy preparation at the same time
             self.stage("code")
             jobs = {"developer": lambda: self.step("code", lambda: self.delegate(
-                "developer", "assign", task_for("developer"),
-                f"{context}\n\nYour assignment:\n{task_for('developer')}\n\n### Design from {names['architect']}\n{design}",
+                "developer", "assign", task_for("developer", "code", self.steps + 1),
+                f"{context}\n\nYour assignment:\n{task_for('developer', 'code', self.steps + 1)}\n\n### Design from {names['architect']}\n{design}",
                 "code"))}
             if self.parallel_prep:
                 jobs["qa"] = lambda: self.step("test_plan", lambda: self.delegate(
-                    "qa", "prepare", "Write the test plan from the design while the Developer builds.",
-                    f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design from {names['architect']}\n{design}\n\n"
+                    "qa", "prepare", human_task("qa", "test_plan", goal, "menyusun test case dari desain", n=self.steps + 1),
+                    f"{context}\n\nYour assignment:\n{task_for('qa', 'test_plan', self.steps + 1)}\n\n### Design from {names['architect']}\n{design}\n\n"
                     "The Developer is building it now. Prepare the tests first: the test cases (acceptance criteria, "
                     "edge cases, failure cases) and the test code you will run against the build. Do not give a "
                     "verdict yet.", "test_plan"))
                 jobs["devops"] = lambda: self.step("deploy_prep", lambda: self.delegate(
-                    "devops", "prepare", "Prepare the deployment while the Developer builds.",
-                    f"{context}\n\nYour assignment:\n{task_for('devops')}\n\n### Design from {names['architect']}\n{design}\n\n"
+                    "devops", "prepare", human_task("devops", "deploy_prep", goal, "menyiapkan environment & pipeline", n=self.steps + 1),
+                    f"{context}\n\nYour assignment:\n{task_for('devops', 'deploy_prep', self.steps + 1)}\n\n### Design from {names['architect']}\n{design}\n\n"
                     "The Developer is building it now. Prepare the deployment: environments, pipeline, "
                     "configuration and secrets needed (names only), health checks, monitoring and alerts, rollback "
                     "plan, and any step a person must do by hand. Do not deploy yet: that waits for QA and the CEO.",
@@ -1271,8 +1343,9 @@ class Run:
                     " End your answer with exactly one line: VERDICT: PASS or VERDICT: FAIL")
         plan_part = f"\n\n### Your test plan\n{test_plan}" if test_plan else ""
         tests = self.run_project_tests(0)
-        report = self.step("qa0", lambda: self.delegate("qa", "assign", task_for("qa"),
-                           f"{context}\n\nYour assignment:\n{task_for('qa')}\n\n### Design\n{design}{plan_part}\n\n"
+        report = self.step("qa0", lambda: self.delegate("qa", "assign",
+                           task_for("qa", "test_report", self.steps + 1),
+                           f"{context}\n\nYour assignment:\n{task_for('qa', 'test_report', self.steps + 1)}\n\n### Design\n{design}{plan_part}\n\n"
                            f"### Code from {names['developer']}\n{code}{self.tests_part(tests)}{qa_instr}", "test_report"))
         report, verdict = self.check_evidence(report, tests, qa_tools, context, qa_instr, 0)
         self.write("04-qa-round0.md", report)
@@ -1280,14 +1353,14 @@ class Run:
         while verdict == "FAIL" and rounds < self.max_fix_rounds:
             rounds += 1
             self.state["qa_rounds"] = rounds
-            fix_task = f"Fix the bugs QA reported (round {rounds})."
+            fix_task = human_task("developer", "fix", goal, f"memperbaiki temuan QA (putaran {rounds})")
             code = self.step(f"fix{rounds}", lambda: self.delegate(
                 "developer", "fix_request", fix_task, f"{context}\n\n{fix_task}\n\n### Your previous code\n{code}\n\n"
                 f"### QA report\n{report}\n\nReturn the complete fixed code.", "fix"))
             self.write(f"03-developer-fix{rounds}.md", code)
             tests = self.run_project_tests(rounds)
             report = self.step(f"qa{rounds}", lambda: self.delegate(
-                "qa", "retest", f"Verify the fixes (round {rounds}).", f"{context}\n\nVerify the fixes for your earlier "
+                "qa", "retest", human_task("qa", "test_report", goal, f"memverifikasi perbaikan QA (putaran {rounds})"), f"{context}\n\nVerify the fixes for your earlier "
                 f"report.\n\n### Your earlier report\n{report}\n\n### Fixed code\n{code}{self.tests_part(tests)}{qa_instr}",
                 "test_report"))
             report, verdict = self.check_evidence(report, tests, qa_tools, context, qa_instr, rounds)
@@ -1311,8 +1384,9 @@ class Run:
                 self.finish_stage("approval", "skipped")
             if approved:
                 self.stage("deploy")
-                deploy = self.step("deploy", lambda: self.delegate("devops", "assign", task_for("devops"),
-                                       f"{context}\n\nYour assignment:\n{task_for('devops')}\n\nQA verdict: PASS"
+                deploy = self.step("deploy", lambda: self.delegate("devops", "assign",
+                                       task_for("devops", "deploy_report", self.steps + 1),
+                                       f"{context}\n\nYour assignment:\n{task_for('devops', 'deploy_report', self.steps + 1)}\n\nQA verdict: PASS"
                                        f"\nCEO approval: {note or 'approved'}\n\n### Design\n{design}\n\n"
                                        f"### Code\n{code}\n\n### QA report\n{report}\n\n"
                                        + (f"### Your deploy preparation\n{prep}\n\n" if prep else "")

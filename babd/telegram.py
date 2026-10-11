@@ -34,7 +34,8 @@ from .log import log
 API_BASE = os.environ.get("BABD_TELEGRAM_API", "https://api.telegram.org")
 STATE_PATH = os.path.join(ROOT, ".babd", "telegram.json")
 MAX_TEXT = 4000
-NOTIFY = ("Progress", "Plans", "Approvals", "Blockers", "Reports", "Daily Report")
+NOTIFY = ("Progress", "Plans", "Conversations", "Approvals", "Blockers", "Reports",
+          "Daily Report")
 LOG_EVERY = 3          # seconds between live-log updates
 LOG_MINUTES = 10       # a live log follows the agent this long, then stops (send /log again)
 CARD_EVERY = 3         # seconds between updates of a task's progress card
@@ -946,6 +947,49 @@ class CeoBot(Bot):
             except TelegramError as e:
                 log(f"telegram ceo: could not notify {chat}: {e}", "telegram")
 
+    # ---- conversation digest: every agent-to-agent message, in plain language ----------
+    # The CEO asked to follow the team's internal conversation without reading raw prompts.
+    # Every MessageBus "message" event is turned into one short, human sentence
+    # ("Architect kirim hasil desain ke Team Lead: ..."), with the first meaningful lines
+    # of the content so the CEO sees the substance, not just the routing.
+    _WHO = {"ceo": "CEO", "lead": "Team Lead", "architect": "Architect", "developer": "Developer",
+            "qa": "QA/Tester", "devops": "DevOps", "researcher": "Researcher"}
+    _KIND_HUMAN = {
+        "goal": "memberi tugas / tujuan",
+        "assign": "memberi tugas",
+        "design": "mengirim hasil desain",
+        "code": "mengirim hasil kode",
+        "fix": "mengirim perbaikan bug",
+        "fix_request": "meminta perbaikan bug",
+        "test_plan": "mengirim rencana pengujian",
+        "test_report": "mengirim hasil pengujian & vonis",
+        "deploy_prep": "mengirim persiapan deployment",
+        "deploy_report": "mengirim hasil deployment",
+        "research": "mengirim hasil riset",
+        "result": "mengirim hasil pekerjaan",
+        "answer": "menjawab",
+        "report": "mengirim laporan",
+        "peer_question": "bertanya ke rekan setim",
+        "peer_answer": "menjawab pertanyaan rekan setim",
+        "question": "bertanya",
+    }
+
+    def _conversation_note(self, data):
+        """One human-readable line for a single agent-to-agent message."""
+        frm = self._WHO.get(str(data.get("from") or ""), data.get("from") or "?")
+        to = self._WHO.get(str(data.get("to") or ""), data.get("to") or "?")
+        kind = str(data.get("kind") or "")
+        what = self._KIND_HUMAN.get(kind, kind.replace("_", " ") or "mengirim pesan")
+        body = _clip(str(data.get("content") or ""), 400)
+        head = f"💬 <b>{html.escape(frm)}</b> {what} → <b>{html.escape(to)}</b>"
+        if body:
+            head += f"\n{html.escape(body)}"
+        # a per-message footnote is noise; the task id is enough context
+        rid = data.get("run")
+        if rid:
+            head += f"\n<code>task {html.escape(str(rid))}</code>"
+        return head
+
     def _stage_note(self, data):
         """One short line when a stage finishes (kept quiet: only terminal stages and the CEO gate)."""
         stage = data.get("stage")
@@ -1081,6 +1125,11 @@ class CeoBot(Bot):
             self._send_plan(data)
         if kind == "stage" and "Progress" in self.notify and self.chats:
             self._stage_note(data)
+        if kind == "message" and "Conversations" in self.notify and self.chats:
+            try:
+                self.broadcast(self._conversation_note(data))
+            except TelegramError as e:
+                log(f"telegram ceo: could not send conversation note: {e}", "telegram")
         if kind == "push" and "Reports" in self.notify and self.chats:
             self._push_note(data)
         if kind == "pr" and "Reports" in self.notify and (data.get("state") != "open" or data.get("checks") in ("success", "failure")):

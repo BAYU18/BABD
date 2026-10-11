@@ -1276,6 +1276,31 @@ let taskFilter = "all";
 let historyLimit = 30;     // finished tasks loaded on the board ("Show older tasks" adds more)
 let searchResults = null;  // tasks found by the search box (null: not searching)
 const openTasks = new Set();
+// ---- human step task ---------------------------------------------------------------
+// Bahasa manusia untuk kolom "Tugas" di tabel Every step, supaya CEO paham per langkah
+// dan tidak melihat kalimat generik yang sama berulang-ulang.
+const STEP_KIND_HUMAN = {
+  plan: "menyusun rencana", triage: "memutuskan siapa yang dipanggil",
+  design: "merancang sistem", code: "membangun kode",
+  test_plan: "menyiapkan rencana uji", test_report: "menguji & memberi vonis",
+  fix: "memperbaiki bug", deploy_prep: "menyiapkan deployment",
+  deploy_report: "deploy & pantau", report: "melapor ke CEO",
+  answer: "menjawab CEO", result: "mengerjakan tugas",
+  research: "melakukan riset", peer_answer: "menjawab rekan setim",
+  assign: "mengerjakan tugas", retest: "verifikasi ulang",
+};
+const STEP_WHO_HUMAN = { lead: "Team Lead", architect: "Architect", developer: "Developer",
+  qa: "QA/Tester", devops: "DevOps", researcher: "Researcher" };
+function humanStepTask(s) {
+  // Task asli dari Lead/package sudah paling spesifik. Kalau kosong atau masih kalimat
+  // placeholder lama, susun deskripsi bahasa manusia dari peran + jenis langkah.
+  const raw = String(s.task || "").trim();
+  const generic = !raw || /^do your part|^prepare the deployment while|^write the test plan from/i.test(raw);
+  if (!generic) return raw;
+  const who = STEP_WHO_HUMAN[s.agent] || s.agent;
+  const what = STEP_KIND_HUMAN[s.kind] || String(s.kind || "").replace(/_/g, " ");
+  return `${who} ${what} · ${s.goal || ""}`.trim();
+}
 const KIND_LABELS = { plan: "Plan", design: "Design", code: "Build", test_plan: "Test plan", deploy_prep: "Deploy prep",
   test_report: "Test", fix: "Fix", deploy_report: "Deploy", report: "Report" };
 const TASK_COLORS = { waiting_answer: "#f0abfc", paused: "#c4b5fd", running: "var(--good)", waiting_approval: "var(--warn)", queued: "#7dd3fc", done: "var(--ceo)", failed: "var(--bad)", cancelled: "var(--dim)", interrupted: "var(--warn)" };
@@ -2079,7 +2104,7 @@ function renderReport(r, atts = []) {
     </tbody></table>
     <h3>Every step</h3>
     <table class="rep-table"><thead><tr><th>#</th><th>Agen</th><th>Langkah</th><th>Tugas</th><th>Status</th><th>Mulai</th><th>Menunggu</th><th>Durasi</th><th>Token</th></tr></thead><tbody>
-      ${steps.map((s) => `<tr class="${s.status === "failed" ? "bad" : ""}"><td>${s.n}</td><td>${esc(nameOf(s.agent))}</td><td>${esc(KIND_LABELS[s.kind] || s.kind)}</td><td class="wrap">${esc(s.task || "")}${s.last_error ? `<div class="bad small">${esc(s.last_error)}</div>` : ""}</td><td>${esc(s.status)}${s.fallback ? ` · fallback ${esc(s.fallback)}` : ""}</td><td>${esc(fmtWhen(s.started_at) || "—")}</td><td>${waited(s) > 1 ? fmtDur(waited(s)) : "—"}</td><td>${s.seconds != null ? fmtDur(s.seconds) : s.status === "working" ? "…" : "—"}</td><td>${esc(usageText(s.usage) || "—")}</td></tr>`).join("") || '<tr><td colspan="9" class="muted">Belum ada langkah.</td></tr>'}
+      ${steps.map((s) => `<tr class="${s.status === "failed" ? "bad" : ""}"><td>${s.n}</td><td>${esc(nameOf(s.agent))}</td><td>${esc(KIND_LABELS[s.kind] || s.kind)}</td><td class="wrap" title="${esc(s.task || "")}">${esc(humanStepTask(s))}${s.last_error ? `<div class="bad small">${esc(s.last_error)}</div>` : ""}</td><td>${esc(s.status)}${s.fallback ? ` · fallback ${esc(s.fallback)}` : ""}</td><td>${esc(fmtWhen(s.started_at) || "—")}</td><td>${waited(s) > 1 ? fmtDur(waited(s)) : "—"}</td><td>${s.seconds != null ? fmtDur(s.seconds) : s.status === "working" ? "…" : "—"}</td><td>${esc(usageText(s.usage) || "—")}</td></tr>`).join("") || '<tr><td colspan="9" class="muted">Belum ada langkah.</td></tr>'}
     </tbody></table>
     ${ev.note || (r.tests || []).length ? `<h3>Tests and evidence</h3><div class="small">${ev.verified ? "✓ verified" : "not verified"}${ev.source ? ` (${esc(ev.source)})` : ""}: ${esc(ev.note || "")}</div>
       ${(r.tests || []).map((t) => `<details><summary>Round ${t.round}: <code>${esc(t.command)}</code> → exit ${t.exit}</summary><pre class="log-detail">${esc(t.output)}</pre></details>`).join("")}` : ""}

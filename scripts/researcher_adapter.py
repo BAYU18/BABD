@@ -358,6 +358,22 @@ def _build_researcher(query, kind, value, report_type, extra_kwargs=None):
     if kind == "searxng":
         os.environ["SEARX_URL"] = value
 
+    # KUALITAS LAPORAN: knob yang sudah terbukti di skill Hermes /study
+    # (/home/maman/gpt-researcher/study.py -> apply_env()). Tanpa ini laporan
+    # ditulis dalam bahasa campur, terlalu pendek, dan tidak terstruktur.
+    # Semua bisa di-override operator via env (prefix RESEARCHER_).
+    #   LANGUAGE=indonesian         -> bahasa laporan konsisten
+    #   REPORT_FORMAT=markdown      -> tabel/heading markdown rapi
+    #   TOTAL_WORDS=1500            -> laporan tidak menggantung setengah jadi
+    #   CURATE_SOURCES=False        -> retriever gratis sudah cukup, hemat biaya
+    #   COMPRESSION_THRESHOLD=60000 -> konten <60k tak memanggil embedding (hindari 429)
+    os.environ.setdefault("LANGUAGE", os.environ.get("RESEARCHER_LANGUAGE", "indonesian"))
+    os.environ.setdefault("REPORT_FORMAT", os.environ.get("RESEARCHER_REPORT_FORMAT", "markdown"))
+    os.environ.setdefault("TOTAL_WORDS", os.environ.get("RESEARCHER_TOTAL_WORDS", "1500"))
+    os.environ.setdefault("CURATE_SOURCES", os.environ.get("RESEARCHER_CURATE_SOURCES", "False"))
+    os.environ.setdefault("COMPRESSION_THRESHOLD",
+                          os.environ.get("RESEARCHER_COMPRESSION_THRESHOLD", "60000"))
+
     # >>> KUNCI PERBAIKAN: LLM tim ditulis ke FAST_LLM/SMART_LLM/OPENAI_* DI SINI, sebelum
     #     GPTResearcher() dibuat. Tanpa ini, Config memakai default 'o4-mini' -> 403.
     apply_llm_env()
