@@ -329,6 +329,25 @@ class Harness:
             # asked to stop, so report that instead of a confusing "exit code -15".
             raise HarnessError(f"{self.label}: stopped (task cancelled)")
         if proc.returncode != 0:
+            # A negative return code (POSIX) or 128+signal means the program was killed by a
+            # signal. Hermes re-raises SIGTERM as SIGINT (130) while flushing its session, so a
+            # timeout of ours lands here as 130/-15/143 instead of the clear timeout message a
+            # few lines above. Translate those into a plain, actionable sentence.
+            rc = proc.returncode
+            sig = -rc if rc < 0 else (rc - 128 if rc > 128 else None)
+            if sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL, signal.SIGHUP):
+                names = {signal.SIGINT: "SIGINT", signal.SIGTERM: "SIGTERM",
+                         signal.SIGKILL: "SIGKILL", signal.SIGHUP: "SIGHUP"}
+                lines = [ln.strip() for ln in ((out or "") + "\n" + (err or "")).splitlines()
+                         if ln.strip() and not ln.strip().startswith("session_id:")]
+                detail = " | ".join(dict.fromkeys(lines[:1] + lines[-1:]))
+                hint = "" if detail else (" — the step produced no output before it was interrupted; "
+                                          "it most likely ran out of time or was stopped. Raise "
+                                          "timeout_sec / max_turns or split the task into smaller steps.")
+                tail = (" — " + detail[:300]) if detail else hint
+                raise HarnessError(
+                    f"{self.label}: exit code {rc} ({names[sig]}): the step was interrupted "
+                    f"before it finished{tail}")
             # CLIs print errors on stdout or stderr; the first and last meaningful lines carry the story.
             lines = [ln.strip() for ln in ((out or "") + "\n" + (err or "")).splitlines()
                      if ln.strip() and not ln.strip().startswith("session_id:")]

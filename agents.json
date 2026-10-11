@@ -22,8 +22,9 @@
     "default_project": "default",
     "auto_resume": true,
     "retry": {
-      "max_attempts": 3,
-      "backoff_seconds": 2
+      "attempts": 3,
+      "base_delay": 10,
+      "max_delay": 120
     },
     "budget": {
       "enabled": true,
@@ -173,7 +174,7 @@
           "file"
         ],
         "max_turns": 60,
-        "timeout_sec": 1800,
+        "timeout_sec": 2400,
         "yolo": false
       },
       "permissions": "plan",
@@ -257,7 +258,7 @@
           "file"
         ],
         "max_turns": 60,
-        "timeout_sec": 1800,
+        "timeout_sec": 2400,
         "yolo": false
       },
       "permissions": "plan",
@@ -329,7 +330,7 @@
       "harness": {
         "type": "hermes_local",
         "max_turns": 80,
-        "timeout_sec": 1800
+        "timeout_sec": 3600
       },
       "permissions": "workspace",
       "sandbox": "none",
@@ -404,7 +405,7 @@
           "file"
         ],
         "max_turns": 60,
-        "timeout_sec": 1800,
+        "timeout_sec": 2400,
         "yolo": false
       },
       "permissions": "workspace",
@@ -470,7 +471,7 @@
           "file"
         ],
         "max_turns": 60,
-        "timeout_sec": 1800,
+        "timeout_sec": 2400,
         "yolo": false
       },
       "permissions": "workspace",

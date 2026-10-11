@@ -17,7 +17,9 @@ import time
 TRANSIENT = re.compile(
     r"rate.?limit|timed? ?out|timeout|cannot reach|connection|temporar|overloaded|unavailable|"
     r"API error (?:408|409|425|429|5\d\d)|\b(?:502|503|504|529)\b|empty response|returned no choices|"
-    r"reset by peer|broken pipe|exit code (?:-9|137|143)", re.I)
+    r"reset by peer|broken pipe|"
+    r"exit code (?:-9|-15|-2|130|137|143)|interrupted before it finished|"
+    r"was interrupted", re.I)
 PERMANENT = re.compile(r"authentication failed|no API key|not found|declined|unknown llm|needs an Anthropic", re.I)
 DEFAULTS = {"attempts": 3, "base_delay": 5.0, "max_delay": 60.0}
 
