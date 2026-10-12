@@ -1,12 +1,12 @@
 {
   "project": {
     "name": "BABD AI Dev Team",
-    "status": "DONE",
-    "progress": 100,
+    "status": "BLOCKED",
+    "progress": 45,
     "current_goal": "carikan saya informasi kapan dan negara…",
     "active_task": "Quick task",
     "approval_needed": 0,
-    "blockers": 0,
+    "blockers": 1,
     "recent_result": "Done by Researcher",
     "next_action": "Review the result",
     "require_approval": [
@@ -371,7 +371,7 @@
       "name": "QA / TESTER",
       "short_name": "QA / Tester",
       "color": "#fbbf24",
-      "status": "idle",
+      "status": "blocked",
       "main_task": [
         "VALIDASI",
         "SOFTWARE"
@@ -445,7 +445,7 @@
       "name": "DEVOPS",
       "short_name": "DevOps",
       "color": "#f472b6",
-      "status": "idle",
+      "status": "waiting",
       "main_task": [
         "DEPLOY &",
         "OPERASIKAN"
@@ -593,7 +593,7 @@
     {
       "step": "TEST",
       "owner": "qa",
-      "state": "todo"
+      "state": "active"
     },
     {
       "step": "DEPLOY",
