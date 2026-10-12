@@ -551,11 +551,40 @@ function renderHistory() {
   sel.value = [...sel.options].some((o) => o.value === current) ? current : "";
 }
 
+let stuckInfo = null;
+async function loadStuckInfo(runId) {
+  stuckInfo = null;
+  try { if (runId) stuckInfo = await api("GET", `runs/${runId}/stuck`); } catch (err) { stuckInfo = null; }
+}
+function stuckPanel(r) {
+  if (!stuckInfo || !stuckInfo.stuck || stuckInfo.live) return "";
+  const why = (stuckInfo.blockers || []).length
+    ? `<div class="small" style="color:var(--bad)">● ${(stuckInfo.blockers || []).map(esc).join("<br>● ")}</div>`
+    : (stuckInfo.verdict === "FAIL" ? `<div class="small" style="color:var(--bad)">● QA verdict: FAIL</div>` : "");
+  const stuckAgents = (stuckInfo.stuck_agents && stuckInfo.stuck_agents.length
+    ? stuckInfo.stuck_agents : (stuckInfo.blocked_agents || []));
+  const blocked = stuckAgents.length
+    ? `<div class="small muted">Agen terhambat: ${stuckAgents.map(esc).join(", ")}</div>` : "";
+  const btns = (stuckInfo.actions || []).map((a) => a.id === "retry-qa"
+    ? `<span style="display:inline-flex;gap:4px;align-items:center;margin:6px 8px 0 0">
+         <input type="number" id="stuckRounds" min="1" max="10" value="3" style="width:56px" title="Tambahan putaran perbaikan QA">
+         <button type="button" class="btn small ${a.danger ? "danger" : "good"}" data-stuck="${esc(a.id)}" title="${esc(a.help)}">${esc(a.label)}</button>
+       </span>`
+    : `<button type="button" class="btn small ${a.danger ? "danger" : ""}" style="margin:6px 8px 0 0" data-stuck="${esc(a.id)}" title="${esc(a.help)}">${esc(a.label)}</button>`).join("");
+  return `<div class="note warn" style="margin-top:10px;border-left:3px solid var(--bad);background:rgba(239,68,68,.06)">
+    <div class="eyebrow" style="color:var(--bad)">⚠ Run macet — perlu tindakan</div>
+    ${why}${blocked}
+    <div class="small muted" style="margin-top:4px">Run berhenti dengan pekerjaan tersisa. Pilih tindakan:</div>
+    <div class="row" style="flex-wrap:wrap;align-items:center">${btns}</div>
+  </div>`;
+}
+
 async function showRun(id) {
   const liveId = id.startsWith("live:") ? id.slice(5) : (liveRuns[id] ? id : null);
   viewingHistory = !!id && !liveId;
   try { viewRun = liveId ? liveRuns[liveId] : id ? await api("GET", `runs/${id}`) : S.run; } catch (err) { toast(err.message, "bad"); }
   pinnedRun = liveId || null;
+  await loadStuckInfo(viewRun && viewRun.id);
   renderRun();
   renderRunButtons();
 }
@@ -708,6 +737,7 @@ function renderRun() {
       ${isLive(r) && (r.paused || r.status === "paused") ? `<button type="button" class="btn small good" style="margin-top:8px" data-unpause-run="${esc(r.id)}">▶ Resume</button>` : ""}
       ${RESUMABLE.includes(r.status) ? `<button type="button" class="btn small" style="margin-top:8px" data-resume-run="${esc(r.id)}">Resume from the last finished step</button>` : ""}
       ${!isLive(r) && r.finished_at ? `<button type="button" class="btn small ghost" style="margin-top:8px" data-export-run="${esc(r.id)}">Ekspor laporan (.md)</button>` : ""}
+      ${stuckPanel(r)}
     </div>
     <div class="stepper">${stages}</div>
     ${packagesBlock(r)}
@@ -732,6 +762,22 @@ $("#runBody").addEventListener("click", async (e) => {
     const id = pz.dataset.pauseRun || pz.dataset.unpauseRun;
     try { const r = await api("POST", `runs/${id}/${pz.dataset.pauseRun ? "pause" : "resume"}`); toast(r.note || "Continuing", "ok"); refreshSoon(); boardSoon(); }
     catch (err) { toast(err.message, "bad"); }
+    return;
+  }
+  const sk = e.target.closest("[data-stuck]");
+  if (sk) {
+    const action = sk.dataset.stuck;
+    const labels = { "retry-qa": "Retry QA dengan putaran tambahan?", "force-approve": "Paksa QA jadi PASS dan lanjut deploy? Ini menimpa keputusan QA.", "skip-qa-deploy": "Tutup run sebagai selesai tanpa deploy?", "restart-from-scratch": "Mulai ulang goal ini dari awal? Semua checkpoint dihapus.", "resume": "Lanjutkan run ini dari langkah terakhir yang selesai?" };
+    if (!confirm(labels[action] || "Lanjutkan?")) return;
+    const extra = action === "retry-qa" ? parseInt($("#stuckRounds")?.value || "3", 10) : undefined;
+    sk.disabled = true;
+    try {
+      const r = await api("POST", `runs/${viewRun.id}/stuck`, { action, extra_rounds: extra });
+      toast(r.note || "Ditangani", "ok");
+      viewingHistory = false; pinnedRun = viewRun.id;
+      await loadStuckInfo(viewRun.id);
+      refreshSoon(); boardSoon();
+    } catch (err) { toast(err.message, "bad"); sk.disabled = false; }
     return;
   }
   const rs = e.target.closest("[data-resume-run]");

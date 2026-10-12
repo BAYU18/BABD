@@ -323,7 +323,19 @@ def task_options(options, agent_ids=None):
         if len(model) > 120:
             raise FlowError("model name too long")
         models[agent] = model
-    return {"mode": mode, "skip": skip, "models": models}
+    out = {"mode": mode, "skip": skip, "models": models}
+    # Optional per-task override of the QA fix-round cap (dashboard stuck handler).
+    if options.get("max_fix_rounds") is not None:
+        try:
+            rounds = int(options["max_fix_rounds"])
+        except (TypeError, ValueError):
+            raise FlowError("max_fix_rounds must be a number")
+        if rounds < 0 or rounds > 20:
+            raise FlowError("max_fix_rounds must be between 0 and 20")
+        out["max_fix_rounds"] = rounds
+    if options.get("force_verdict") in ("PASS", "FAIL"):
+        out["force_verdict"] = options["force_verdict"]
+    return out
 
 
 def apply_models(cfg, models):
@@ -610,6 +622,10 @@ class Run:
             # needs a couple more rounds). Project settings win over the global default.
             if self.project.get("max_fix_rounds") is not None:
                 self.max_fix_rounds = int(self.project["max_fix_rounds"])
+        # A dashboard "stuck handler" may raise (or lower) the QA fix-round cap for this one run.
+        _opt_rounds = (self.state.get("task_options") or {}).get("max_fix_rounds")
+        if _opt_rounds is not None:
+            self.max_fix_rounds = int(_opt_rounds)
         self.state["pid"] = os.getpid()
         if not resume or options is not None:
             self.state["task_options"] = task_options(options, set(team.by_id))
@@ -664,6 +680,7 @@ class Run:
         brief_path = os.path.join(self.dir, "00-task.md")
         self.brief = open(brief_path).read().strip() if os.path.exists(brief_path) else ""
         st = self.state
+        st.pop("stuck_handled", None)  # a fresh resume is live again: allow future stuck handling
         st.update(status="running", error=None, finished_at=None, report=None, blockers=[], stage=None, progress=0,
                   verdict=None, deployed=False, resumes=st.get("resumes", 0) + 1, paused=False, question=None)
         st["questions"] = [q for q in st.get("questions") or [] if q.get("answer") is not None]
@@ -1200,10 +1217,12 @@ class Run:
         except FlowCancelled as e:
             self.state["status"] = "cancelled"
             self.state["error"] = str(e)
+            self._settle_agents_after_stop()
         except Exception as e:  # any agent / harness failure ends the run with a clear error
             if self.cancelled.is_set():  # the agent's program was stopped by the cancel
                 self.state["status"] = "cancelled"
                 self.state["error"] = "run cancelled by the CEO"
+                self._settle_agents_after_stop()
             else:
                 self.state["status"] = "failed"
                 self.state["error"] = f"{type(e).__name__}: {e}"
@@ -1213,6 +1232,20 @@ class Run:
         self.emit("finished", {"status": self.state["status"], "error": self.state["error"],
                                "report": self.state["report"]})
         return self.state
+
+    def _settle_agents_after_stop(self):
+        """A cancelled run leaves the running agent stuck on \"working\". Reset every agent
+        still marked working/queued back to idle so the dashboard stops showing a robot that
+        will never move again, and the stuck panel can offer the real recovery actions."""
+        with self.lock:
+            settled = []
+            for aid, a in self.state.get("agents", {}).items():
+                if a.get("status") in ("working", "queued"):
+                    a["status"] = "idle"
+                    settled.append(aid)
+        for aid in settled:
+            a = dict(self.state["agents"][aid])
+            self.emit("agent", {"agent": aid, **a})
 
     def _flow(self):
         team, goal = self.team, self.goal
@@ -1867,6 +1900,12 @@ class Run:
                 if require and verdict == "PASS":
                     verdict = "FAIL"
                     ev["note"] += "; project.require_evidence turns the PASS into a FAIL"
+        # A dashboard "stuck handler" may force the verdict (CEO override on a stuck QA FAIL).
+        _forced = (self.state.get("task_options") or {}).get("force_verdict")
+        if _forced in ("PASS", "FAIL") and verdict != _forced:
+            ev["note"] = (ev.get("note") or "") + f"; verdict forced to {_forced} by the CEO"
+            ev["forced"] = _forced
+            verdict = _forced
         with self.lock:
             self.state["evidence"] = ev
         self.emit("evidence", ev)

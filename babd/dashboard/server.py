@@ -450,6 +450,201 @@ class Dashboard:
             ctx = self.active.get(run_id)
         return self.summary(ctx["run"]) if ctx else {**{k: v for k, v in entry.items() if k != "docs"}, "position": 1}
 
+
+    # -- stuck handling -------------------------------------------------------------------------
+
+    STUCK_ACTIONS = ("retry-qa", "force-approve", "skip-qa-deploy", "restart-from-scratch", "resume")
+
+    def stuck_info(self, run_id):
+        """Is this run stuck (blocked, or QA failed after the fix rounds ran out)? What can be done?"""
+        summary = self.load_run(run_id)
+        blockers = summary.get("blockers") or []
+        agents = summary.get("agents") or {}
+        blocked_agents = [aid for aid, a in agents.items() if a.get("status") == "blocked"]
+        stuck_agents = [aid for aid, a in agents.items() if a.get("status") in ("working", "blocked", "queued")]
+        verdict = summary.get("verdict")
+        status = summary.get("status")
+        # A run is "stuck" when nothing is running any more but work is left: blocked agents,
+        # a QA FAIL, or blockers recorded while the run itself is not live any more.
+        live = status in LIVE_STATUSES
+        # The CEO may have already closed / handled this one: do not nag again.
+        handled = bool(summary.get("stuck_handled"))
+        # A cancelled run is NOT auto-stuck on its own (the CEO stopped it on purpose), but if it
+        # stopped mid-flight it still has unfinished work: either an agent left on working/blocked,
+        # or stages that never reached report/deploy. Offer the recovery actions so the CEO can
+        # resume instead of staring at a dead robot with no buttons.
+        stages = summary.get("stages") or {}
+        unfinished = any(stages.get(k) in ("active", "todo", None)
+                         for k in ("plan", "design", "code", "test", "approval", "deploy", "report"))
+        stalled_cancel = status in ("cancelled", "interrupted") and (bool(stuck_agents) or unfinished)
+        stuck = (bool(blockers) or verdict == "FAIL" or bool(blocked_agents) or stalled_cancel) and not handled
+        run_dir = os.path.join(flow.RUNS_DIR, os.path.basename(run_id))
+        ckpt = os.path.join(run_dir, "ckpt")
+        qa_ckpts = sorted(f[:-4] for f in os.listdir(ckpt)
+                          if os.path.isfile(os.path.join(ckpt, f)) and f[:-4].startswith("qa")) if os.path.isdir(ckpt) else []
+        actions = []
+        if stuck and not live:
+            if status in ("cancelled", "interrupted"):
+                # A run the CEO stopped mid-flight: the useful actions are resume (continue from
+                # the last finished step) or start over. QA-specific actions do not apply here
+                # because the QA step may never have produced a checkpoint.
+                actions.append({"id": "resume", "label": "Lanjutkan (resume dari langkah terakhir)",
+                                "help": "Continue this stopped run from its last finished step.",
+                                "danger": False})
+                actions.append({"id": "restart-from-scratch", "label": "Mulai ulang dari awal",
+                                "help": "Throw away the checkpoints and run the same goal again from the start.",
+                                "danger": True})
+            else:
+                actions.append({"id": "retry-qa", "label": "Retry QA + more rounds",
+                                "help": "Clear the QA checkpoints and give QA extra fix rounds, then continue from Code.",
+                                "danger": False})
+                if verdict == "FAIL":
+                    actions.append({"id": "force-approve", "label": "Force approve (override QA)",
+                                    "help": "Mark QA as PASS by hand and continue to approval / deploy. Use when you trust the work anyway.",
+                                    "danger": True})
+                actions.append({"id": "skip-qa-deploy", "label": "Deliver without deploy",
+                                "help": "Close the run as done now: keep the report, skip approval and deploy.",
+                                "danger": False})
+                actions.append({"id": "restart-from-scratch", "label": "Restart from scratch",
+                                "help": "Throw away the checkpoints and run the same goal again from the start.",
+                                "danger": True})
+        return {"stuck": stuck, "live": live, "status": status, "verdict": verdict,
+                "blockers": blockers, "blocked_agents": blocked_agents, "stuck_agents": stuck_agents,
+                "qa_checkpoints": qa_ckpts, "actions": actions}
+
+    def handle_stuck(self, run_id, action, extra_rounds=None, note=""):
+        """Un-stick a blocked / QA-failed run. Reuses the same run id and its checkpoints."""
+        run_id = os.path.basename(run_id)
+        if action not in self.STUCK_ACTIONS:
+            raise ApiError(400, "unknown stuck action %r; pick one of %s" % (action, ", ".join(self.STUCK_ACTIONS)))
+        run_dir = os.path.join(flow.RUNS_DIR, run_id)
+        state_path = os.path.join(run_dir, "state.json")
+        if not os.path.exists(state_path):
+            raise ApiError(404, f"no run {run_id!r}")
+        with self.tasks_lock:
+            if run_id in self.active or any(q["id"] == run_id for q in self.queue):
+                raise ApiError(409, "this task is already running or queued")
+        info = self.stuck_info(run_id)
+        if not info["stuck"]:
+            raise ApiError(409, "this task is not stuck: nothing to handle")
+
+        with open(state_path) as f:
+            s = json.load(f)
+
+        if action == "resume":
+            # A cancelled / interrupted run: continue from the last finished step without
+            # touching the QA checkpoints. This is what the CEO wants after stopping by mistake.
+            s["stuck_handled"] = "resume"
+            with open(state_path, "w") as f:
+                json.dump(s, f, indent=2, ensure_ascii=False)
+            self._queue_stuck_resume(run_id, s)
+            return {"ok": True, "action": action,
+                    "note": "Run queued to continue from its last finished step"}
+
+        if action == "retry-qa":
+            rounds = int(extra_rounds or s.get("options", {}).get("max_fix_rounds") or 2)
+            rounds = max(1, min(10, rounds))
+            ckpt = os.path.join(run_dir, "ckpt")
+            removed = []
+            if os.path.isdir(ckpt):
+                for name in os.listdir(ckpt):
+                    stem = name[:-4] if name.endswith(".txt") else name
+                    # clear QA retest checkpoints and any fix checkpoints so the loop reruns
+                    if stem.startswith("qa") or stem.startswith("fix"):
+                        try:
+                            os.remove(os.path.join(ckpt, name))
+                            removed.append(stem)
+                        except OSError:
+                            pass
+            # remember the higher round budget for this resume
+            opts = s.setdefault("task_options", {})
+            prev = set(opts.get("skip") or [])
+            opts["max_fix_rounds"] = rounds
+            s["_stuck_note"] = "CEO retried QA with %d extra fix round(s)%s" % (rounds, (" — " + note) if note else "")
+            with open(state_path, "w") as f:
+                json.dump(s, f, indent=2, ensure_ascii=False)
+            self._queue_stuck_resume(run_id, s, extra_rounds=rounds)
+            return {"ok": True, "action": action, "cleared": removed, "extra_rounds": rounds,
+                    "note": f"QA retry queued with {rounds} fix round(s); continuing from the Code step"}
+
+        if action == "force-approve":
+            if s.get("verdict") != "FAIL":
+                raise ApiError(409, "force approve only applies to a run whose QA verdict is FAIL")
+            ckpt = os.path.join(run_dir, "ckpt")
+            if os.path.isdir(ckpt):
+                for name in os.listdir(ckpt):
+                    stem = name[:-4] if name.endswith(".txt") else name
+                    if stem in ("qa0", "qa1", "qa2", "qa3", "qa4", "qa5") or stem.startswith("fix"):
+                        try:
+                            os.remove(os.path.join(ckpt, name))
+                        except OSError:
+                            pass
+            s["verdict"] = "PASS"
+            s.setdefault("task_options", {})["force_verdict"] = "PASS"
+            s["_stuck_note"] = "CEO forced approval: QA overridden to PASS%s" % ((" — " + note) if note else "")
+            # clear the QA-blocked marker so the resume does not re-block on the same state
+            for aid, a in (s.get("agents") or {}).items():
+                if a.get("status") == "blocked":
+                    a["status"] = "idle"; a["task"] = ""
+            with open(state_path, "w") as f:
+                json.dump(s, f, indent=2, ensure_ascii=False)
+            self._queue_stuck_resume(run_id, s, force_verdict="PASS")
+            return {"ok": True, "action": action, "note": "QA overridden to PASS; continuing to approval / deploy"}
+
+        if action == "skip-qa-deploy":
+            s["status"] = "done"
+            s["blockers"] = []
+            s["stuck_handled"] = "skip-qa-deploy"
+            s["verdict"] = s.get("verdict") or "FAIL"
+            for aid, a in (s.get("agents") or {}).items():
+                if a.get("status") == "blocked":
+                    a["status"] = "idle"; a["task"] = ""
+                if a.get("status") in ("working", "waiting"):
+                    a["status"] = "done"
+            s["finished_at"] = flow.now()
+            rep = s.get("report") or {}
+            if isinstance(rep, dict):
+                rep.setdefault("summary", "Run closed by the CEO without deploy.")
+                s["report"] = rep
+            with open(state_path, "w") as f:
+                json.dump(s, f, indent=2, ensure_ascii=False)
+            self.hub.publish("tasks", {"event": "stuck-handled", "task": {"id": run_id, "action": action}})
+            return {"ok": True, "action": action, "note": "run closed as done without deploy"}
+
+        if action == "restart-from-scratch":
+            ckpt = os.path.join(run_dir, "ckpt")
+            if os.path.isdir(ckpt):
+                for name in os.listdir(ckpt):
+                    try:
+                        os.remove(os.path.join(ckpt, name))
+                    except OSError:
+                        pass
+            s["_stuck_note"] = "CEO restarted this goal from scratch%s" % ((" — " + note) if note else "")
+            with open(state_path, "w") as f:
+                json.dump(s, f, indent=2, ensure_ascii=False)
+            self._queue_stuck_resume(run_id, s, from_scratch=True)
+            return {"ok": True, "action": action, "note": "restarting the goal from the first step"}
+
+        raise ApiError(400, f"unknown stuck action {action!r}")
+
+    def _queue_stuck_resume(self, run_id, s, extra_rounds=None, force_verdict=None, from_scratch=False):
+        """Queue a stuck run to continue (or restart) through the normal run machinery."""
+        entry = self.resume_entry(s)
+        entry["resume"] = True
+        opts = dict(entry.get("options") or {})
+        if extra_rounds is not None:
+            opts["max_fix_rounds"] = extra_rounds
+        entry["options"] = opts
+        entry["stuck_note"] = s.get("_stuck_note", "")
+        entry["force_verdict"] = force_verdict
+        entry["from_scratch"] = bool(from_scratch)
+        with self.tasks_lock:
+            self.queue.insert(0, entry)
+        self.save_queue()
+        self._pump()
+        self.hub.publish("tasks", {"event": "stuck-handled", "task": {"id": run_id, "action": "resume"}})
+        return entry
+
     def max_parallel_tasks(self):
         try:
             return max(1, int(self.load()["project"].get("max_parallel_tasks", DEFAULT_PARALLEL_TASKS)))
@@ -1620,6 +1815,11 @@ def make_handler(dash, token, allowed_hosts, security=None):
                     return d.pause_run(parts[1], True)
                 if method == "POST" and parts[2:] == ["resume"]:
                     return d.resume_run(parts[1])
+                if method == "GET" and parts[2:] == ["stuck"]:
+                    return d.stuck_info(parts[1])
+                if method == "POST" and parts[2:] == ["stuck"]:
+                    b = self.body()
+                    return d.handle_stuck(parts[1], b.get("action"), b.get("extra_rounds"), b.get("note", ""))
             raise ApiError(404, "unknown API call")
 
         def events(self):
